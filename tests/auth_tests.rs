@@ -136,6 +136,7 @@ fn test_top_nav_bar_role_conditional_rendering() {
         workers_online_count: 0,
         runs_today_count: 0,
         failed_lost_runs_today_count: 0,
+        recent_runs: vec![],
     };
     let admin_html = admin_tmpl.render().unwrap();
 
@@ -163,6 +164,7 @@ fn test_top_nav_bar_role_conditional_rendering() {
         workers_online_count: 0,
         runs_today_count: 0,
         failed_lost_runs_today_count: 0,
+        recent_runs: vec![],
     };
     let editor_html = editor_tmpl.render().unwrap();
 
@@ -186,6 +188,7 @@ fn test_top_nav_bar_role_conditional_rendering() {
         workers_online_count: 0,
         runs_today_count: 0,
         failed_lost_runs_today_count: 0,
+        recent_runs: vec![],
     };
     let viewer_html = viewer_tmpl.render().unwrap();
 

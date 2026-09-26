@@ -164,6 +164,20 @@ async fn test_dashboard_stats_tiles() {
     assert!(html.contains("<div class=\"stat-label\">Runs Today</div>"));
     assert!(html.contains("<div class=\"stat-label\">Failed / Lost Runs Today</div>"));
 
+    // Verify Recent Runs table
+    assert!(html.contains("Recent Runs"));
+    assert!(html.contains("Run ID"));
+    assert!(html.contains("Automation"));
+    assert!(html.contains("Worker"));
+    assert!(html.contains("Status"));
+    assert!(html.contains("Triggered By"));
+    assert!(html.contains("Queued At"));
+    assert!(html.contains("Auto 1"));
+    assert!(html.contains("Worker 1"));
+    assert!(html.contains("succeeded"));
+    assert!(html.contains("failed"));
+    assert!(html.contains("lost"));
+
     // Clean up test data
     let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1").bind(auto1_id).execute(&pool).await;
     let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1").bind(worker1_id).execute(&pool).await;

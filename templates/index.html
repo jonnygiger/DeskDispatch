@@ -34,4 +34,42 @@
         <div class="stat-value{% if failed_lost_runs_today_count > 0 %} text-danger{% endif %}">{{ failed_lost_runs_today_count }}</div>
     </div>
 </div>
+
+<div class="card">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Recent Runs</h2>
+    {% if recent_runs.is_empty() %}
+        <p style="color: var(--color-text-muted); font-size: 0.875rem;">No recent runs found.</p>
+    {% else %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Run ID</th>
+                    <th>Automation</th>
+                    <th>Worker</th>
+                    <th>Status</th>
+                    <th>Triggered By</th>
+                    <th>Queued At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for run in recent_runs %}
+                <tr>
+                    <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
+                    <td><a href="/automations/{{ run.automation_id }}">{{ run.automation_name }}</a></td>
+                    <td>
+                        {% if let Some(wid) = run.worker_id %}
+                            <a href="/workers/{{ wid }}">{{ run.worker_name.as_deref().unwrap_or("Worker") }}</a>
+                        {% else %}
+                            <span style="color: var(--color-text-muted);">-</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="badge {{ run.status_badge_class() }}">{{ run.status }}</span></td>
+                    <td>{{ run.triggered_by }}</td>
+                    <td>{{ run.formatted_queued_at() }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
 {% endblock %}
