@@ -1,6 +1,7 @@
 use app::auth::UserRole;
 use app::routes::account::AccountPasswordTemplate;
 use app::routes::auth::LoginTemplate;
+use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
 use app::routes::home::IndexTemplate;
 use askama::Template;
 use std::fs;
@@ -26,8 +27,27 @@ fn main() {
         session_id: uuid::Uuid::new_v4(),
         csrf_token: "test_csrf_token_12345".to_string(),
     };
-    let index_tmpl = IndexTemplate { user };
+    let index_tmpl = IndexTemplate { user: user.clone() };
     fs::write("rendered_templates/index.html", index_tmpl.render().unwrap()).unwrap();
+
+    let not_found_tmpl = NotFoundTemplate {
+        user: Some(user.clone()),
+    };
+    fs::write(
+        "rendered_templates/404.html",
+        not_found_tmpl.render().unwrap(),
+    )
+    .unwrap();
+
+    let internal_err_tmpl = InternalServerErrorTemplate {
+        message: Some("Something went wrong".to_string()),
+        user: Some(user),
+    };
+    fs::write(
+        "rendered_templates/500.html",
+        internal_err_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }
