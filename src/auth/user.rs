@@ -65,6 +65,23 @@ pub struct AuthUser {
     pub csrf_token: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct OptionalAuthUser(pub Option<AuthUser>);
+
+impl FromRequestParts<AppState> for OptionalAuthUser {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        match AuthUser::from_request_parts(parts, state).await {
+            Ok(user) => Ok(OptionalAuthUser(Some(user))),
+            Err(_) => Ok(OptionalAuthUser(None)),
+        }
+    }
+}
+
 #[derive(FromRow)]
 struct SessionUserRow {
     id: i64,

@@ -2,8 +2,8 @@ use app::{
     auth::{csrf_middleware, LoginRateLimiter},
     config::Config,
     routes::{
-        get_index_handler, get_login_handler, get_password_handler, post_login_handler,
-        post_logout_handler, post_password_handler,
+        get_index_handler, get_login_handler, get_password_handler, not_found_handler,
+        post_login_handler, post_logout_handler, post_password_handler,
     },
     AppState,
 };
@@ -80,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(get_password_handler).post(post_password_handler),
         )
         .route("/", get(get_index_handler))
+        .fallback(not_found_handler)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf_middleware,
