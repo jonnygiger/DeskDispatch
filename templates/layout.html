@@ -221,14 +221,13 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+    {% block top_nav %}
     <header class="top-nav">
-        {% block top_nav %}
         <a href="/" class="top-nav-brand">
             DeskDispatch
         </a>
-        {% block nav_links %}{% endblock %}
-        {% endblock %}
     </header>
+    {% endblock %}
 
     <div class="app-container">
         {% block subnav %}{% endblock %}
