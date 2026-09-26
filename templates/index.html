@@ -15,4 +15,23 @@
         <a href="/schedules/new" class="btn btn-outline">+ New Schedule</a>
     </div>
 </div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Active Automations</div>
+        <div class="stat-value">{{ active_automations_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Workers Online</div>
+        <div class="stat-value">{{ workers_online_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Runs Today</div>
+        <div class="stat-value">{{ runs_today_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Failed / Lost Runs Today</div>
+        <div class="stat-value{% if failed_lost_runs_today_count > 0 %} text-danger{% endif %}">{{ failed_lost_runs_today_count }}</div>
+    </div>
+</div>
 {% endblock %}
