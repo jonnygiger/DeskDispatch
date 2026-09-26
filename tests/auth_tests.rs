@@ -115,6 +115,68 @@ fn test_session_cookie_formatting() {
     assert!(clear_cookie.contains("Max-Age=0"));
 }
 
+#[test]
+fn test_top_nav_bar_role_conditional_rendering() {
+    use app::auth::AuthUser;
+    use app::routes::home::IndexTemplate;
+    use askama::Template;
+
+    // 1. Admin role: "Users" link should be present in top nav
+    let admin_user = AuthUser {
+        id: 1,
+        username: "admin".to_string(),
+        display_name: "Admin User".to_string(),
+        role: UserRole::Admin,
+        session_id: Uuid::new_v4(),
+        csrf_token: "csrf_token_admin".to_string(),
+    };
+    let admin_tmpl = IndexTemplate { user: admin_user };
+    let admin_html = admin_tmpl.render().unwrap();
+
+    assert!(admin_html.contains("<header class=\"top-nav\">"));
+    assert!(admin_html.contains("href=\"/automations\""));
+    assert!(admin_html.contains("href=\"/schedules\""));
+    assert!(admin_html.contains("href=\"/runs\""));
+    assert!(admin_html.contains("href=\"/workers\""));
+    assert!(admin_html.contains("href=\"/users\""));
+    assert!(admin_html.contains("Admin User"));
+    assert!(admin_html.contains("csrf_token_admin"));
+
+    // 2. Editor role: "Users" link should NOT be present
+    let editor_user = AuthUser {
+        id: 2,
+        username: "editor".to_string(),
+        display_name: "Editor User".to_string(),
+        role: UserRole::Editor,
+        session_id: Uuid::new_v4(),
+        csrf_token: "csrf_token_editor".to_string(),
+    };
+    let editor_tmpl = IndexTemplate { user: editor_user };
+    let editor_html = editor_tmpl.render().unwrap();
+
+    assert!(editor_html.contains("<header class=\"top-nav\">"));
+    assert!(editor_html.contains("href=\"/automations\""));
+    assert!(!editor_html.contains("href=\"/users\""));
+    assert!(editor_html.contains("Editor User"));
+
+    // 3. Viewer role: "Users" link should NOT be present
+    let viewer_user = AuthUser {
+        id: 3,
+        username: "viewer".to_string(),
+        display_name: "Viewer User".to_string(),
+        role: UserRole::Viewer,
+        session_id: Uuid::new_v4(),
+        csrf_token: "csrf_token_viewer".to_string(),
+    };
+    let viewer_tmpl = IndexTemplate { user: viewer_user };
+    let viewer_html = viewer_tmpl.render().unwrap();
+
+    assert!(viewer_html.contains("<header class=\"top-nav\">"));
+    assert!(viewer_html.contains("href=\"/automations\""));
+    assert!(!viewer_html.contains("href=\"/users\""));
+    assert!(viewer_html.contains("Viewer User"));
+}
+
 async fn get_test_pool() -> Option<sqlx::PgPool> {
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
