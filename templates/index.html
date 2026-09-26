@@ -8,20 +8,11 @@
 {% endblock %}
 
 {% block content %}
-<div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--color-border); padding-bottom: 1rem; margin-bottom: 1.5rem;">
-        <h1 style="font-size: 1.5rem; color: var(--color-text);">DeskDispatch Dashboard</h1>
-        <div style="font-size: 0.875rem; color: var(--color-text-muted);">
-            Logged in as <strong>{{ user.display_name }}</strong> ({{ user.username }}, role: {{ user.role }})
-        </div>
-    </div>
-    <p>Welcome to DeskDispatch.</p>
-    <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
-        <a href="/account/password" class="btn btn-primary">Change Password</a>
-        <form method="post" action="/logout" style="display:inline;">
-            {% call macros::csrf_field(user.csrf_token) %}
-            <button type="submit" class="btn btn-danger">Log Out</button>
-        </form>
+<div class="dashboard-header">
+    <h1 class="dashboard-title">Dashboard</h1>
+    <div class="dashboard-actions">
+        <a href="/automations/new" class="btn btn-primary">+ New Automation</a>
+        <a href="/schedules/new" class="btn btn-outline">+ New Schedule</a>
     </div>
 </div>
 {% endblock %}
