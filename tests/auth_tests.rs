@@ -130,7 +130,13 @@ fn test_top_nav_bar_role_conditional_rendering() {
         session_id: Uuid::new_v4(),
         csrf_token: "csrf_token_admin".to_string(),
     };
-    let admin_tmpl = IndexTemplate { user: admin_user };
+    let admin_tmpl = IndexTemplate {
+        user: admin_user,
+        active_automations_count: 0,
+        workers_online_count: 0,
+        runs_today_count: 0,
+        failed_lost_runs_today_count: 0,
+    };
     let admin_html = admin_tmpl.render().unwrap();
 
     assert!(admin_html.contains("<header class=\"top-nav\">"));
@@ -151,7 +157,13 @@ fn test_top_nav_bar_role_conditional_rendering() {
         session_id: Uuid::new_v4(),
         csrf_token: "csrf_token_editor".to_string(),
     };
-    let editor_tmpl = IndexTemplate { user: editor_user };
+    let editor_tmpl = IndexTemplate {
+        user: editor_user,
+        active_automations_count: 0,
+        workers_online_count: 0,
+        runs_today_count: 0,
+        failed_lost_runs_today_count: 0,
+    };
     let editor_html = editor_tmpl.render().unwrap();
 
     assert!(editor_html.contains("<header class=\"top-nav\">"));
@@ -168,7 +180,13 @@ fn test_top_nav_bar_role_conditional_rendering() {
         session_id: Uuid::new_v4(),
         csrf_token: "csrf_token_viewer".to_string(),
     };
-    let viewer_tmpl = IndexTemplate { user: viewer_user };
+    let viewer_tmpl = IndexTemplate {
+        user: viewer_user,
+        active_automations_count: 0,
+        workers_online_count: 0,
+        runs_today_count: 0,
+        failed_lost_runs_today_count: 0,
+    };
     let viewer_html = viewer_tmpl.render().unwrap();
 
     assert!(viewer_html.contains("<header class=\"top-nav\">"));

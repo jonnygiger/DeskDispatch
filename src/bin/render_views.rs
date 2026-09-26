@@ -27,7 +27,13 @@ fn main() {
         session_id: uuid::Uuid::new_v4(),
         csrf_token: "test_csrf_token_12345".to_string(),
     };
-    let index_tmpl = IndexTemplate { user: user.clone() };
+    let index_tmpl = IndexTemplate {
+        user: user.clone(),
+        active_automations_count: 5,
+        workers_online_count: 3,
+        runs_today_count: 12,
+        failed_lost_runs_today_count: 1,
+    };
     fs::write("rendered_templates/index.html", index_tmpl.render().unwrap()).unwrap();
 
     let not_found_tmpl = NotFoundTemplate {
