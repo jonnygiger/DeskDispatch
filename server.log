@@ -1,0 +1,4 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running `target/debug/app`
+  [2m2026-09-26T22:44:39.398364Z[0m [32m INFO[0m [1;32mapp[0m[32m: [32mStarting DeskDispatch task server...[0m
+    [2;3mat[0m src/main.rs:29
