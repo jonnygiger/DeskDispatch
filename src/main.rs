@@ -3,7 +3,7 @@ use app::{
     config::Config,
     routes::{
         get_index_handler, get_login_handler, get_password_handler, not_found_handler,
-        post_login_handler, post_logout_handler, post_password_handler,
+        post_login_handler, post_logout_handler, post_password_handler, static_asset_handler,
     },
     AppState,
 };
@@ -73,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/healthz", get(healthz_handler))
+        .route("/static/{*path}", get(static_asset_handler))
         .route("/login", get(get_login_handler).post(post_login_handler))
         .route("/logout", post(post_logout_handler))
         .route(
