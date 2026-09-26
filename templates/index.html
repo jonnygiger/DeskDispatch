@@ -1,0 +1,37 @@
+{% import "macros.html" as macros %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - DeskDispatch</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; background: #f4f5f7; margin: 0; padding: 2rem; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e5e7eb; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+        h1 { margin: 0; font-size: 1.5rem; color: #111827; }
+        .user-info { font-size: 0.875rem; color: #4b5563; }
+        .actions { display: flex; gap: 1rem; margin-top: 1rem; }
+        a.button, button { display: inline-block; padding: 0.5rem 1rem; background: #2563eb; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; border: none; cursor: pointer; }
+        button.logout { background: #dc2626; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>DeskDispatch Dashboard</h1>
+            <div class="user-info">
+                Logged in as <strong>{{ user.display_name }}</strong> ({{ user.username }}, role: {{ user.role }})
+            </div>
+        </div>
+        <p>Welcome to DeskDispatch.</p>
+        <div class="actions">
+            <a href="/account/password" class="button">Change Password</a>
+            <form method="post" action="/logout" style="display:inline;">
+                {% call macros::csrf_field(user.csrf_token) %}
+                <button type="submit" class="logout">Log Out</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

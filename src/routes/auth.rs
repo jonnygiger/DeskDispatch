@@ -1,0 +1,246 @@
+use argon2::{
+    password_hash::{PasswordHash, PasswordVerifier},
+    Argon2,
+};
+use askama::Template;
+use axum::{
+    extract::{Form, State},
+    http::{header, HeaderMap, StatusCode},
+    response::{Html, IntoResponse, Response},
+};
+use serde::Deserialize;
+use sqlx::Row;
+use std::net::IpAddr;
+
+use crate::auth::{
+    clear_session_cookie, create_session, create_session_cookie, delete_session, log_audit,
+    session::extract_session_id,
+};
+use crate::AppState;
+
+pub struct HtmlTemplate<T>(pub T);
+
+impl<T> IntoResponse for HtmlTemplate<T>
+where
+    T: Template,
+{
+    fn into_response(self) -> Response {
+        match self.0.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(err) => {
+                tracing::error!("Template rendering error: {}", err);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to render template",
+                )
+                    .into_response()
+            }
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "login.html")]
+pub struct LoginTemplate {
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct LoginForm {
+    pub username: String,
+    pub password: String,
+}
+
+struct UserRow {
+    id: i64,
+    password_hash: String,
+    is_active: bool,
+}
+
+pub async fn get_login_handler() -> impl IntoResponse {
+    HtmlTemplate(LoginTemplate { error: None })
+}
+
+pub async fn post_login_handler(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Form(form): Form<LoginForm>,
+) -> Response {
+    let client_ip = extract_client_ip(&headers);
+    let username_trim = form.username.trim();
+
+    if let Err(rate_err) = state.rate_limiter.check_rate_limit(client_ip, username_trim) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            HtmlTemplate(LoginTemplate {
+                error: Some(rate_err),
+            }),
+        )
+            .into_response();
+    }
+
+    let user_res = sqlx::query(
+        r#"
+        SELECT id, password_hash, is_active
+        FROM users
+        WHERE username = $1
+        "#,
+    )
+    .bind(username_trim)
+    .fetch_optional(&state.db)
+    .await;
+
+    let user = match user_res {
+        Ok(Some(row)) => {
+            let u = UserRow {
+                id: row.get("id"),
+                password_hash: row.get("password_hash"),
+                is_active: row.get("is_active"),
+            };
+            if u.is_active {
+                u
+            } else {
+                state.rate_limiter.record_failure(client_ip, username_trim);
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    HtmlTemplate(LoginTemplate {
+                        error: Some("Invalid username or password".to_string()),
+                    }),
+                )
+                    .into_response();
+            }
+        }
+        Ok(None) => {
+            state.rate_limiter.record_failure(client_ip, username_trim);
+            return (
+                StatusCode::UNAUTHORIZED,
+                HtmlTemplate(LoginTemplate {
+                    error: Some("Invalid username or password".to_string()),
+                }),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Database error during login: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                HtmlTemplate(LoginTemplate {
+                    error: Some("Internal server error".to_string()),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let parsed_hash = match PasswordHash::new(&user.password_hash) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Invalid password hash in database: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                HtmlTemplate(LoginTemplate {
+                    error: Some("Internal server error".to_string()),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if Argon2::default()
+        .verify_password(form.password.as_bytes(), &parsed_hash)
+        .is_err()
+    {
+        state.rate_limiter.record_failure(client_ip, username_trim);
+        return (
+            StatusCode::UNAUTHORIZED,
+            HtmlTemplate(LoginTemplate {
+                error: Some("Invalid username or password".to_string()),
+            }),
+        )
+            .into_response();
+    }
+
+    state.rate_limiter.clear(client_ip, username_trim);
+
+    if let Err(e) = sqlx::query("UPDATE users SET last_login_at = now() WHERE id = $1")
+        .bind(user.id)
+        .execute(&state.db)
+        .await
+    {
+        tracing::error!("Failed to update last_login_at: {}", e);
+    }
+
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|h| h.to_str().ok());
+
+    let session_id = match create_session(&state.db, user.id, Some(client_ip), user_agent).await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!("Failed to create session: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                HtmlTemplate(LoginTemplate {
+                    error: Some("Failed to create session".to_string()),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let _ = log_audit(
+        &state.db,
+        Some(user.id),
+        "login",
+        "user",
+        Some(user.id),
+        None,
+    )
+    .await;
+
+    let cookie = create_session_cookie(session_id);
+    (
+        StatusCode::SEE_OTHER,
+        [(header::SET_COOKIE, cookie), (header::LOCATION, "/".to_string())],
+    )
+        .into_response()
+}
+
+pub async fn post_logout_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|h| h.to_str().ok()) {
+        if let Some(session_id) = extract_session_id(cookie_header) {
+            let _ = delete_session(&state.db, session_id).await;
+        }
+    }
+
+    let cookie = clear_session_cookie();
+    (
+        StatusCode::SEE_OTHER,
+        [
+            (header::SET_COOKIE, cookie),
+            (header::LOCATION, "/login".to_string()),
+        ],
+    )
+        .into_response()
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> IpAddr {
+    if let Some(forwarded) = headers.get("X-Forwarded-For").and_then(|h| h.to_str().ok()) {
+        if let Some(first_ip) = forwarded.split(',').next() {
+            if let Ok(ip) = first_ip.trim().parse() {
+                return ip;
+            }
+        }
+    }
+
+    if let Some(real_ip) = headers.get("X-Real-IP").and_then(|h| h.to_str().ok()) {
+        if let Ok(ip) = real_ip.trim().parse() {
+            return ip;
+        }
+    }
+
+    "127.0.0.1".parse().unwrap()
+}

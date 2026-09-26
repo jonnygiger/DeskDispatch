@@ -1,25 +1,24 @@
-mod config;
-
+use app::{
+    auth::{csrf_middleware, LoginRateLimiter},
+    config::Config,
+    routes::{
+        get_index_handler, get_login_handler, get_password_handler, post_login_handler,
+        post_logout_handler, post_password_handler,
+    },
+    AppState,
+};
 use axum::{
     extract::State,
     http::StatusCode,
+    middleware,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Router,
 };
-use config::Config;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
 use std::net::SocketAddr;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-
-#[derive(Clone)]
-pub struct AppState {
-    pub db: PgPool,
-    pub s3_client: aws_sdk_s3::Client,
-    pub config: Config,
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -69,17 +68,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db: pool,
         s3_client,
         config: config.clone(),
+        rate_limiter: LoginRateLimiter::default(),
     };
 
     let app = Router::new()
         .route("/healthz", get(healthz_handler))
+        .route("/login", get(get_login_handler).post(post_login_handler))
+        .route("/logout", post(post_logout_handler))
+        .route(
+            "/account/password",
+            get(get_password_handler).post(post_password_handler),
+        )
+        .route("/", get(get_index_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            csrf_middleware,
+        ))
         .with_state(state);
 
     let addr: SocketAddr = config.bind_address.parse().expect("Invalid BIND_ADDRESS");
     info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
