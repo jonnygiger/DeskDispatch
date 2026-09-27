@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod config;
 pub mod routes;
+pub mod storage;
 
 use config::Config;
 use sqlx::PgPool;
