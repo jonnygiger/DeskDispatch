@@ -1,0 +1,17 @@
+<div class="shot-container">
+    <div class="shot shot--normal" style="{{ magnifier.normal_style() }}">
+        {% if magnifier.show_marker() %}
+        <span class="marker" style="{{ magnifier.normal_marker_style() }}"></span>
+        {% endif %}
+    </div>
+    <div class="shot shot--zoom400" style="{{ magnifier.zoom400_style() }}">
+        {% if magnifier.show_marker() %}
+        <span class="marker" style="{{ magnifier.zoom400_marker_style() }}"></span>
+        {% endif %}
+    </div>
+    <div class="shot shot--grid" style="{{ magnifier.grid_style() }}">
+        {% if magnifier.show_marker() %}
+        <span class="marker" style="{{ magnifier.grid_marker_style() }}"></span>
+        {% endif %}
+    </div>
+</div>
