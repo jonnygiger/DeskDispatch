@@ -1,11 +1,13 @@
 pub mod account;
 pub mod auth;
+pub mod automations;
 pub mod errors;
 pub mod home;
 pub mod static_assets;
 
 pub use account::{get_password_handler, post_password_handler};
 pub use auth::{get_login_handler, post_login_handler, post_logout_handler};
+pub use automations::*;
 pub use errors::{
     internal_error_handler, not_found_handler, InternalServerErrorTemplate, NotFoundTemplate,
 };

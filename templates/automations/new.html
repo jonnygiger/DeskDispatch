@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}New Automation - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">New Automation</h1>
+    <a href="/automations" class="btn btn-outline">Back to Automations</a>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    {% if let Some(err) = error %}
+        <div class="alert alert-danger" style="margin-bottom: 1rem; color: var(--color-danger);">
+            {{ err }}
+        </div>
+    {% endif %}
+
+    <form method="post" action="/automations">
+        {% call macros::csrf_field(csrf_token) %}
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="name" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Automation Name *</label>
+            <input type="text" id="name" name="name" value="{{ name }}" required class="form-control" style="width: 100%;" placeholder="e.g. Daily Data Export">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label for="description" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Description</label>
+            <textarea id="description" name="description" rows="3" class="form-control" style="width: 100%;" placeholder="Describe the purpose of this automation...">{{ description }}</textarea>
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <a href="/automations" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">Create Automation</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

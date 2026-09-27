@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Delete {{ automation.name }} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">Delete Automation</h1>
+    <a href="/automations/{{ automation.id }}" class="btn btn-outline">Cancel</a>
+</div>
+
+<div class="card" style="max-width: 500px; margin: 0 auto; text-align: center;">
+    <h2 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--color-danger);">Are you sure?</h2>
+    <p style="margin-bottom: 1.5rem;">
+        This action will permanently delete the automation <strong>"{{ automation.name }}"</strong> and all of its steps and configured variables.
+    </p>
+
+    <form method="post" action="/automations/{{ automation.id }}/delete" style="display: flex; gap: 1rem; justify-content: center;">
+        {% call macros::csrf_field(csrf_token) %}
+        <a href="/automations/{{ automation.id }}" class="btn btn-outline">Cancel</a>
+        <button type="submit" class="btn btn-primary" style="background-color: var(--color-danger); border-color: var(--color-danger);">Permanently Delete</button>
+    </form>
+</div>
+{% endblock %}
