@@ -29,7 +29,7 @@ impl ImageMagnifier {
     }
 
     pub fn show_marker(&self) -> bool {
-        self.target_x.is_some() && self.target_y.is_some()
+        self.target_x.is_some() && self.target_y.is_some() && self.native_w > 0 && self.native_h > 0
     }
 
     /// Background style for normal panel (1x scale, viewport 600x340 or calculated fit)
@@ -73,7 +73,7 @@ impl ImageMagnifier {
         let bg_h = self.native_h * 4;
 
         let (pan_x, pan_y) = match (self.target_x, self.target_y) {
-            (Some(tx), Some(ty)) => {
+            (Some(tx), Some(ty)) if self.native_w > 0 && self.native_h > 0 => {
                 let px = 160.0 - (tx as f64 * 4.0);
                 let py = 160.0 - (ty as f64 * 4.0);
                 (px, py)
@@ -102,7 +102,7 @@ impl ImageMagnifier {
         let bg_h = self.native_h * 20;
 
         let (pan_x, pan_y) = match (self.target_x, self.target_y) {
-            (Some(tx), Some(ty)) => {
+            (Some(tx), Some(ty)) if self.native_w > 0 && self.native_h > 0 => {
                 let px = 160.0 - (tx as f64 * 20.0 + 10.0);
                 let py = 160.0 - (ty as f64 * 20.0 + 10.0);
                 (px, py)
@@ -181,6 +181,53 @@ mod tests {
         // pan_x = 160 - (100 * 20 + 10) = -1850
         // pan_y = 160 - (200 * 20 + 10) = -3850
         assert!(grid_style.contains("0 0, 0 0, -1850.00px -3850.00px"));
+    }
+
+    #[test]
+    fn test_normal_and_zoom400_edge_cases() {
+        // Zero dimensions with target
+        let mag_zero = ImageMagnifier::new(
+            "http://example.com/image.png",
+            0,
+            0,
+            Some(100),
+            Some(100),
+        );
+        assert!(!mag_zero.show_marker());
+        assert_eq!(mag_zero.normal_marker_style(), "");
+        assert_eq!(mag_zero.zoom400_marker_style(), "");
+        assert!(mag_zero.zoom400_style().contains("background-size: 0px 0px"));
+        assert!(mag_zero.zoom400_style().contains("background-position: 0.00px 0.00px"));
+
+        // Exact math check for normal panel marker with 600x340 viewport
+        // native 1200 x 680 (aspect ratio 600/340 = 1.7647...)
+        // scale_w = 600/1200 = 0.5, scale_h = 340/680 = 0.5, scale = 0.5
+        // rendered_w = 600, rendered_h = 340, offset_x = 0, offset_y = 0
+        // target (400, 200) -> marker_left = 200.00, marker_top = 100.00
+        let mag_normal = ImageMagnifier::new(
+            "http://example.com/image.png",
+            1200,
+            680,
+            Some(400),
+            Some(200),
+        );
+        assert_eq!(mag_normal.normal_marker_style(), "left: 200.00px; top: 100.00px;");
+
+        // Zoom 400% math check: native 800 x 600, target (100, 50)
+        // bg_w = 3200, bg_h = 2400
+        // pan_x = 160 - 100*4 = -240.00
+        // pan_y = 160 - 50*4 = -40.00
+        let mag_zoom = ImageMagnifier::new(
+            "http://example.com/image.png",
+            800,
+            600,
+            Some(100),
+            Some(50),
+        );
+        let zoom_style = mag_zoom.zoom400_style();
+        assert!(zoom_style.contains("background-size: 3200px 2400px"));
+        assert!(zoom_style.contains("background-position: -240.00px -40.00px"));
+        assert_eq!(mag_zoom.zoom400_marker_style(), "left: 160px; top: 160px;");
     }
 
     #[test]
