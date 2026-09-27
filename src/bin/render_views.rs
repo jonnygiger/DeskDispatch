@@ -89,5 +89,19 @@ fn main() {
     )
     .unwrap();
 
+    let mag = app::magnifier::ImageMagnifier::new(
+        "https://via.placeholder.com/800x600.png",
+        800,
+        600,
+        Some(100),
+        Some(150),
+    );
+    let mag_tmpl = app::magnifier::ImageMagnifierTemplate { magnifier: &mag };
+    let mag_html = format!(
+        "<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"../static/style.css\"></head><body><div style=\"padding:2rem;\">{}</div></body></html>",
+        mag_tmpl.render().unwrap()
+    );
+    fs::write("rendered_templates/image_magnifier.html", mag_html).unwrap();
+
     println!("Successfully rendered Askama templates to rendered_templates/");
 }
