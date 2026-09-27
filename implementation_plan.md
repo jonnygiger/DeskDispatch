@@ -74,14 +74,14 @@
 
 ## Phase 6: Object Storage & Zoom Component
 
-**60.** Initialize the S3/MinIO client wrapper for generating presigned GET URLs.
+**60.** Initialize the RustFS client wrapper for generating presigned GET URLs.
 **61.** Implement presigned PUT URL generation for worker node file uploads.
 **62.** Implement presigned POST policy generation for browser-direct file uploads.
 **63.** Build the reusable Askama partial defining the three-panel image magnifier component.
 **64.** Implement server-computed CSS background positioning and sizing math for the `shot--normal` and `shot--zoom400` panels.
 **65.** Apply `image-rendering: pixelated` styling and grid overlays for the `shot--grid` panel.
 **66.** Implement dynamic coordinate math to correctly position the CSS-triangle marker across all three scales.
-**67.** Build `GET /media/screenshots/{id}` and `GET /media/bitmaps/{id}` routes that issue 302 redirects to presigned S3 URLs.
+**67.** Build `GET /media/screenshots/{id}` and `GET /media/bitmaps/{id}` routes that issue 302 redirects to presigned S3/RustFS URLs.
 **68.** Create a throwaway internal route to manually verify the CSS zoom and pan mathematics of the magnifier component.
 
 ## Phase 7: Bitmap Library
@@ -165,7 +165,7 @@
 
 **122.** Extend the `audit_log` middleware to capture all mutation handlers globally across the application.
 **123.** Conduct an `EXPLAIN` query pass to verify that dispatch, scheduling, and positional queries correctly hit their intended indexes.
-**124.** Wrap all primary request handlers, database calls, and S3 interactions in structured `tracing` spans.
+**124.** Wrap all primary request handlers, database calls, and  interactions in structured `tracing` spans.
 **125.** Create a multi-stage `Dockerfile` optimizing the final binary size and layer caching for Rust.
 **126.** Create a production-ready `docker-compose.yml` integrating the application, Postgres, MinIO, and a migration startup container.
 **127.** Implement `sqlx::test`-backed integration tests validating step positioning and compaction math.
