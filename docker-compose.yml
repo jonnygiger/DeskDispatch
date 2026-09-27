@@ -35,19 +35,6 @@ services:
       timeout: 5s
       retries: 5
 
-  rustfs-create-bucket:
-    image: minio/mc:RELEASE.2024-01-16T16-06-34Z
-    container_name: deskdispatch-rustfs-create-bucket
-    depends_on:
-      rustfs:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc alias set myrustfs http://rustfs:9000 minioadmin minioadminpassword;
-      /usr/bin/mc mb myrustfs/deskdispatch-bucket --ignore-existing;
-      exit 0;
-      "
-
 volumes:
   postgres_data:
   rustfs_data:
