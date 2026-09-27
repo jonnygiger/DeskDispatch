@@ -17,38 +17,37 @@ services:
       timeout: 5s
       retries: 5
 
-  minio:
-    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
-    container_name: deskdispatch-minio
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: deskdispatch-rustfs
     restart: always
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadminpassword
+      RUSTFS_ROOT_USER: minioadmin
+      RUSTFS_ROOT_PASSWORD: minioadminpassword
     ports:
       - "9000:9000"
       - "9001:9001"
-    command: server /data --console-address ":9001"
     volumes:
-      - minio_data:/data
+      - rustfs_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  minio-create-bucket:
+  rustfs-create-bucket:
     image: minio/mc:RELEASE.2024-01-16T16-06-34Z
-    container_name: deskdispatch-minio-create-bucket
+    container_name: deskdispatch-rustfs-create-bucket
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadminpassword;
-      /usr/bin/mc mb myminio/deskdispatch-bucket --ignore-existing;
+      /usr/bin/mc alias set myrustfs http://rustfs:9000 minioadmin minioadminpassword;
+      /usr/bin/mc mb myrustfs/deskdispatch-bucket --ignore-existing;
       exit 0;
       "
 
 volumes:
   postgres_data:
-  minio_data:
+  rustfs_data:
