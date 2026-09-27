@@ -1,0 +1,109 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}{{ automation.name }} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="align-items: flex-start; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+    <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <h1 class="dashboard-title" style="margin: 0;">{{ automation.name }}</h1>
+            <span class="badge {{ automation.status_badge_class() }}">{{ automation.status }}</span>
+        </div>
+        {% if user.role.can_edit() %}
+        <div class="dashboard-actions">
+            <a href="/automations/{{ automation.id }}/steps/new" class="btn btn-primary">+ New Step</a>
+            <a href="/automations/{{ automation.id }}/delete" class="btn btn-danger-outline">Delete</a>
+        </div>
+        {% endif %}
+    </div>
+    {% if !automation.description.is_empty() %}
+        <p style="color: var(--color-text-muted); margin: 0;">{{ automation.description }}</p>
+    {% endif %}
+</div>
+
+<!-- Sub-navigation -->
+<div style="display: flex; gap: 1rem; border-bottom: 1px solid var(--color-border); margin-bottom: 1.5rem; padding-bottom: 0.5rem;">
+    <a href="/automations/{{ automation.id }}" style="font-weight: 600; border-bottom: 2px solid var(--color-primary); padding-bottom: 0.5rem; color: var(--color-primary);">Steps</a>
+</div>
+
+{% if user.role.can_edit() %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem;">Edit Details</h3>
+    <form method="post" action="/automations/{{ automation.id }}" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        {% call macros::csrf_field(csrf_token) %}
+        <div style="flex: 2; min-width: 200px;">
+            <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
+            <input type="text" name="name" value="{{ automation.name }}" required class="form-control" style="width: 100%;">
+        </div>
+        <div style="flex: 3; min-width: 200px;">
+            <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Description</label>
+            <input type="text" name="description" value="{{ automation.description }}" class="form-control" style="width: 100%;">
+        </div>
+        <div style="flex: 1; min-width: 120px;">
+            <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Status</label>
+            <select name="status" class="form-control" style="width: 100%;">
+                <option value="draft"{% if automation.status == "draft" %} selected{% endif %}>Draft</option>
+                <option value="active"{% if automation.status == "active" %} selected{% endif %}>Active</option>
+                <option value="archived"{% if automation.status == "archived" %} selected{% endif %}>Archived</option>
+            </select>
+        </div>
+        <div>
+            <button type="submit" class="btn btn-outline">Save Details</button>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+<div class="steps-container" style="display: flex; flex-direction: column; gap: 1rem;">
+    {% if steps.is_empty() %}
+        <div class="card" style="text-align: center; padding: 2rem;">
+            <p style="color: var(--color-text-muted); margin-bottom: 1rem;">No steps defined in this automation yet.</p>
+            {% if user.role.can_edit() %}
+                <a href="/automations/{{ automation.id }}/steps/new" class="btn btn-primary">+ Add First Step</a>
+            {% endif %}
+        </div>
+    {% else %}
+        {% for step in steps %}
+        <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <div style="font-weight: 600; font-size: 1rem; margin-bottom: 0.25rem;">
+                    Step {{ step.step_number }} —
+                    {% if let Some(lbl) = step.label %}
+                        <strong>{{ lbl }}</strong>:
+                    {% endif %}
+                    {{ step.description }}{{ step.formatted_post_delay() }}
+                </div>
+                <div style="font-size: 0.8125rem; color: var(--color-text-muted);">
+                    Type: <code>{{ step.step_type }}</code> | Position: {{ step.position }}
+                </div>
+            </div>
+            {% if user.role.can_edit() %}
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <a href="/automations/{{ automation.id }}/steps/{{ step.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
+
+                <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/move-up" style="display: inline;">
+                    {% call macros::csrf_field(csrf_token) %}
+                    <button type="submit" class="btn btn-sm btn-outline" title="Move Up">↑</button>
+                </form>
+
+                <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/move-down" style="display: inline;">
+                    {% call macros::csrf_field(csrf_token) %}
+                    <button type="submit" class="btn btn-sm btn-outline" title="Move Down">↓</button>
+                </form>
+
+                <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this step?');">
+                    {% call macros::csrf_field(csrf_token) %}
+                    <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Automations - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">Automations</h1>
+    {% if user.role.can_edit() %}
+    <div class="dashboard-actions">
+        <a href="/automations/new" class="btn btn-primary">+ New Automation</a>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" action="/automations" style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 200px;">
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search automations..." class="form-control" style="width: 100%;">
+        </div>
+        <div style="width: 150px;">
+            <select name="status" class="form-control" onchange="this.form.submit()">
+                <option value="all"{% if status_filter == "all" %} selected{% endif %}>All Statuses</option>
+                <option value="draft"{% if status_filter == "draft" %} selected{% endif %}>Draft</option>
+                <option value="active"{% if status_filter == "active" %} selected{% endif %}>Active</option>
+                <option value="archived"{% if status_filter == "archived" %} selected{% endif %}>Archived</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-outline">Filter</button>
+    </form>
+</div>
+
+<div class="card">
+    {% if automations.is_empty() %}
+        <p style="color: var(--color-text-muted); font-size: 0.875rem;">No automations found.</p>
+    {% else %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Steps</th>
+                    <th>Last Modified</th>
+                    <th>Last Run</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for auto in automations %}
+                <tr>
+                    <td>
+                        <a href="/automations/{{ auto.id }}" style="font-weight: 600;">{{ auto.name }}</a>
+                        {% if !auto.description.is_empty() %}
+                            <div style="font-size: 0.8125rem; color: var(--color-text-muted);">{{ auto.description }}</div>
+                        {% endif %}
+                    </td>
+                    <td><span class="badge {{ auto.status_badge_class() }}">{{ auto.status }}</span></td>
+                    <td>{{ auto.step_count }}</td>
+                    <td>{{ auto.formatted_updated_at() }}</td>
+                    <td>
+                        {% if let Some(run_id) = auto.last_run_id %}
+                            <a href="/runs/{{ run_id }}">
+                                <span class="badge {{ auto.last_run_status_badge_class() }}">{{ auto.last_run_status.as_deref().unwrap_or("unknown") }}</span>
+                            </a>
+                            <span style="font-size: 0.8125rem; color: var(--color-text-muted); margin-left: 0.25rem;">({{ auto.formatted_last_run_at() }})</span>
+                        {% else %}
+                            <span style="color: var(--color-text-muted);">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="/automations/{{ auto.id }}" class="btn btn-sm btn-outline">View</a>
+                        {% if user.role.can_edit() %}
+                            <a href="/automations/{{ auto.id }}/delete" class="btn btn-sm btn-danger-outline">Delete</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
+{% endblock %}

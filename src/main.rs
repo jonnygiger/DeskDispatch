@@ -1,10 +1,7 @@
 use app::{
     auth::{csrf_middleware, LoginRateLimiter},
     config::Config,
-    routes::{
-        get_index_handler, get_login_handler, get_password_handler, not_found_handler,
-        post_login_handler, post_logout_handler, post_password_handler, static_asset_handler,
-    },
+    routes::*,
     AppState,
 };
 use axum::{
@@ -81,6 +78,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(get_password_handler).post(post_password_handler),
         )
         .route("/", get(get_index_handler))
+        .route("/automations", get(get_automations_handler).post(post_automations_handler))
+        .route("/automations/new", get(get_new_automation_handler))
+        .route("/automations/{id}", get(get_automation_detail_handler).post(post_automation_edit_handler))
+        .route("/automations/{id}/delete", get(get_automation_delete_handler).post(post_automation_delete_handler))
+        .route("/automations/{id}/steps/new", get(get_step_type_picker_handler))
+        .route("/automations/{id}/steps/new/key_press", get(get_new_key_press_step_handler))
+        .route("/automations/{id}/steps", post(post_create_step_handler))
+        .route("/automations/{id}/steps/{sid}/edit", get(get_edit_step_handler))
+        .route("/automations/{id}/steps/{sid}", post(post_edit_step_handler))
+        .route("/automations/{id}/steps/{sid}/move-up", post(post_move_step_up_handler))
+        .route("/automations/{id}/steps/{sid}/move-down", post(post_move_step_down_handler))
+        .route("/automations/{id}/steps/{sid}/delete", post(post_delete_step_handler))
         .fallback(not_found_handler)
         .layer(middleware::from_fn_with_state(
             state.clone(),
