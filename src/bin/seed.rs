@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
 
     let admin_username = env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string());
-    let admin_password = env::var("ADMIN_PASSWORD").unwrap_or_else(|_| "adminpassword".to_string());
+    let admin_password = env::var("ADMIN_PASSWORD").unwrap_or_else(|_| "test".to_string());
     let admin_display_name = env::var("ADMIN_DISPLAY_NAME").unwrap_or_else(|_| "Admin".to_string());
 
     println!("Connecting to database to seed admin user...");

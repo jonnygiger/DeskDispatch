@@ -1,8 +1,8 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: deskdispatch-postgres
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgrespassword
@@ -16,11 +16,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   rustfs:
     image: rustfs/rustfs:latest
     container_name: deskdispatch-rustfs
-    restart: always
+    restart: unless-stopped
     environment:
       RUSTFS_ROOT_USER: minioadmin
       RUSTFS_ROOT_PASSWORD: minioadminpassword
@@ -34,6 +35,51 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
+
+  init-db:
+    image: postgres:16-alpine
+    container_name: deskdispatch-init-db
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgrespassword
+      PGDATABASE: deskdispatch
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: test
+      ADMIN_DISPLAY_NAME: Admin
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "Ensuring users table exists..."
+        psql -c '
+        CREATE TABLE IF NOT EXISTS users (
+            id BIGSERIAL PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT '\''viewer'\'' CHECK (role IN ('\''admin'\'', '\''editor'\'', '\''viewer'\'')),
+            is_active BOOLEAN NOT NULL DEFAULT true,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            last_login_at TIMESTAMPTZ
+        );
+        '
+        echo "Creating default admin user if not present..."
+        # Argon2id hash for password "test"
+        HASH='$$argon2id$$v=19$$m=19456,t=2,p=1$$N0syeHh1R3Nsa3hNTDRyZw$$tTh0o4cO9c6d/I50k4p6sXkO04EwUfL4f9A42G4YnI0'
+        psql -c "
+        INSERT INTO users (username, password_hash, display_name, role, is_active)
+        VALUES ('""$$ADMIN_USERNAME""', '""$$HASH""', '""$$ADMIN_DISPLAY_NAME""', 'admin', true)
+        ON CONFLICT (username) DO NOTHING;
+        "
+        echo "Default admin user initialization complete."
 
 volumes:
   postgres_data:
