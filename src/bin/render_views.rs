@@ -1,7 +1,7 @@
 use app::auth::UserRole;
 use app::routes::account::AccountPasswordTemplate;
 use app::routes::auth::LoginTemplate;
-use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate, BitmapsUploadTemplate};
+use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate, BitmapsUploadTemplate, RegionPickerTopLeftTemplate};
 use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
 use app::routes::media::DevMagnifierTemplate;
 use app::routes::home::{IndexTemplate, RecentRunItem};
@@ -153,6 +153,28 @@ fn main() {
         redirect_url: "http://localhost:3000/bitmaps/commit?key=bitmaps/sample.png&name=Login%20Button".to_string(),
     };
     fs::write("rendered_templates/bitmaps_upload.html", upload_tmpl.render().unwrap()).unwrap();
+
+    let pick_region_tmpl = RegionPickerTopLeftTemplate {
+        user: user.clone(),
+        csrf_token: "test_csrf_token_12345".to_string(),
+        automation_id: None,
+        image_url: "/static/sample_screenshot.png".to_string(),
+        width: 1920,
+        height: 1080,
+        step_stage: 1,
+        top_left_x: None,
+        top_left_y: None,
+        click_x: None,
+        click_y: None,
+        magnifier: app::magnifier::ImageMagnifier::new(
+            "/static/sample_screenshot.png",
+            1920,
+            1080,
+            None,
+            None,
+        ),
+    };
+    fs::write("rendered_templates/bitmaps_pick_region.html", pick_region_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

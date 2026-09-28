@@ -430,3 +430,78 @@ async fn test_bitmap_deletion_flow() {
         .unwrap();
     assert!(check_row2.is_none());
 }
+
+#[tokio::test]
+async fn test_region_picker_top_left_flow() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_region_picker_top_left_flow");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(credentials)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .endpoint_url("http://localhost:9000")
+        .force_path_style(true)
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let state = AppState {
+        db: pool.clone(),
+        s3_client,
+        config: config.clone(),
+        rate_limiter: app::auth::LoginRateLimiter::default(),
+    };
+
+    let app = Router::new()
+        .route("/bitmaps/pick-region", axum::routing::get(get_pick_region_handler).post(post_pick_region_top_left_handler))
+        .route("/automations/{id}/bitmaps/pick-region", axum::routing::get(get_automation_pick_region_handler).post(post_automation_pick_region_top_left_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            app::auth::csrf_middleware,
+        ))
+        .with_state(state);
+
+    let (_user_id, session) = create_test_user(&pool, &format!("region_user_{}", uuid::Uuid::new_v4().simple()), "editor").await;
+    let csrf_token = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&session).unwrap(), &config.session_secret);
+
+    // 1. GET /bitmaps/pick-region
+    let req_get = Request::builder()
+        .method("GET")
+        .uri("/bitmaps/pick-region?image_url=/static/sample.png&width=1200&height=680")
+        .header(header::COOKIE, format!("session_id={}", session))
+        .body(Body::empty())
+        .unwrap();
+
+    let res_get = app.clone().oneshot(req_get).await.unwrap();
+    assert_eq!(res_get.status(), StatusCode::OK);
+    let body_bytes_get = axum::body::to_bytes(res_get.into_body(), usize::MAX).await.unwrap();
+    let body_str_get = String::from_utf8(body_bytes_get.to_vec()).unwrap();
+    assert!(body_str_get.contains("Step 1: Click Top-Left Corner"));
+    assert!(body_str_get.contains("input type=\"image\""));
+
+    // 2. POST /bitmaps/pick-region with image click coordinates (300, 170)
+    let post_body = format!(
+        "csrf_token={}&image_url=/static/sample.png&width=1200&height=680&click.x=300&click.y=170",
+        csrf_token
+    );
+
+    let req_post = Request::builder()
+        .method("POST")
+        .uri("/bitmaps/pick-region")
+        .header(header::COOKIE, format!("session_id={}", session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(post_body))
+        .unwrap();
+
+    let res_post = app.clone().oneshot(req_post).await.unwrap();
+    assert_eq!(res_post.status(), StatusCode::OK);
+
+    let body_bytes_post = axum::body::to_bytes(res_post.into_body(), usize::MAX).await.unwrap();
+    let body_str_post = String::from_utf8(body_bytes_post.to_vec()).unwrap();
+    assert!(body_str_post.contains("Coarse Top-Left Corner Selected"));
+    assert!(body_str_post.contains("(600, 340)"));
+}

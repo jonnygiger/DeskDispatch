@@ -95,6 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/automations/{id}/bitmaps", get(get_automation_bitmaps_handler).post(post_automation_bitmaps_handler))
         .route("/automations/{id}/bitmaps/{bid}/delete", post(post_automation_delete_bitmap_handler))
         .route("/bitmaps/commit", get(get_bitmap_commit_handler))
+        .route("/bitmaps/pick-region", get(get_pick_region_handler).post(post_pick_region_top_left_handler))
+        .route("/automations/{id}/bitmaps/pick-region", get(get_automation_pick_region_handler).post(post_automation_pick_region_top_left_handler))
         .route("/media/screenshots/{id}", get(get_media_screenshot_handler))
         .route("/media/bitmaps/{id}", get(get_media_bitmap_handler))
         .route("/dev/magnifier-verify", get(dev_magnifier_verify_handler))
