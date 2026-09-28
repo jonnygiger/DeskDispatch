@@ -184,6 +184,56 @@ mod tests {
     }
 
     #[test]
+    fn test_marker_coordinate_positioning_aspect_ratios() {
+        // Case 1: Wider image than viewport (vertical letterboxing / top/bottom padding)
+        // Native: 1200 x 340 -> scale_w = 600/1200 = 0.5, scale_h = 340/340 = 1.0 -> scale = 0.5
+        // rendered_w = 600, rendered_h = 170, offset_x = 0, offset_y = 85
+        // Target (200, 100) -> marker_left = 100.00px, marker_top = 135.00px
+        let mag_wide = ImageMagnifier::new(
+            "http://example.com/wide.png",
+            1200,
+            340,
+            Some(200),
+            Some(100),
+        );
+        assert_eq!(
+            mag_wide.normal_marker_style(),
+            "left: 100.00px; top: 135.00px;"
+        );
+
+        // Case 2: Taller image than viewport (horizontal letterboxing / left/right padding)
+        // Native: 600 x 680 -> scale_w = 600/600 = 1.0, scale_h = 340/680 = 0.5 -> scale = 0.5
+        // rendered_w = 300, rendered_h = 340, offset_x = 150, offset_y = 0
+        // Target (100, 200) -> marker_left = 200.00px, marker_top = 100.00px
+        let mag_tall = ImageMagnifier::new(
+            "http://example.com/tall.png",
+            600,
+            680,
+            Some(100),
+            Some(200),
+        );
+        assert_eq!(
+            mag_tall.normal_marker_style(),
+            "left: 200.00px; top: 100.00px;"
+        );
+    }
+
+    #[test]
+    fn test_marker_coordinate_positioning_partial_targets() {
+        let mag_no_x = ImageMagnifier::new("http://example.com/test.png", 800, 600, None, Some(100));
+        assert!(!mag_no_x.show_marker());
+        assert_eq!(mag_no_x.normal_marker_style(), "");
+        assert_eq!(mag_no_x.zoom400_marker_style(), "");
+        assert_eq!(mag_no_x.grid_marker_style(), "");
+
+        let mag_no_y = ImageMagnifier::new("http://example.com/test.png", 800, 600, Some(100), None);
+        assert!(!mag_no_y.show_marker());
+        assert_eq!(mag_no_y.normal_marker_style(), "");
+        assert_eq!(mag_no_y.zoom400_marker_style(), "");
+        assert_eq!(mag_no_y.grid_marker_style(), "");
+    }
+
+    #[test]
     fn test_normal_and_zoom400_edge_cases() {
         // Zero dimensions with target
         let mag_zero = ImageMagnifier::new(
