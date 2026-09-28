@@ -27,3 +27,5 @@ rust-embed = "8.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.15", features = ["v4", "serde"] }
+image = "0.25"
+urlencoding = "2.1"

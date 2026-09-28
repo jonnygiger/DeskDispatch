@@ -1,0 +1,49 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}
+Upload Image - {{ bitmap_name }} - DeskDispatch
+{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="align-items: flex-start; flex-direction: column; gap: 0.5rem; margin-bottom: 1.5rem;">
+    <h1 class="dashboard-title" style="margin: 0;">Upload Image for Reference Bitmap</h1>
+    <p style="color: var(--color-text-muted); margin: 0;">
+        Directly upload an image file to object storage for <strong>{{ bitmap_name }}</strong>.
+    </p>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto; padding: 2rem;">
+    <div style="margin-bottom: 1.5rem;">
+        <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 2: Upload Reference Image File</h2>
+        <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
+            Select a PNG or JPEG file on your computer. Your file will be uploaded directly to object storage.
+        </p>
+    </div>
+
+    <form action="{{ presigned_post_url }}" method="post" enctype="multipart/form-data" style="display: flex; flex-direction: column; gap: 1.25rem;">
+        {% for (key, val) in presigned_fields %}
+        <input type="hidden" name="{{ key }}" value="{{ val }}">
+        {% endfor %}
+        <input type="hidden" name="success_action_redirect" value="{{ redirect_url }}">
+
+        <div class="form-group" style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <label for="file" style="font-weight: 600; font-size: 0.875rem;">Select Image File:</label>
+            <input type="file" id="file" name="file" accept="image/png, image/jpeg, image/webp" required style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
+            {% if let Some(aid) = automation_id %}
+            <a href="/automations/{{ aid }}/bitmaps" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Cancel</a>
+            {% else %}
+            <a href="/bitmaps" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Cancel</a>
+            {% endif %}
+            <button type="submit" class="btn btn-primary" style="background: var(--color-primary); color: white; border: none; padding: 0.5rem 1.25rem; border-radius: 4px; font-weight: 600; cursor: pointer;">Upload to Storage</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

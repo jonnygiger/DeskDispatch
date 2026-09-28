@@ -224,6 +224,7 @@ pub fn generate_presigned_post_policy(
             { "x-amz-algorithm": "AWS4-HMAC-SHA256" },
             { "x-amz-credential": credential },
             { "x-amz-date": amz_date },
+            [ "starting-with", "$success_action_redirect", "" ],
             [ "content-length-range", 0, max_content_length ]
         ]
     });

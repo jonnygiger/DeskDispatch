@@ -1,7 +1,7 @@
 use app::auth::UserRole;
 use app::routes::account::AccountPasswordTemplate;
 use app::routes::auth::LoginTemplate;
-use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate};
+use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate, BitmapsUploadTemplate};
 use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
 use app::routes::media::DevMagnifierTemplate;
 use app::routes::home::{IndexTemplate, RecentRunItem};
@@ -138,6 +138,21 @@ fn main() {
         automation_name: None,
     };
     fs::write("rendered_templates/bitmaps_list.html", bitmaps_tmpl.render().unwrap()).unwrap();
+
+    let upload_tmpl = BitmapsUploadTemplate {
+        user: user.clone(),
+        csrf_token: "test_csrf_token_12345".to_string(),
+        bitmap_name: "Login Button".to_string(),
+        object_storage_key: "bitmaps/sample.png".to_string(),
+        automation_id: None,
+        presigned_post_url: "http://localhost:9000/deskdispatch-bucket".to_string(),
+        presigned_fields: vec![
+            ("key".to_string(), "bitmaps/sample.png".to_string()),
+            ("policy".to_string(), "sample_policy".to_string()),
+        ],
+        redirect_url: "http://localhost:3000/bitmaps/commit?key=bitmaps/sample.png&name=Login%20Button".to_string(),
+    };
+    fs::write("rendered_templates/bitmaps_upload.html", upload_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }
