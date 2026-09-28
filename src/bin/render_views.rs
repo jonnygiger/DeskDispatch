@@ -1,6 +1,7 @@
 use app::auth::UserRole;
 use app::routes::account::AccountPasswordTemplate;
 use app::routes::auth::LoginTemplate;
+use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate};
 use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
 use app::routes::media::DevMagnifierTemplate;
 use app::routes::home::{IndexTemplate, RecentRunItem};
@@ -82,7 +83,7 @@ fn main() {
 
     let internal_err_tmpl = InternalServerErrorTemplate {
         message: Some("Something went wrong".to_string()),
-        user: Some(user),
+        user: Some(user.clone()),
     };
     fs::write(
         "rendered_templates/500.html",
@@ -108,6 +109,35 @@ fn main() {
         magnifier: mag,
     };
     fs::write("rendered_templates/dev_magnifier.html", dev_mag_tmpl.render().unwrap()).unwrap();
+
+    let sample_bitmap = BitmapListItem {
+        id: 1,
+        automation_id: Some(1),
+        automation_name: Some("Sample Automation".to_string()),
+        name: "Login Button Bitmap".to_string(),
+        object_storage_key: "bitmaps/sample.png".to_string(),
+        width: 120,
+        height: 40,
+        created_by: 1,
+        created_by_name: "Admin User".to_string(),
+        created_at: Utc::now(),
+        magnifier: app::magnifier::ImageMagnifier::new(
+            "/media/bitmaps/1",
+            120,
+            40,
+            None,
+            None,
+        ),
+    };
+
+    let bitmaps_tmpl = BitmapsListTemplate {
+        user: user.clone(),
+        csrf_token: "test_csrf_token_12345".to_string(),
+        bitmaps: vec![sample_bitmap],
+        automation_id: None,
+        automation_name: None,
+    };
+    fs::write("rendered_templates/bitmaps_list.html", bitmaps_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }
