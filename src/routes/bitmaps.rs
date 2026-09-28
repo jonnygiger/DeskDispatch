@@ -51,6 +51,25 @@ pub struct PickRegionTopLeftForm {
     pub y: u32,
 }
 
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct PickRegionBottomRightForm {
+    pub csrf_token: String,
+    pub automation_id: Option<i64>,
+    pub image_url: String,
+    pub width: u32,
+    pub height: u32,
+    pub top_left_x: u32,
+    pub top_left_y: u32,
+    #[serde(alias = "grid_click.x", default)]
+    pub grid_x: Option<u32>,
+    #[serde(alias = "grid_click.y", default)]
+    pub grid_y: Option<u32>,
+    #[serde(alias = "coarse_click.x", default)]
+    pub coarse_x: Option<u32>,
+    #[serde(alias = "coarse_click.y", default)]
+    pub coarse_y: Option<u32>,
+}
+
 #[derive(Template)]
 #[template(path = "bitmaps/upload.html")]
 pub struct BitmapsUploadTemplate {
@@ -76,6 +95,8 @@ pub struct RegionPickerTopLeftTemplate {
     pub step_stage: u8,
     pub top_left_x: Option<u32>,
     pub top_left_y: Option<u32>,
+    pub bottom_right_x: Option<u32>,
+    pub bottom_right_y: Option<u32>,
     pub click_x: Option<u32>,
     pub click_y: Option<u32>,
     pub magnifier: ImageMagnifier,
@@ -638,6 +659,8 @@ pub async fn get_pick_region_handler(
         step_stage: 1,
         top_left_x: None,
         top_left_y: None,
+        bottom_right_x: None,
+        bottom_right_y: None,
         click_x: None,
         click_y: None,
         magnifier,
@@ -668,6 +691,8 @@ pub async fn get_automation_pick_region_handler(
         step_stage: 1,
         top_left_x: None,
         top_left_y: None,
+        bottom_right_x: None,
+        bottom_right_y: None,
         click_x: None,
         click_y: None,
         magnifier,
@@ -711,6 +736,8 @@ pub async fn post_pick_region_top_left_handler(
         step_stage: 2,
         top_left_x: Some(top_left_x),
         top_left_y: Some(top_left_y),
+        bottom_right_x: None,
+        bottom_right_y: None,
         click_x: Some(form.x),
         click_y: Some(form.y),
         magnifier,
@@ -756,11 +783,88 @@ pub async fn post_automation_pick_region_top_left_handler(
         step_stage: 2,
         top_left_x: Some(top_left_x),
         top_left_y: Some(top_left_y),
+        bottom_right_x: None,
+        bottom_right_y: None,
         click_x: Some(form.x),
         click_y: Some(form.y),
         magnifier,
     })
     .into_response()
+}
+
+/// POST /bitmaps/pick-region/bottom-right
+/// Processes grid view or coarse image click coordinates for bottom-right corner selection.
+pub async fn post_pick_region_bottom_right_handler(
+    user: AuthUser,
+    Form(form): Form<PickRegionBottomRightForm>,
+) -> Response {
+    if form.csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+
+    let (raw_br_x, raw_br_y) = if let (Some(gx), Some(gy)) = (form.grid_x, form.grid_y) {
+        map_grid_click_to_native(
+            gx,
+            gy,
+            form.top_left_x,
+            form.top_left_y,
+            form.width,
+            form.height,
+        )
+    } else if let (Some(cx), Some(cy)) = (form.coarse_x, form.coarse_y) {
+        map_coarse_click_to_native(
+            cx,
+            cy,
+            600.0,
+            340.0,
+            form.width,
+            form.height,
+        )
+    } else {
+        (form.top_left_x, form.top_left_y)
+    };
+
+    let norm_tl_x = form.top_left_x.min(raw_br_x);
+    let norm_tl_y = form.top_left_y.min(raw_br_y);
+    let norm_br_x = form.top_left_x.max(raw_br_x);
+    let norm_br_y = form.top_left_y.max(raw_br_y);
+
+    let magnifier = ImageMagnifier::new(
+        &form.image_url,
+        form.width,
+        form.height,
+        Some(norm_br_x),
+        Some(norm_br_y),
+    );
+
+    HtmlTemplate(RegionPickerTopLeftTemplate {
+        user: user.clone(),
+        csrf_token: user.csrf_token,
+        automation_id: form.automation_id,
+        image_url: form.image_url,
+        width: form.width,
+        height: form.height,
+        step_stage: 3,
+        top_left_x: Some(norm_tl_x),
+        top_left_y: Some(norm_tl_y),
+        bottom_right_x: Some(norm_br_x),
+        bottom_right_y: Some(norm_br_y),
+        click_x: form.grid_x.or(form.coarse_x),
+        click_y: form.grid_y.or(form.coarse_y),
+        magnifier,
+    })
+    .into_response()
+}
+
+/// POST /automations/{id}/bitmaps/pick-region/bottom-right
+/// Processes grid view or coarse image click coordinates for bottom-right corner selection scoped to an automation ID.
+pub async fn post_automation_pick_region_bottom_right_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Form(mut form): Form<PickRegionBottomRightForm>,
+) -> Response {
+    form.automation_id = Some(id);
+    post_pick_region_bottom_right_handler(user, Form(form)).await
 }
 
 /// Maps coarse image-input click coordinates (click_x, click_y) on a rendered display box
@@ -795,6 +899,32 @@ pub fn map_coarse_click_to_native(
     let native_y = (img_y / scale).floor().min((native_h - 1) as f64) as u32;
 
     (native_x, native_y)
+}
+
+/// Maps click coordinates on the 20x grid panel view (320x320 viewport centered at `center_x`, `center_y`)
+/// to exact native image pixel coordinates.
+pub fn map_grid_click_to_native(
+    click_x: u32,
+    click_y: u32,
+    center_x: u32,
+    center_y: u32,
+    native_w: u32,
+    native_h: u32,
+) -> (u32, u32) {
+    if native_w == 0 || native_h == 0 {
+        return (0, 0);
+    }
+
+    let dx = (click_x as f64 - 160.0 + 10.0) / 20.0;
+    let dy = (click_y as f64 - 160.0 + 10.0) / 20.0;
+
+    let offset_x = dx.floor() as i64;
+    let offset_y = dy.floor() as i64;
+
+    let target_x = (center_x as i64 + offset_x).clamp(0, (native_w - 1) as i64) as u32;
+    let target_y = (center_y as i64 + offset_y).clamp(0, (native_h - 1) as i64) as u32;
+
+    (target_x, target_y)
 }
 
 #[cfg(test)]
@@ -837,5 +967,28 @@ mod tests {
     fn test_map_coarse_click_to_native_zero_dimensions() {
         let (nx, ny) = map_coarse_click_to_native(100, 100, 600.0, 340.0, 0, 0);
         assert_eq!((nx, ny), (0, 0));
+    }
+
+    #[test]
+    fn test_map_grid_click_to_native_center_and_offsets() {
+        // Center click at (160, 160) should yield exact (center_x, center_y)
+        let (nx, ny) = map_grid_click_to_native(160, 160, 100, 200, 1920, 1080);
+        assert_eq!((nx, ny), (100, 200));
+
+        // Click +20px right on grid panel -> +1 native pixel
+        let (nx_r, ny_r) = map_grid_click_to_native(180, 160, 100, 200, 1920, 1080);
+        assert_eq!((nx_r, ny_r), (101, 200));
+
+        // Click -20px left on grid panel -> -1 native pixel
+        let (nx_l, ny_l) = map_grid_click_to_native(140, 160, 100, 200, 1920, 1080);
+        assert_eq!((nx_l, ny_l), (99, 200));
+
+        // Boundary clamping near native 0
+        let (nx_zero, ny_zero) = map_grid_click_to_native(0, 0, 2, 2, 1920, 1080);
+        assert_eq!((nx_zero, ny_zero), (0, 0));
+
+        // Boundary clamping near native max
+        let (nx_max, ny_max) = map_grid_click_to_native(319, 319, 1918, 1078, 1920, 1080);
+        assert_eq!((nx_max, ny_max), (1919, 1079));
     }
 }
