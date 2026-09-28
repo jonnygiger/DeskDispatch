@@ -1,9 +1,0 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
-     Running `target/debug/app`
-  [2m2026-09-27T13:54:53.585314Z[0m [32m INFO[0m [1;32mapp[0m[32m: [32mStarting DeskDispatch task server...[0m
-    [2;3mat[0m src/main.rs:26
-
-  [2m2026-09-27T13:55:23.587100Z[0m [31mERROR[0m [1;31mapp[0m[31m: [31mFailed to connect to Postgres: pool timed out while waiting for an open connection[0m
-    [2;3mat[0m src/main.rs:33
-
-Error: PoolTimedOut

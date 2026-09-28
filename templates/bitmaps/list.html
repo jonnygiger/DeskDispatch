@@ -1,0 +1,81 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}
+{% if let Some(auto_name) = automation_name %}
+Bitmaps - {{ auto_name }} - DeskDispatch
+{% else %}
+Bitmap Library - DeskDispatch
+{% endif %}
+{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="align-items: flex-start; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+    <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+        <div>
+            <h1 class="dashboard-title" style="margin: 0;">
+                {% if let Some(auto_name) = automation_name %}
+                Reference Bitmaps: {{ auto_name }}
+                {% else %}
+                Reference Bitmap Library
+                {% endif %}
+            </h1>
+        </div>
+    </div>
+    {% if automation_name.is_none() %}
+    <p style="color: var(--color-text-muted); margin: 0;">Manage reference images used for visual pattern matching across automations.</p>
+    {% endif %}
+</div>
+
+{% if let Some(aid) = automation_id %}
+<!-- Automation Sub-navigation -->
+<div style="display: flex; gap: 1rem; border-bottom: 1px solid var(--color-border); margin-bottom: 1.5rem; padding-bottom: 0.5rem;">
+    <a href="/automations/{{ aid }}" style="padding-bottom: 0.5rem; color: var(--color-text-muted);">Steps</a>
+    <a href="/automations/{{ aid }}/bitmaps" style="font-weight: 600; border-bottom: 2px solid var(--color-primary); padding-bottom: 0.5rem; color: var(--color-primary);">Bitmaps</a>
+</div>
+{% endif %}
+
+{% if bitmaps.is_empty() %}
+    <div class="card" style="text-align: center; padding: 3rem;">
+        <p style="color: var(--color-text-muted); font-size: 1.125rem; margin-bottom: 0;">No reference bitmaps found in the library.</p>
+    </div>
+{% else %}
+    <div class="bitmaps-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 1.5rem;">
+        {% for bitmap in bitmaps %}
+        <div class="card bitmap-card" style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;">
+                <div>
+                    <h3 style="margin: 0; font-size: 1.125rem; font-weight: 600;">{{ bitmap.name }}</h3>
+                    <div style="font-size: 0.8125rem; color: var(--color-text-muted); margin-top: 0.25rem;">
+                        Dimensions: <code>{{ bitmap.width }} × {{ bitmap.height }} px</code>
+                    </div>
+                </div>
+                <div>
+                    {% if let Some(aid) = bitmap.automation_id %}
+                        <span class="badge badge-neutral" style="font-size: 0.75rem;">
+                            Automation #{{ aid }}
+                        </span>
+                    {% else %}
+                        <span class="badge badge-success" style="font-size: 0.75rem;">Shared Library</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Thumbnail view with Magnifier component -->
+            <div class="bitmap-magnifier-container" style="background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 6px; padding: 0.5rem; overflow-x: auto;">
+                {% call macros::image_magnifier(bitmap.magnifier) %}
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--color-text-muted); border-top: 1px solid var(--color-border); padding-top: 0.5rem; margin-top: 0.25rem;">
+                <span>Uploaded by: <strong>{{ bitmap.created_by_name }}</strong></span>
+                <span>{{ bitmap.formatted_created_at() }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+{% endif %}
+{% endblock %}
