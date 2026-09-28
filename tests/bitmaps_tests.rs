@@ -278,3 +278,155 @@ async fn test_bitmap_upload_flow() {
     let db_name: String = sqlx::Row::get(&row, "name");
     assert_eq!(db_name, "Committed Bitmap");
 }
+
+#[tokio::test]
+async fn test_bitmap_deletion_flow() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_bitmap_deletion_flow");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(credentials)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .endpoint_url("http://localhost:9000")
+        .force_path_style(true)
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let state = AppState {
+        db: pool.clone(),
+        s3_client,
+        config: config.clone(),
+        rate_limiter: app::auth::LoginRateLimiter::default(),
+    };
+
+    let app = Router::new()
+        .route("/bitmaps/{id}/delete", axum::routing::post(post_delete_bitmap_handler))
+        .route("/automations/{id}/bitmaps/{bid}/delete", axum::routing::post(post_automation_delete_bitmap_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            app::auth::csrf_middleware,
+        ))
+        .with_state(state);
+
+    let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_del_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
+    let (editor_id, editor_session) = create_test_user(&pool, &format!("editor_del_{}", uuid::Uuid::new_v4().simple()), "editor").await;
+    let (admin_id, admin_session) = create_test_user(&pool, &format!("admin_del_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+
+    let viewer_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), &config.session_secret);
+    let editor_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), &config.session_secret);
+    let admin_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&admin_session).unwrap(), &config.session_secret);
+
+    // Insert a test bitmap record
+    let key1 = format!("bitmaps/del_test_1_{}.png", uuid::Uuid::new_v4().simple());
+    let row1 = sqlx::query(
+        "INSERT INTO bitmaps (name, object_storage_key, width, height, created_by) VALUES ('Bitmap To Delete 1', $1, 100, 100, $2) RETURNING id",
+    )
+    .bind(&key1)
+    .bind(editor_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let bm_id_1: i64 = sqlx::Row::get(&row1, "id");
+
+    // 1. Viewer attempt to delete -> 403 Forbidden
+    let req_viewer = Request::builder()
+        .method("POST")
+        .uri(format!("/bitmaps/{}/delete", bm_id_1))
+        .header(header::COOKIE, format!("session_id={}", viewer_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("csrf_token={}", viewer_csrf)))
+        .unwrap();
+
+    let res_viewer = app.clone().oneshot(req_viewer).await.unwrap();
+    assert_eq!(res_viewer.status(), StatusCode::FORBIDDEN);
+
+    // 2. Editor attempt with bad CSRF token -> 400 Bad Request
+    let req_bad_csrf = Request::builder()
+        .method("POST")
+        .uri(format!("/bitmaps/{}/delete", bm_id_1))
+        .header(header::COOKIE, format!("session_id={}", editor_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("csrf_token=invalid_token"))
+        .unwrap();
+
+    let res_bad_csrf = app.clone().oneshot(req_bad_csrf).await.unwrap();
+    assert_eq!(res_bad_csrf.status(), StatusCode::BAD_REQUEST);
+
+    // 3. Editor attempt with valid CSRF token -> 303 Redirect to /bitmaps
+    let req_editor = Request::builder()
+        .method("POST")
+        .uri(format!("/bitmaps/{}/delete", bm_id_1))
+        .header(header::COOKIE, format!("session_id={}", editor_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("csrf_token={}", editor_csrf)))
+        .unwrap();
+
+    let res_editor = app.clone().oneshot(req_editor).await.unwrap();
+    assert_eq!(res_editor.status(), StatusCode::SEE_OTHER);
+    let loc_editor = res_editor.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(loc_editor, "/bitmaps");
+
+    // Verify record deleted from database
+    let check_row1 = sqlx::query("SELECT id FROM bitmaps WHERE id = $1")
+        .bind(bm_id_1)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(check_row1.is_none());
+
+    // Verify audit log entry
+    let audit_row1 = sqlx::query("SELECT id, user_id, action, entity_type, entity_id FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = $1")
+        .bind(bm_id_1)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(audit_row1.is_some());
+    let audit_r = audit_row1.unwrap();
+    let audit_action: String = sqlx::Row::get(&audit_r, "action");
+    assert_eq!(audit_action, "delete_bitmap");
+
+    // Insert an automation and scoped bitmap record
+    let auto_row = sqlx::query("INSERT INTO automations (name, description, status, created_by) VALUES ('Auto For Delete Test', '', 'draft', $1) RETURNING id")
+        .bind(admin_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let auto_id: i64 = sqlx::Row::get(&auto_row, "id");
+
+    let key2 = format!("bitmaps/del_test_2_{}.png", uuid::Uuid::new_v4().simple());
+    let row2 = sqlx::query("INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by) VALUES ($1, 'Scoped Bitmap To Delete', $2, 50, 50, $3) RETURNING id")
+        .bind(auto_id)
+        .bind(&key2)
+        .bind(admin_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let bm_id_2: i64 = sqlx::Row::get(&row2, "id");
+
+    // 4. Admin delete scoped bitmap via /automations/{id}/bitmaps/{bid}/delete
+    let req_admin_scoped = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/bitmaps/{}/delete", auto_id, bm_id_2))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("csrf_token={}", admin_csrf)))
+        .unwrap();
+
+    let res_admin_scoped = app.clone().oneshot(req_admin_scoped).await.unwrap();
+    assert_eq!(res_admin_scoped.status(), StatusCode::SEE_OTHER);
+    let loc_admin_scoped = res_admin_scoped.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(loc_admin_scoped, format!("/automations/{}/bitmaps", auto_id));
+
+    // Verify scoped record deleted from database
+    let check_row2 = sqlx::query("SELECT id FROM bitmaps WHERE id = $1")
+        .bind(bm_id_2)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(check_row2.is_none());
+}

@@ -87,8 +87,18 @@ Bitmap Library - DeskDispatch
             </div>
 
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--color-text-muted); border-top: 1px solid var(--color-border); padding-top: 0.5rem; margin-top: 0.25rem;">
-                <span>Uploaded by: <strong>{{ bitmap.created_by_name }}</strong></span>
-                <span>{{ bitmap.formatted_created_at() }}</span>
+                <div>
+                    <span>Uploaded by: <strong>{{ bitmap.created_by_name }}</strong></span>
+                    <span style="margin-left: 0.5rem;">{{ bitmap.formatted_created_at() }}</span>
+                </div>
+                {% if user.role.can_edit() %}
+                <form method="post" action="{% if let Some(aid) = automation_id %}/automations/{{ aid }}/bitmaps/{{ bitmap.id }}/delete{% else %}/bitmaps/{{ bitmap.id }}/delete{% endif %}" style="margin: 0;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-danger" style="background: var(--color-danger, #dc3545); color: white; border: none; padding: 0.25rem 0.625rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer;">
+                        Delete
+                    </button>
+                </form>
+                {% endif %}
             </div>
         </div>
         {% endfor %}
