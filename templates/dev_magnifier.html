@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magnifier Component Verification</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body style="padding: 2rem;">
+    <h1>Magnifier Component Verification</h1>
+    <p>
+        Dimensions: {{ magnifier.native_w }}x{{ magnifier.native_h }} |
+        {% if magnifier.show_marker() %}
+            Target: ({{ magnifier.target_x.unwrap() }}, {{ magnifier.target_y.unwrap() }})
+        {% else %}
+            Target: None
+        {% endif %}
+    </p>
+    {% include "image_magnifier.html" %}
+</body>
+</html>
