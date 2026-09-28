@@ -3,6 +3,7 @@ pub mod auth;
 pub mod automations;
 pub mod errors;
 pub mod home;
+pub mod media;
 pub mod static_assets;
 
 pub use account::{get_password_handler, post_password_handler};
@@ -12,4 +13,5 @@ pub use errors::{
     internal_error_handler, not_found_handler, InternalServerErrorTemplate, NotFoundTemplate,
 };
 pub use home::get_index_handler;
+pub use media::*;
 pub use static_assets::static_asset_handler;

@@ -14,3 +14,15 @@ pub struct AppState {
     pub config: Config,
     pub rate_limiter: auth::LoginRateLimiter,
 }
+
+impl AppState {
+    pub fn storage_service(&self) -> storage::StorageService {
+        storage::StorageService::new(self.s3_client.clone(), &self.config.s3_bucket)
+            .with_credentials(
+                &self.config.s3_access_key,
+                &self.config.s3_secret_key,
+                &self.config.s3_region,
+                self.config.s3_endpoint.as_deref(),
+            )
+    }
+}

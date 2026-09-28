@@ -90,6 +90,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/automations/{id}/steps/{sid}/move-up", post(post_move_step_up_handler))
         .route("/automations/{id}/steps/{sid}/move-down", post(post_move_step_down_handler))
         .route("/automations/{id}/steps/{sid}/delete", post(post_delete_step_handler))
+        .route("/media/screenshots/{id}", get(get_media_screenshot_handler))
+        .route("/media/bitmaps/{id}", get(get_media_bitmap_handler))
         .fallback(not_found_handler)
         .layer(middleware::from_fn_with_state(
             state.clone(),
