@@ -30,6 +30,27 @@ pub struct BitmapCommitQuery {
     pub automation_id: Option<i64>,
 }
 
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct PickRegionQuery {
+    pub automation_id: Option<i64>,
+    pub image_url: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct PickRegionTopLeftForm {
+    pub csrf_token: String,
+    pub automation_id: Option<i64>,
+    pub image_url: String,
+    pub width: u32,
+    pub height: u32,
+    #[serde(alias = "click.x", default)]
+    pub x: u32,
+    #[serde(alias = "click.y", default)]
+    pub y: u32,
+}
+
 #[derive(Template)]
 #[template(path = "bitmaps/upload.html")]
 pub struct BitmapsUploadTemplate {
@@ -41,6 +62,23 @@ pub struct BitmapsUploadTemplate {
     pub presigned_post_url: String,
     pub presigned_fields: Vec<(String, String)>,
     pub redirect_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "bitmaps/pick_region.html")]
+pub struct RegionPickerTopLeftTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: Option<i64>,
+    pub image_url: String,
+    pub width: u32,
+    pub height: u32,
+    pub step_stage: u8,
+    pub top_left_x: Option<u32>,
+    pub top_left_y: Option<u32>,
+    pub click_x: Option<u32>,
+    pub click_y: Option<u32>,
+    pub magnifier: ImageMagnifier,
 }
 
 #[derive(Debug, Clone)]
@@ -575,4 +613,229 @@ pub async fn post_automation_delete_bitmap_handler(
     Form(form): Form<DeleteBitmapForm>,
 ) -> Response {
     delete_bitmap_logic(&state, &user, bid, &form.csrf_token, Some(id)).await
+}
+
+/// GET /bitmaps/pick-region
+/// Renders initial Step 1 of two-click region picker to capture top-left corner.
+pub async fn get_pick_region_handler(
+    user: AuthUser,
+    Query(query): Query<PickRegionQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let image_url = query.image_url.unwrap_or_else(|| "/static/sample_screenshot.png".to_string());
+    let width = query.width.unwrap_or(1920);
+    let height = query.height.unwrap_or(1080);
+
+    let magnifier = ImageMagnifier::new(&image_url, width, height, None, None);
+
+    HtmlTemplate(RegionPickerTopLeftTemplate {
+        user,
+        csrf_token,
+        automation_id: query.automation_id,
+        image_url,
+        width,
+        height,
+        step_stage: 1,
+        top_left_x: None,
+        top_left_y: None,
+        click_x: None,
+        click_y: None,
+        magnifier,
+    })
+}
+
+/// GET /automations/{id}/bitmaps/pick-region
+/// Renders initial Step 1 of two-click region picker scoped to an automation ID.
+pub async fn get_automation_pick_region_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<PickRegionQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let image_url = query.image_url.unwrap_or_else(|| "/static/sample_screenshot.png".to_string());
+    let width = query.width.unwrap_or(1920);
+    let height = query.height.unwrap_or(1080);
+
+    let magnifier = ImageMagnifier::new(&image_url, width, height, None, None);
+
+    HtmlTemplate(RegionPickerTopLeftTemplate {
+        user,
+        csrf_token,
+        automation_id: Some(id),
+        image_url,
+        width,
+        height,
+        step_stage: 1,
+        top_left_x: None,
+        top_left_y: None,
+        click_x: None,
+        click_y: None,
+        magnifier,
+    })
+}
+
+/// POST /bitmaps/pick-region
+/// Processes coarse top-left image input click coordinates for region selection.
+pub async fn post_pick_region_top_left_handler(
+    user: AuthUser,
+    Form(form): Form<PickRegionTopLeftForm>,
+) -> Response {
+    if form.csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+
+    let (top_left_x, top_left_y) = map_coarse_click_to_native(
+        form.x,
+        form.y,
+        600.0,
+        340.0,
+        form.width,
+        form.height,
+    );
+
+    let magnifier = ImageMagnifier::new(
+        &form.image_url,
+        form.width,
+        form.height,
+        Some(top_left_x),
+        Some(top_left_y),
+    );
+
+    HtmlTemplate(RegionPickerTopLeftTemplate {
+        user: user.clone(),
+        csrf_token: user.csrf_token,
+        automation_id: form.automation_id,
+        image_url: form.image_url,
+        width: form.width,
+        height: form.height,
+        step_stage: 2,
+        top_left_x: Some(top_left_x),
+        top_left_y: Some(top_left_y),
+        click_x: Some(form.x),
+        click_y: Some(form.y),
+        magnifier,
+    })
+    .into_response()
+}
+
+/// POST /automations/{id}/bitmaps/pick-region
+/// Processes coarse top-left image input click coordinates scoped to an automation ID.
+pub async fn post_automation_pick_region_top_left_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Form(form): Form<PickRegionTopLeftForm>,
+) -> Response {
+    if form.csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+
+    let (top_left_x, top_left_y) = map_coarse_click_to_native(
+        form.x,
+        form.y,
+        600.0,
+        340.0,
+        form.width,
+        form.height,
+    );
+
+    let magnifier = ImageMagnifier::new(
+        &form.image_url,
+        form.width,
+        form.height,
+        Some(top_left_x),
+        Some(top_left_y),
+    );
+
+    HtmlTemplate(RegionPickerTopLeftTemplate {
+        user: user.clone(),
+        csrf_token: user.csrf_token,
+        automation_id: Some(id),
+        image_url: form.image_url,
+        width: form.width,
+        height: form.height,
+        step_stage: 2,
+        top_left_x: Some(top_left_x),
+        top_left_y: Some(top_left_y),
+        click_x: Some(form.x),
+        click_y: Some(form.y),
+        magnifier,
+    })
+    .into_response()
+}
+
+/// Maps coarse image-input click coordinates (click_x, click_y) on a rendered display box
+/// of size (display_w, display_h) to exact native image pixel coordinates (native_x, native_y)
+/// based on aspect-ratio scale-to-fit calculation.
+pub fn map_coarse_click_to_native(
+    click_x: u32,
+    click_y: u32,
+    display_w: f64,
+    display_h: f64,
+    native_w: u32,
+    native_h: u32,
+) -> (u32, u32) {
+    if native_w == 0 || native_h == 0 || display_w <= 0.0 || display_h <= 0.0 {
+        return (0, 0);
+    }
+
+    let scale_w = display_w / native_w as f64;
+    let scale_h = display_h / native_h as f64;
+    let scale = scale_w.min(scale_h);
+
+    let rendered_w = native_w as f64 * scale;
+    let rendered_h = native_h as f64 * scale;
+
+    let offset_x = (display_w - rendered_w) / 2.0;
+    let offset_y = (display_h - rendered_h) / 2.0;
+
+    let img_x = (click_x as f64 - offset_x).clamp(0.0, rendered_w);
+    let img_y = (click_y as f64 - offset_y).clamp(0.0, rendered_h);
+
+    let native_x = (img_x / scale).floor().min((native_w - 1) as f64) as u32;
+    let native_y = (img_y / scale).floor().min((native_h - 1) as f64) as u32;
+
+    (native_x, native_y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_map_coarse_click_to_native_exact_fit() {
+        // Native 1200 x 680 in 600 x 340 display -> scale = 0.5 exactly
+        let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 1200, 680);
+        assert_eq!((nx, ny), (600, 340));
+
+        let (nx_top, ny_top) = map_coarse_click_to_native(0, 0, 600.0, 340.0, 1200, 680);
+        assert_eq!((nx_top, ny_top), (0, 0));
+
+        let (nx_bot, ny_bot) = map_coarse_click_to_native(600, 340, 600.0, 340.0, 1200, 680);
+        assert_eq!((nx_bot, ny_bot), (1199, 679));
+    }
+
+    #[test]
+    fn test_map_coarse_click_to_native_letterboxing() {
+        // Native 1920 x 1080 in 600 x 340 display
+        // scale_w = 600/1920 = 0.3125, scale_h = 340/1080 = 0.3148... -> scale = 0.3125
+        // rendered_w = 600, rendered_h = 337.5, offset_x = 0, offset_y = 1.25
+        let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 1920, 1080);
+        assert_eq!((nx, ny), (960, 540));
+    }
+
+    #[test]
+    fn test_map_coarse_click_to_native_pillarboxing() {
+        // Native 600 x 1200 in 600 x 340 display
+        // scale_w = 600/600 = 1.0, scale_h = 340/1200 = 0.2833... -> scale = 0.2833333333333333
+        // rendered_w = 170, rendered_h = 340, offset_x = 215, offset_y = 0
+        let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 600, 1200);
+        // img_x = 300 - 215 = 85. native_x = 85 / (340/1200) = 300
+        assert_eq!((nx, ny), (300, 600));
+    }
+
+    #[test]
+    fn test_map_coarse_click_to_native_zero_dimensions() {
+        let (nx, ny) = map_coarse_click_to_native(100, 100, 600.0, 340.0, 0, 0);
+        assert_eq!((nx, ny), (0, 0));
+    }
 }

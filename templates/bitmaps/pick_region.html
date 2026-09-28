@@ -1,0 +1,80 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}
+Region Picker - DeskDispatch
+{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="align-items: flex-start; flex-direction: column; gap: 0.5rem; margin-bottom: 1.5rem;">
+    <h1 class="dashboard-title" style="margin: 0;">Region Picker (Two-Click Selection)</h1>
+    <p style="color: var(--color-text-muted); margin: 0;">
+        Select a region of interest without JavaScript by clicking the image.
+    </p>
+</div>
+
+<div class="card" style="max-width: 800px; margin: 0 auto; padding: 2rem;">
+    {% if step_stage == 1 %}
+    <div style="margin-bottom: 1.5rem;">
+        <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 1: Click Top-Left Corner</h2>
+        <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
+            Click directly on the image below to set the coarse <strong>top-left corner</strong> of the selection region.
+        </p>
+    </div>
+
+    {% if let Some(aid) = automation_id %}
+    <form action="/automations/{{ aid }}/bitmaps/pick-region" method="post" style="display: flex; flex-direction: column; align-items: center; gap: 1rem;">
+    {% else %}
+    <form action="/bitmaps/pick-region" method="post" style="display: flex; flex-direction: column; align-items: center; gap: 1rem;">
+    {% endif %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if let Some(aid) = automation_id %}
+        <input type="hidden" name="automation_id" value="{{ aid }}">
+        {% endif %}
+        <input type="hidden" name="image_url" value="{{ image_url }}">
+        <input type="hidden" name="width" value="{{ width }}">
+        <input type="hidden" name="height" value="{{ height }}">
+
+        <div style="position: relative; display: inline-block;">
+            <input type="image" name="click" src="{{ image_url }}" alt="Click top-left corner" style="width: 600px; height: 340px; object-fit: contain; border: 2px solid var(--color-primary); border-radius: 4px; cursor: crosshair; background: #111;">
+        </div>
+
+        <div style="display: flex; gap: 1rem; width: 100%; justify-content: flex-end; margin-top: 1rem;">
+            {% if let Some(aid) = automation_id %}
+            <a href="/automations/{{ aid }}/bitmaps" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Cancel</a>
+            {% else %}
+            <a href="/bitmaps" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Cancel</a>
+            {% endif %}
+        </div>
+    </form>
+
+    {% else %}
+
+    <div style="margin-bottom: 1.5rem;">
+        <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Coarse Top-Left Corner Selected</h2>
+        <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
+            Top-Left Native Coordinate: <strong>({{ top_left_x.unwrap() }}, {{ top_left_y.unwrap() }})</strong>
+            {% if let Some(cx) = click_x %}
+            (display click at {{ cx }}, {{ click_y.unwrap() }})
+            {% endif %}
+        </p>
+    </div>
+
+    <div style="margin-bottom: 1.5rem;">
+        {% call macros::image_magnifier(magnifier) %}
+    </div>
+
+    <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
+        {% if let Some(aid) = automation_id %}
+        <a href="/automations/{{ aid }}/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Top-Left</a>
+        {% else %}
+        <a href="/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Top-Left</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
