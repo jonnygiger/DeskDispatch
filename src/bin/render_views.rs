@@ -2,6 +2,7 @@ use app::auth::UserRole;
 use app::routes::account::AccountPasswordTemplate;
 use app::routes::auth::LoginTemplate;
 use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
+use app::routes::media::DevMagnifierTemplate;
 use app::routes::home::{IndexTemplate, RecentRunItem};
 use askama::Template;
 use chrono::Utc;
@@ -102,6 +103,11 @@ fn main() {
         mag_tmpl.render().unwrap()
     );
     fs::write("rendered_templates/image_magnifier.html", mag_html).unwrap();
+
+    let dev_mag_tmpl = DevMagnifierTemplate {
+        magnifier: mag,
+    };
+    fs::write("rendered_templates/dev_magnifier.html", dev_mag_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

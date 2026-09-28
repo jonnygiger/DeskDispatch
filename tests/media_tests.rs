@@ -184,3 +184,51 @@ async fn test_media_screenshot_redirects() {
     let res_bm_nf = app.clone().oneshot(req_bm_nf).await.unwrap();
     assert_eq!(res_bm_nf.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn test_dev_magnifier_verify_route() {
+    let app = Router::new().route(
+        "/dev/magnifier-verify",
+        axum::routing::get(dev_magnifier_verify_handler),
+    );
+
+    // 1. Default request
+    let req = Request::builder()
+        .method("GET")
+        .uri("/dev/magnifier-verify")
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    assert!(body_str.contains("Magnifier Component Verification"));
+    assert!(body_str.contains("shot--normal"));
+    assert!(body_str.contains("shot--zoom400"));
+    assert!(body_str.contains("shot--grid"));
+    assert!(body_str.contains("marker"));
+
+    // 2. Query params request
+    let req_params = Request::builder()
+        .method("GET")
+        .uri("/dev/magnifier-verify?url=http://example.com/test.png&native_w=1920&native_h=1080&target_x=500&target_y=400")
+        .body(Body::empty())
+        .unwrap();
+
+    let res_params = app.clone().oneshot(req_params).await.unwrap();
+    assert_eq!(res_params.status(), StatusCode::OK);
+
+    let body_bytes_params = axum::body::to_bytes(res_params.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_str_params = String::from_utf8(body_bytes_params.to_vec()).unwrap();
+
+    assert!(body_str_params.contains("1920x1080"));
+    assert!(body_str_params.contains("(500, 400)"));
+    assert!(body_str_params.contains("http://example.com/test.png"));
+}

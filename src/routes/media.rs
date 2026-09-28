@@ -1,13 +1,52 @@
 use std::time::Duration;
+use askama::Template;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::IntoResponse,
 };
+use serde::Deserialize;
 use sqlx::Row;
 
 use crate::auth::AuthUser;
+use crate::magnifier::ImageMagnifier;
+use crate::routes::auth::HtmlTemplate;
 use crate::AppState;
+
+#[derive(Debug, Deserialize)]
+pub struct DevMagnifierQuery {
+    pub url: Option<String>,
+    pub native_w: Option<u32>,
+    pub native_h: Option<u32>,
+    pub target_x: Option<u32>,
+    pub target_y: Option<u32>,
+}
+
+#[derive(Template)]
+#[template(path = "dev_magnifier.html")]
+pub struct DevMagnifierTemplate {
+    pub magnifier: ImageMagnifier,
+}
+
+/// GET /dev/magnifier-verify
+/// Throwaway internal route to manually verify the CSS zoom and pan mathematics of the magnifier component.
+pub async fn dev_magnifier_verify_handler(
+    Query(query): Query<DevMagnifierQuery>,
+) -> impl IntoResponse {
+    let url = query
+        .url
+        .unwrap_or_else(|| "https://via.placeholder.com/800x600.png".to_string());
+    let native_w = query.native_w.unwrap_or(800);
+    let native_h = query.native_h.unwrap_or(600);
+    let target_x = query.target_x.or(Some(100));
+    let target_y = query.target_y.or(Some(150));
+
+    let magnifier = ImageMagnifier::new(url, native_w, native_h, target_x, target_y);
+
+    HtmlTemplate(DevMagnifierTemplate {
+        magnifier,
+    })
+}
 
 /// GET /media/screenshots/{id}
 /// Generates a presigned GET URL for a step screenshot and issues a 302 Found redirect.
