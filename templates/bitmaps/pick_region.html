@@ -52,15 +52,58 @@ Region Picker - DeskDispatch
         </div>
     </form>
 
+    {% else if step_stage == 2 %}
+
+    <div style="margin-bottom: 1.5rem;">
+        <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 2: Select Bottom-Right Corner</h2>
+        <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
+            Top-Left Corner: <strong>({{ top_left_x.unwrap() }}, {{ top_left_y.unwrap() }})</strong>.
+            Click the precise <strong>bottom-right corner</strong> using the 20× grid view below, or click on the full image.
+        </p>
+    </div>
+
+    {% if let Some(aid) = automation_id %}
+    <form action="/automations/{{ aid }}/bitmaps/pick-region/bottom-right" method="post" style="display: flex; flex-direction: column; align-items: center; gap: 1.5rem;">
+    {% else %}
+    <form action="/bitmaps/pick-region/bottom-right" method="post" style="display: flex; flex-direction: column; align-items: center; gap: 1.5rem;">
+    {% endif %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if let Some(aid) = automation_id %}
+        <input type="hidden" name="automation_id" value="{{ aid }}">
+        {% endif %}
+        <input type="hidden" name="image_url" value="{{ image_url }}">
+        <input type="hidden" name="width" value="{{ width }}">
+        <input type="hidden" name="height" value="{{ height }}">
+        <input type="hidden" name="top_left_x" value="{{ top_left_x.unwrap() }}">
+        <input type="hidden" name="top_left_y" value="{{ top_left_y.unwrap() }}">
+
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
+            <p style="font-weight: 600; font-size: 0.875rem; margin: 0;">High-Precision Grid Panel View (20× Zoom):</p>
+            <input type="image" name="grid_click" src="{{ image_url }}" alt="Click bottom-right on grid panel" style="{{ magnifier.grid_style() }} width: 320px; height: 320px; image-rendering: pixelated; border: 2px solid var(--color-primary); border-radius: 4px; cursor: crosshair;">
+        </div>
+
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem; width: 100%;">
+            <p style="font-weight: 600; font-size: 0.875rem; margin: 0;">Coarse Display View:</p>
+            <input type="image" name="coarse_click" src="{{ image_url }}" alt="Click bottom-right on coarse view" style="width: 600px; height: 340px; object-fit: contain; border: 1px solid var(--color-border); border-radius: 4px; cursor: crosshair; background: #111;">
+        </div>
+
+        <div style="display: flex; gap: 1rem; width: 100%; justify-content: flex-end; margin-top: 1rem;">
+            {% if let Some(aid) = automation_id %}
+            <a href="/automations/{{ aid }}/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Top-Left</a>
+            {% else %}
+            <a href="/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Top-Left</a>
+            {% endif %}
+        </div>
+    </form>
+
     {% else %}
 
     <div style="margin-bottom: 1.5rem;">
-        <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Coarse Top-Left Corner Selected</h2>
+        <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Region Selection Completed</h2>
         <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
-            Top-Left Native Coordinate: <strong>({{ top_left_x.unwrap() }}, {{ top_left_y.unwrap() }})</strong>
-            {% if let Some(cx) = click_x %}
-            (display click at {{ cx }}, {{ click_y.unwrap() }})
-            {% endif %}
+            Top-Left: <strong>({{ top_left_x.unwrap() }}, {{ top_left_y.unwrap() }})</strong> &nbsp;|&nbsp;
+            Bottom-Right: <strong>({{ bottom_right_x.unwrap() }}, {{ bottom_right_y.unwrap() }})</strong> &nbsp;|&nbsp;
+            Dimensions: <strong>{{ bottom_right_x.unwrap() - top_left_x.unwrap() + 1 }} × {{ bottom_right_y.unwrap() - top_left_y.unwrap() + 1 }} px</strong>
         </p>
     </div>
 
@@ -70,9 +113,9 @@ Region Picker - DeskDispatch
 
     <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
         {% if let Some(aid) = automation_id %}
-        <a href="/automations/{{ aid }}/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Top-Left</a>
+        <a href="/automations/{{ aid }}/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Region</a>
         {% else %}
-        <a href="/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Top-Left</a>
+        <a href="/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Region</a>
         {% endif %}
     </div>
     {% endif %}

@@ -164,6 +164,8 @@ fn main() {
         step_stage: 1,
         top_left_x: None,
         top_left_y: None,
+        bottom_right_x: None,
+        bottom_right_y: None,
         click_x: None,
         click_y: None,
         magnifier: app::magnifier::ImageMagnifier::new(
