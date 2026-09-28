@@ -8,7 +8,7 @@ use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{AuthUser, UserRole};
+use crate::auth::{log_audit, AuthUser, UserRole};
 use crate::magnifier::ImageMagnifier;
 use crate::AppState;
 
@@ -16,6 +16,11 @@ use crate::AppState;
 pub struct BitmapUploadForm {
     pub csrf_token: String,
     pub name: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct DeleteBitmapForm {
+    pub csrf_token: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -464,4 +469,110 @@ pub async fn get_bitmap_commit_handler(
     } else {
         Redirect::to("/bitmaps").into_response()
     }
+}
+
+async fn delete_bitmap_logic(
+    state: &AppState,
+    user: &AuthUser,
+    bitmap_id: i64,
+    csrf_token: &str,
+    redirect_automation_id: Option<i64>,
+) -> Response {
+    if !user.role.can_edit() {
+        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot delete bitmaps").into_response();
+    }
+
+    if csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+
+    let bitmap_row = match sqlx::query("SELECT id, automation_id, name, object_storage_key FROM bitmaps WHERE id = $1")
+        .bind(bitmap_id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            let redirect_path = match redirect_automation_id {
+                Some(aid) => format!("/automations/{}/bitmaps", aid),
+                None => "/bitmaps".to_string(),
+            };
+            return Redirect::to(&redirect_path).into_response();
+        }
+        Err(e) => {
+            tracing::error!("Error fetching bitmap for deletion: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    };
+
+    let auto_id: Option<i64> = bitmap_row.get("automation_id");
+    let bitmap_name: String = bitmap_row.get("name");
+    let object_key: String = bitmap_row.get("object_storage_key");
+
+    if let Err(e) = state
+        .s3_client
+        .delete_object()
+        .bucket(&state.config.s3_bucket)
+        .key(&object_key)
+        .send()
+        .await
+    {
+        tracing::warn!("Failed to delete object key {} from S3: {}", object_key, e);
+    }
+
+    let delete_res = sqlx::query("DELETE FROM bitmaps WHERE id = $1")
+        .bind(bitmap_id)
+        .execute(&state.db)
+        .await;
+
+    if let Err(e) = delete_res {
+        tracing::error!("Failed to delete bitmap {} from database: {}", bitmap_id, e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete bitmap").into_response();
+    }
+
+    let details = serde_json::json!({
+        "name": bitmap_name,
+        "object_storage_key": object_key,
+        "automation_id": auto_id
+    });
+
+    let _ = log_audit(
+        &state.db,
+        Some(user.id),
+        "delete_bitmap",
+        "bitmap",
+        Some(bitmap_id),
+        Some(details),
+    )
+    .await;
+
+    let target_automation_id = redirect_automation_id.or(auto_id);
+    let redirect_path = match target_automation_id {
+        Some(aid) => format!("/automations/{}/bitmaps", aid),
+        None => "/bitmaps".to_string(),
+    };
+
+    Redirect::to(&redirect_path).into_response()
+}
+
+/// POST /bitmaps/{id}/delete
+/// Handles bitmap deletion from database and object storage.
+pub async fn post_delete_bitmap_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Form(form): Form<DeleteBitmapForm>,
+) -> Response {
+    delete_bitmap_logic(&state, &user, id, &form.csrf_token, None).await
+}
+
+/// POST /automations/{id}/bitmaps/{bid}/delete
+/// Handles bitmap deletion scoped to an automation ID.
+pub async fn post_automation_delete_bitmap_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, bid)): Path<(i64, i64)>,
+    Form(form): Form<DeleteBitmapForm>,
+) -> Response {
+    delete_bitmap_logic(&state, &user, bid, &form.csrf_token, Some(id)).await
 }
