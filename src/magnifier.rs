@@ -231,6 +231,26 @@ mod tests {
     }
 
     #[test]
+    fn test_grid_panel_styling_and_overlays() {
+        let css = include_str!("../static/style.css");
+        assert!(css.contains("image-rendering: pixelated;"), "CSS must contain image-rendering: pixelated;");
+
+        let mag = ImageMagnifier::new(
+            "http://example.com/test.png",
+            800,
+            600,
+            Some(10),
+            Some(20),
+        );
+
+        let grid_style = mag.grid_style();
+        assert!(grid_style.contains("repeating-linear-gradient(to right, transparent 0 19px, rgba(128,128,128,.6) 19px 20px)"));
+        assert!(grid_style.contains("repeating-linear-gradient(to bottom, transparent 0 19px, rgba(128,128,128,.6) 19px 20px)"));
+        assert!(grid_style.contains("background-size: 20px 20px, 20px 20px, 16000px 12000px"));
+        assert!(grid_style.contains("0 0, 0 0, -50.00px -250.00px"));
+    }
+
+    #[test]
     fn test_template_rendering() {
         let mag = ImageMagnifier::new(
             "http://example.com/test.jpg",
