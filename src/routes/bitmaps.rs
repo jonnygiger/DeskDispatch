@@ -1,14 +1,42 @@
 use askama::Template;
 use axum::{
-    extract::{Path, State},
-    response::{IntoResponse, Redirect},
+    extract::{Form, Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Redirect, Response},
 };
 use sqlx::Row;
+use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, UserRole};
 use crate::magnifier::ImageMagnifier;
 use crate::AppState;
+
+#[derive(serde::Deserialize)]
+pub struct BitmapUploadForm {
+    pub csrf_token: String,
+    pub name: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct BitmapCommitQuery {
+    pub key: String,
+    pub name: String,
+    pub automation_id: Option<i64>,
+}
+
+#[derive(Template)]
+#[template(path = "bitmaps/upload.html")]
+pub struct BitmapsUploadTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub bitmap_name: String,
+    pub object_storage_key: String,
+    pub automation_id: Option<i64>,
+    pub presigned_post_url: String,
+    pub presigned_fields: Vec<(String, String)>,
+    pub redirect_url: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct BitmapListItem {
@@ -207,4 +235,233 @@ pub async fn get_automation_bitmaps_handler(
         automation_name: Some(automation_name),
     })
     .into_response()
+}
+
+/// POST /bitmaps
+/// Handles initial bitmap name submission, generating an S3 presigned POST policy form.
+pub async fn post_bitmaps_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    headers: HeaderMap,
+    Form(form): Form<BitmapUploadForm>,
+) -> Response {
+    if user.role == UserRole::Viewer {
+        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
+    }
+    if form.csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+
+    let bitmap_name = form.name.trim().to_string();
+    if bitmap_name.is_empty() {
+        return Redirect::to("/bitmaps").into_response();
+    }
+
+    let object_key = format!("bitmaps/{}.png", uuid::Uuid::new_v4());
+
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost:3000");
+    let scheme = if host.contains("localhost") || host.contains("127.0.0.1") {
+        "http"
+    } else {
+        "https"
+    };
+
+    let redirect_url = format!(
+        "{}://{}/bitmaps/commit?key={}&name={}",
+        scheme,
+        host,
+        object_key,
+        urlencoding::encode(&bitmap_name)
+    );
+
+    let storage = state.storage_service();
+    let presigned_post = match storage
+        .generate_presigned_post(&object_key, Duration::from_secs(900), 10_485_760)
+        .await
+    {
+        Ok(post) => post,
+        Err(e) => {
+            tracing::error!("Failed to generate presigned POST policy: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate upload policy").into_response();
+        }
+    };
+
+    let mut presigned_fields: Vec<(String, String)> = presigned_post.fields.into_iter().collect();
+    presigned_fields.sort_by(|a, b| a.0.cmp(&b.0));
+
+    HtmlTemplate(BitmapsUploadTemplate {
+        user,
+        csrf_token: form.csrf_token,
+        bitmap_name,
+        object_storage_key: object_key,
+        automation_id: None,
+        presigned_post_url: presigned_post.url,
+        presigned_fields,
+        redirect_url,
+    })
+    .into_response()
+}
+
+/// POST /automations/{id}/bitmaps
+/// Handles initial bitmap name submission scoped to an automation ID.
+pub async fn post_automation_bitmaps_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+    Form(form): Form<BitmapUploadForm>,
+) -> Response {
+    if user.role == UserRole::Viewer {
+        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
+    }
+    if form.csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+
+    let bitmap_name = form.name.trim().to_string();
+    if bitmap_name.is_empty() {
+        return Redirect::to(&format!("/automations/{}/bitmaps", id)).into_response();
+    }
+
+    let object_key = format!("bitmaps/{}.png", uuid::Uuid::new_v4());
+
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost:3000");
+    let scheme = if host.contains("localhost") || host.contains("127.0.0.1") {
+        "http"
+    } else {
+        "https"
+    };
+
+    let redirect_url = format!(
+        "{}://{}/bitmaps/commit?key={}&name={}&automation_id={}",
+        scheme,
+        host,
+        object_key,
+        urlencoding::encode(&bitmap_name),
+        id
+    );
+
+    let storage = state.storage_service();
+    let presigned_post = match storage
+        .generate_presigned_post(&object_key, Duration::from_secs(900), 10_485_760)
+        .await
+    {
+        Ok(post) => post,
+        Err(e) => {
+            tracing::error!("Failed to generate presigned POST policy: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate upload policy").into_response();
+        }
+    };
+
+    let mut presigned_fields: Vec<(String, String)> = presigned_post.fields.into_iter().collect();
+    presigned_fields.sort_by(|a, b| a.0.cmp(&b.0));
+
+    HtmlTemplate(BitmapsUploadTemplate {
+        user,
+        csrf_token: form.csrf_token,
+        bitmap_name,
+        object_storage_key: object_key,
+        automation_id: Some(id),
+        presigned_post_url: presigned_post.url,
+        presigned_fields,
+        redirect_url,
+    })
+    .into_response()
+}
+
+/// GET /bitmaps/commit
+/// S3 redirect callback following direct browser upload via presigned POST policy.
+pub async fn get_bitmap_commit_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Query(query): Query<BitmapCommitQuery>,
+) -> Response {
+    if user.role == UserRole::Viewer {
+        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
+    }
+
+    let (width, height) = match state
+        .s3_client
+        .get_object()
+        .bucket(&state.config.s3_bucket)
+        .key(&query.key)
+        .send()
+        .await
+    {
+        Ok(res) => match res.body.collect().await {
+            Ok(aggregated) => {
+                let bytes = aggregated.into_bytes();
+                let cursor = std::io::Cursor::new(&bytes);
+                match image::ImageReader::new(cursor).with_guessed_format() {
+                    Ok(reader) => match reader.into_dimensions() {
+                        Ok((w, h)) => (w as i32, h as i32),
+                        Err(_) => (100, 100),
+                    },
+                    Err(_) => (100, 100),
+                }
+            }
+            Err(_) => (100, 100),
+        },
+        Err(e) => {
+            tracing::warn!("Could not fetch uploaded object {} for dimension probing: {}", query.key, e);
+            (100, 100)
+        }
+    };
+
+    let row = match sqlx::query(
+        r#"
+        INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
+        "#,
+    )
+    .bind(query.automation_id)
+    .bind(&query.name)
+    .bind(&query.key)
+    .bind(width)
+    .bind(height)
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to insert bitmap into database: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    };
+
+    let bitmap_id: i64 = row.get("id");
+
+    let details = serde_json::json!({
+        "name": query.name,
+        "object_storage_key": query.key,
+        "automation_id": query.automation_id,
+        "width": width,
+        "height": height
+    });
+
+    let _ = sqlx::query(
+        r#"
+        INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
+        VALUES ($1, 'create', 'bitmap', $2, $3)
+        "#,
+    )
+    .bind(user.id)
+    .bind(bitmap_id)
+    .bind(details)
+    .execute(&state.db)
+    .await;
+
+    if let Some(aid) = query.automation_id {
+        Redirect::to(&format!("/automations/{}/bitmaps", aid)).into_response()
+    } else {
+        Redirect::to("/bitmaps").into_response()
+    }
 }

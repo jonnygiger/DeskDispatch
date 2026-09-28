@@ -174,3 +174,107 @@ async fn test_bitmaps_list_routes() {
     assert!(body_str_auto_bm.contains("Reference Bitmaps: Bitmap Test Auto"));
     assert!(body_str_auto_bm.contains("OK Button Bitmap"));
 }
+
+#[tokio::test]
+async fn test_bitmap_upload_flow() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_bitmap_upload_flow");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(credentials)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .endpoint_url("http://localhost:9000")
+        .force_path_style(true)
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let state = AppState {
+        db: pool.clone(),
+        s3_client,
+        config: config.clone(),
+        rate_limiter: app::auth::LoginRateLimiter::default(),
+    };
+
+    let app = Router::new()
+        .route("/bitmaps", axum::routing::get(get_bitmaps_handler).post(post_bitmaps_handler))
+        .route("/automations/{id}/bitmaps", axum::routing::get(get_automation_bitmaps_handler).post(post_automation_bitmaps_handler))
+        .route("/bitmaps/commit", axum::routing::get(get_bitmap_commit_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            app::auth::csrf_middleware,
+        ))
+        .with_state(state);
+
+    let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_upload_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
+    let (_admin_id, admin_session) = create_test_user(&pool, &format!("admin_upload_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+
+    // Extract CSRF token for admin session
+    let session_uuid = uuid::Uuid::parse_str(&admin_session).unwrap();
+    let admin_csrf = app::auth::generate_csrf_token(session_uuid, &config.session_secret);
+
+    // Extract CSRF token for viewer session
+    let viewer_session_uuid = uuid::Uuid::parse_str(&viewer_session).unwrap();
+    let viewer_csrf = app::auth::generate_csrf_token(viewer_session_uuid, &config.session_secret);
+
+    // 1. Viewer attempt to POST /bitmaps -> 403 Forbidden
+    let req_viewer = Request::builder()
+        .method("POST")
+        .uri("/bitmaps")
+        .header(header::COOKIE, format!("session_id={}", viewer_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("csrf_token={}&name=ForbiddenBitmap", viewer_csrf)))
+        .unwrap();
+
+    let res_viewer = app.clone().oneshot(req_viewer).await.unwrap();
+    assert_eq!(res_viewer.status(), StatusCode::FORBIDDEN);
+
+    // 2. Admin POST /bitmaps -> 200 OK with presigned POST upload form
+    let req_admin = Request::builder()
+        .method("POST")
+        .uri("/bitmaps")
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("csrf_token={}&name=New%20Admin%20Bitmap", admin_csrf)))
+        .unwrap();
+
+    let res_admin = app.clone().oneshot(req_admin).await.unwrap();
+    assert_eq!(res_admin.status(), StatusCode::OK);
+
+    let body_bytes = axum::body::to_bytes(res_admin.into_body(), usize::MAX).await.unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(body_str.contains("Upload Image for Reference Bitmap"));
+    assert!(body_str.contains("New Admin Bitmap"));
+    assert!(body_str.contains("http://localhost:9000/deskdispatch-bucket"));
+    assert!(body_str.contains("success_action_redirect"));
+    assert!(body_str.contains("/bitmaps/commit?key="));
+
+    // 3. Admin GET /bitmaps/commit callback
+    let test_key = format!("bitmaps/commit_test_{}.png", uuid::Uuid::new_v4().simple());
+    let req_commit = Request::builder()
+        .method("GET")
+        .uri(format!("/bitmaps/commit?key={}&name=Committed%20Bitmap", test_key))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+
+    let res_commit = app.clone().oneshot(req_commit).await.unwrap();
+    assert_eq!(res_commit.status(), StatusCode::SEE_OTHER);
+    let location = res_commit.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(location, "/bitmaps");
+
+    // Verify row inserted in database
+    let inserted_row = sqlx::query("SELECT id, name, object_storage_key FROM bitmaps WHERE object_storage_key = $1")
+        .bind(&test_key)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(inserted_row.is_some());
+    let row = inserted_row.unwrap();
+    let db_name: String = sqlx::Row::get(&row, "name");
+    assert_eq!(db_name, "Committed Bitmap");
+}
