@@ -387,6 +387,19 @@ async fn test_mouse_click_step_crud_and_validation() {
     assert_eq!(updated_y, Some(400));
     assert_eq!(updated_button, "right");
     assert_eq!(updated_click_type, "double");
+
+    // 7. Verify plain-language string rendering in detail page for mouse_click with variable
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(body_str.contains("Click («target_x», 400) [right, double]"));
 }
 
 #[tokio::test]

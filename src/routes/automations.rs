@@ -507,6 +507,48 @@ pub async fn get_automation_detail_handler(
     .into_response()
 }
 
+/// Generates plain-language string summary for `mouse_click` step.
+pub fn generate_mouse_click_summary(
+    x: Option<i32>,
+    y: Option<i32>,
+    x_var_name: Option<&str>,
+    y_var_name: Option<&str>,
+    button: &str,
+    click_type: &str,
+) -> String {
+    let x_str = match x_var_name {
+        Some(name) if !name.trim().is_empty() => format!("«{}»", name.trim()),
+        _ => match x {
+            Some(val) => val.to_string(),
+            None => "variable".to_string(),
+        },
+    };
+
+    let y_str = match y_var_name {
+        Some(name) if !name.trim().is_empty() => format!("«{}»", name.trim()),
+        _ => match y {
+            Some(val) => val.to_string(),
+            None => "variable".to_string(),
+        },
+    };
+
+    format!("Click ({}, {}) [{}, {}]", x_str, y_str, button, click_type)
+}
+
+/// Generates plain-language string summary for `find_pixel_rgb` step.
+pub fn generate_find_pixel_rgb_summary(
+    x: i32,
+    y: i32,
+    output_var_name: Option<&str>,
+) -> String {
+    match output_var_name {
+        Some(name) if !name.trim().is_empty() => {
+            format!("Read pixel at ({}, {}) → store as «{}»", x, y, name.trim())
+        }
+        _ => format!("Read pixel at ({}, {})", x, y),
+    }
+}
+
 /// Helper to generate plain-language description for a step
 async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> String {
     match step_type {
@@ -523,20 +565,34 @@ async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> S
             }
         }
         "mouse_click" => {
-            let row = sqlx::query("SELECT x, y, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
-                .bind(step_id)
-                .fetch_optional(db)
-                .await;
+            let row = sqlx::query(
+                r#"
+                SELECT mc.x, mc.y, mc.button, mc.click_type, vx.name AS x_var_name, vy.name AS y_var_name
+                FROM step_mouse_clicks mc
+                LEFT JOIN automation_variables vx ON mc.x_variable_id = vx.id
+                LEFT JOIN automation_variables vy ON mc.y_variable_id = vy.id
+                WHERE mc.step_id = $1
+                "#,
+            )
+            .bind(step_id)
+            .fetch_optional(db)
+            .await;
+
             if let Ok(Some(r)) = row {
                 let x: Option<i32> = r.get("x");
                 let y: Option<i32> = r.get("y");
+                let x_var_name: Option<String> = r.get("x_var_name");
+                let y_var_name: Option<String> = r.get("y_var_name");
                 let button: String = r.get("button");
                 let click_type: String = r.get("click_type");
-                let coord_str = match (x, y) {
-                    (Some(x), Some(y)) => format!("({}, {})", x, y),
-                    _ => "(variable)".to_string(),
-                };
-                format!("Click {} [{}, {}]", coord_str, button, click_type)
+                generate_mouse_click_summary(
+                    x,
+                    y,
+                    x_var_name.as_deref(),
+                    y_var_name.as_deref(),
+                    &button,
+                    &click_type,
+                )
             } else {
                 "Click mouse".to_string()
             }
@@ -558,11 +614,7 @@ async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> S
                 let x: i32 = r.get("x");
                 let y: i32 = r.get("y");
                 let var_name: Option<String> = r.get("var_name");
-                if let Some(v) = var_name {
-                    format!("Read pixel at ({}, {}) → store as «{}»", x, y, v)
-                } else {
-                    format!("Read pixel at ({}, {})", x, y)
-                }
+                generate_find_pixel_rgb_summary(x, y, var_name.as_deref())
             } else {
                 "Read pixel at coordinate".to_string()
             }
@@ -1724,4 +1776,43 @@ pub async fn compact_positions(db: &PgPool, automation_id: i64) {
     }
 
     let _ = tx.commit().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_mouse_click_summary() {
+        // Fixed coordinates
+        let s1 = generate_mouse_click_summary(Some(824), Some(391), None, None, "left", "single");
+        assert_eq!(s1, "Click (824, 391) [left, single]");
+
+        // Variable X, Fixed Y
+        let s2 = generate_mouse_click_summary(None, Some(391), Some("target_x"), None, "right", "double");
+        assert_eq!(s2, "Click («target_x», 391) [right, double]");
+
+        // Variable X and Y
+        let s3 = generate_mouse_click_summary(None, None, Some("target_x"), Some("target_y"), "middle", "single");
+        assert_eq!(s3, "Click («target_x», «target_y») [middle, single]");
+
+        // Variable X with no name fallback
+        let s4 = generate_mouse_click_summary(None, Some(100), None, None, "left", "single");
+        assert_eq!(s4, "Click (variable, 100) [left, single]");
+    }
+
+    #[test]
+    fn test_generate_find_pixel_rgb_summary() {
+        // Without output variable
+        let s1 = generate_find_pixel_rgb_summary(100, 200, None);
+        assert_eq!(s1, "Read pixel at (100, 200)");
+
+        // With output variable
+        let s2 = generate_find_pixel_rgb_summary(100, 200, Some("bg_color"));
+        assert_eq!(s2, "Read pixel at (100, 200) → store as «bg_color»");
+
+        // With empty output variable string
+        let s3 = generate_find_pixel_rgb_summary(150, 250, Some("   "));
+        assert_eq!(s3, "Read pixel at (150, 250)");
+    }
 }
