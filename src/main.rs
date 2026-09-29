@@ -84,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/automations/{id}/delete", get(get_automation_delete_handler).post(post_automation_delete_handler))
         .route("/automations/{id}/steps/new", get(get_step_type_picker_handler))
         .route("/automations/{id}/steps/new/key_press", get(get_new_key_press_step_handler))
+        .route("/automations/{id}/steps/new/mouse_click", get(get_new_mouse_click_step_handler))
         .route("/automations/{id}/steps", post(post_create_step_handler))
         .route("/automations/{id}/steps/{sid}/edit", get(get_edit_step_handler))
         .route("/automations/{id}/steps/{sid}", post(post_edit_step_handler))

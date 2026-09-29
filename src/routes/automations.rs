@@ -163,6 +163,51 @@ pub struct StepTypePickerTemplate {
     pub automation_id: i64,
 }
 
+#[derive(Debug, Clone, serde::Deserialize, sqlx::FromRow)]
+pub struct VariableOption {
+    pub id: i64,
+    pub name: String,
+    pub var_type: String,
+}
+
+impl VariableOption {
+    pub fn is_selected_x(&self, x_var_id: &Option<i64>) -> bool {
+        *x_var_id == Some(self.id)
+    }
+
+    pub fn is_selected_y(&self, y_var_id: &Option<i64>) -> bool {
+        *y_var_id == Some(self.id)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewMouseClickQuery {
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+}
+
+#[derive(Template)]
+#[template(path = "automations/step_mouse_click.html")]
+pub struct StepMouseClickTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub x_mode: String,
+    pub x: Option<i32>,
+    pub x_variable_id: Option<i64>,
+    pub y_mode: String,
+    pub y: Option<i32>,
+    pub y_variable_id: Option<i64>,
+    pub button: String,
+    pub click_type: String,
+    pub variables: Vec<VariableOption>,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
 #[derive(Template)]
 #[template(path = "automations/step_key_press.html")]
 pub struct StepKeyPressTemplate {
@@ -182,6 +227,32 @@ pub struct KeyPressStepForm {
     pub label: Option<String>,
     pub post_delay_seconds: Option<f64>,
     pub key_combo: String,
+}
+
+#[derive(Deserialize)]
+pub struct MouseClickStepForm {
+    pub step_type: Option<String>,
+    pub label: Option<String>,
+    pub post_delay_seconds: Option<f64>,
+    pub x_mode: Option<String>,
+    pub x: Option<i32>,
+    pub x_variable_id: Option<i64>,
+    pub y_mode: Option<String>,
+    pub y: Option<i32>,
+    pub y_variable_id: Option<i64>,
+    pub button: Option<String>,
+    pub click_type: Option<String>,
+    pub key_combo: Option<String>,
+}
+
+pub async fn fetch_automation_variables(db: &PgPool, automation_id: i64) -> Vec<VariableOption> {
+    sqlx::query_as::<_, VariableOption>(
+        "SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1 ORDER BY name ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
 }
 
 /// GET /automations
@@ -596,12 +667,43 @@ pub async fn get_new_key_press_step_handler(
     })
 }
 
+/// GET /automations/{id}/steps/new/mouse_click
+pub async fn get_new_mouse_click_step_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<NewMouseClickQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let variables = fetch_automation_variables(&state.db, id).await;
+
+    HtmlTemplate(StepMouseClickTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        x_mode: "fixed".to_string(),
+        x: query.x,
+        x_variable_id: None,
+        y_mode: "fixed".to_string(),
+        y: query.y,
+        y_variable_id: None,
+        button: "left".to_string(),
+        click_type: "single".to_string(),
+        variables,
+        error: None,
+        is_edit: false,
+    })
+}
+
 /// POST /automations/{id}/steps
 pub async fn post_create_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<KeyPressStepForm>,
+    Form(form): Form<MouseClickStepForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -609,7 +711,164 @@ pub async fn post_create_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let key_combo = form.key_combo.trim();
+    let is_mouse_click = form.step_type.as_deref() == Some("mouse_click")
+        || (form.x.is_some()
+            || form.x_variable_id.is_some()
+            || form.y.is_some()
+            || form.y_variable_id.is_some()
+            || form.x_mode.is_some());
+
+    if is_mouse_click {
+        let x_mode = form.x_mode.unwrap_or_else(|| "fixed".to_string());
+        let y_mode = form.y_mode.unwrap_or_else(|| "fixed".to_string());
+
+        let (final_x, final_x_var) = match x_mode.as_str() {
+            "variable" => (None, form.x_variable_id),
+            _ => (form.x, None),
+        };
+
+        let (final_y, final_y_var) = match y_mode.as_str() {
+            "variable" => (None, form.y_variable_id),
+            _ => (form.y, None),
+        };
+
+        let button = match form.button.as_deref() {
+            Some("right") => "right",
+            Some("middle") => "middle",
+            _ => "left",
+        }
+        .to_string();
+
+        let click_type = match form.click_type.as_deref() {
+            Some("double") => "double",
+            _ => "single",
+        }
+        .to_string();
+
+        let mut err = None;
+        if final_x.is_none() && final_x_var.is_none() {
+            err = Some("Please provide a fixed X coordinate or select an X variable.".to_string());
+        } else if final_y.is_none() && final_y_var.is_none() {
+            err = Some("Please provide a fixed Y coordinate or select a Y variable.".to_string());
+        }
+
+        if let Some(error_msg) = err {
+            let variables = fetch_automation_variables(&state.db, id).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                HtmlTemplate(StepMouseClickTemplate {
+                    user,
+                    csrf_token,
+                    automation_id: id,
+                    step_id: None,
+                    label: form.label.unwrap_or_default(),
+                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                    x_mode,
+                    x: form.x,
+                    x_variable_id: form.x_variable_id,
+                    y_mode,
+                    y: form.y,
+                    y_variable_id: form.y_variable_id,
+                    button,
+                    click_type,
+                    variables,
+                    error: Some(error_msg),
+                    is_edit: false,
+                }),
+            )
+                .into_response();
+        }
+
+        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
+        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+
+        let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await;
+
+        let next_pos: f64 = match max_pos_row {
+            Ok(r) => {
+                let max_pos: Option<f64> = r.get("max_pos");
+                max_pos.map(|p| p + 10.0).unwrap_or(10.0)
+            }
+            _ => 10.0,
+        };
+
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::error!("Failed to start transaction: {}", e);
+                return Redirect::to(&format!("/automations/{}", id)).into_response();
+            }
+        };
+
+        let step_row = sqlx::query(
+            "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'mouse_click', $3, $4) RETURNING id",
+        )
+        .bind(id)
+        .bind(next_pos)
+        .bind(&label)
+        .bind(post_delay_ms)
+        .fetch_one(&mut *tx)
+        .await;
+
+        let step_id: i64 = match step_row {
+            Ok(r) => r.get("id"),
+            Err(e) => {
+                tracing::error!("Failed to insert step: {}", e);
+                return Redirect::to(&format!("/automations/{}", id)).into_response();
+            }
+        };
+
+        let detail_res = sqlx::query(
+            "INSERT INTO step_mouse_clicks (step_id, x, y, x_variable_id, y_variable_id, button, click_type) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(step_id)
+        .bind(final_x)
+        .bind(final_y)
+        .bind(final_x_var)
+        .bind(final_y_var)
+        .bind(&button)
+        .bind(&click_type)
+        .execute(&mut *tx)
+        .await;
+
+        if let Err(e) = detail_res {
+            tracing::error!("Failed to insert step_mouse_clicks: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
+
+        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
+
+        if tx.commit().await.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "create_step",
+                "automation_step",
+                Some(step_id),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "step_type": "mouse_click",
+                    "x": final_x,
+                    "y": final_y,
+                    "x_variable_id": final_x_var,
+                    "y_variable_id": final_y_var,
+                    "button": button,
+                    "click_type": click_type
+                })),
+            )
+            .await;
+        }
+
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
+
+    let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
     if key_combo.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -631,7 +890,6 @@ pub async fn post_create_step_handler(
     let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
     let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
 
-    // Calculate sparse position: MAX(position) + 10.0
     let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
         .bind(id)
         .fetch_one(&state.db)
@@ -753,6 +1011,49 @@ pub async fn get_edit_step_handler(
             is_edit: true,
         })
         .into_response()
+    } else if step_type == "mouse_click" {
+        let mc_row = sqlx::query("SELECT x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
+            .bind(sid)
+            .fetch_optional(&state.db)
+            .await;
+
+        let (x, y, x_var_id, y_var_id, button, click_type) = match mc_row {
+            Ok(Some(r)) => (
+                r.get::<Option<i32>, _>("x"),
+                r.get::<Option<i32>, _>("y"),
+                r.get::<Option<i64>, _>("x_variable_id"),
+                r.get::<Option<i64>, _>("y_variable_id"),
+                r.get::<String, _>("button"),
+                r.get::<String, _>("click_type"),
+            ),
+            _ => (None, None, None, None, "left".to_string(), "single".to_string()),
+        };
+
+        let x_mode = if x_var_id.is_some() { "variable" } else { "fixed" }.to_string();
+        let y_mode = if y_var_id.is_some() { "variable" } else { "fixed" }.to_string();
+
+        let variables = fetch_automation_variables(&state.db, id).await;
+
+        HtmlTemplate(StepMouseClickTemplate {
+            user,
+            csrf_token,
+            automation_id: id,
+            step_id: Some(sid),
+            label: label.unwrap_or_default(),
+            post_delay_seconds: post_delay_ms as f64 / 1000.0,
+            x_mode,
+            x,
+            x_variable_id: x_var_id,
+            y_mode,
+            y,
+            y_variable_id: y_var_id,
+            button,
+            click_type,
+            variables,
+            error: None,
+            is_edit: true,
+        })
+        .into_response()
     } else {
         Redirect::to(&format!("/automations/{}", id)).into_response()
     }
@@ -763,7 +1064,7 @@ pub async fn post_edit_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, sid)): Path<(i64, i64)>,
-    Form(form): Form<KeyPressStepForm>,
+    Form(form): Form<MouseClickStepForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -771,7 +1072,139 @@ pub async fn post_edit_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let key_combo = form.key_combo.trim();
+    let step_type_row = sqlx::query("SELECT step_type FROM automation_steps WHERE id = $1 AND automation_id = $2")
+        .bind(sid)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await;
+
+    let step_type: String = match step_type_row {
+        Ok(Some(r)) => r.get("step_type"),
+        _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
+    };
+
+    if step_type == "mouse_click" {
+        let x_mode = form.x_mode.unwrap_or_else(|| "fixed".to_string());
+        let y_mode = form.y_mode.unwrap_or_else(|| "fixed".to_string());
+
+        let (final_x, final_x_var) = match x_mode.as_str() {
+            "variable" => (None, form.x_variable_id),
+            _ => (form.x, None),
+        };
+
+        let (final_y, final_y_var) = match y_mode.as_str() {
+            "variable" => (None, form.y_variable_id),
+            _ => (form.y, None),
+        };
+
+        let button = match form.button.as_deref() {
+            Some("right") => "right",
+            Some("middle") => "middle",
+            _ => "left",
+        }
+        .to_string();
+
+        let click_type = match form.click_type.as_deref() {
+            Some("double") => "double",
+            _ => "single",
+        }
+        .to_string();
+
+        let mut err = None;
+        if final_x.is_none() && final_x_var.is_none() {
+            err = Some("Please provide a fixed X coordinate or select an X variable.".to_string());
+        } else if final_y.is_none() && final_y_var.is_none() {
+            err = Some("Please provide a fixed Y coordinate or select a Y variable.".to_string());
+        }
+
+        if let Some(error_msg) = err {
+            let variables = fetch_automation_variables(&state.db, id).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                HtmlTemplate(StepMouseClickTemplate {
+                    user,
+                    csrf_token,
+                    automation_id: id,
+                    step_id: Some(sid),
+                    label: form.label.unwrap_or_default(),
+                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                    x_mode,
+                    x: form.x,
+                    x_variable_id: form.x_variable_id,
+                    y_mode,
+                    y: form.y,
+                    y_variable_id: form.y_variable_id,
+                    button,
+                    click_type,
+                    variables,
+                    error: Some(error_msg),
+                    is_edit: true,
+                }),
+            )
+                .into_response();
+        }
+
+        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
+        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
+        };
+
+        let _ = sqlx::query(
+            "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+        )
+        .bind(&label)
+        .bind(post_delay_ms)
+        .bind(sid)
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
+
+        let _ = sqlx::query(
+            "UPDATE step_mouse_clicks SET x = $1, y = $2, x_variable_id = $3, y_variable_id = $4, button = $5, click_type = $6 WHERE step_id = $7",
+        )
+        .bind(final_x)
+        .bind(final_y)
+        .bind(final_x_var)
+        .bind(final_y_var)
+        .bind(&button)
+        .bind(&click_type)
+        .bind(sid)
+        .execute(&mut *tx)
+        .await;
+
+        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
+
+        if tx.commit().await.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "update_step",
+                "automation_step",
+                Some(sid),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "step_type": "mouse_click",
+                    "x": final_x,
+                    "y": final_y,
+                    "x_variable_id": final_x_var,
+                    "y_variable_id": final_y_var,
+                    "button": button,
+                    "click_type": click_type
+                })),
+            )
+            .await;
+        }
+
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
+
+    let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
     if key_combo.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
