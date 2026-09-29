@@ -202,6 +202,32 @@ impl BitmapOption {
     }
 }
 
+#[derive(Debug, Clone, serde::Deserialize, sqlx::FromRow)]
+pub struct StepOption {
+    pub id: i64,
+    pub step_type: String,
+    pub label: Option<String>,
+    pub position: f64,
+    pub display_number: usize,
+}
+
+impl StepOption {
+    pub fn is_selected_match(&self, match_id: &Option<i64>) -> bool {
+        *match_id == Some(self.id)
+    }
+
+    pub fn is_selected_no_match(&self, no_match_id: &Option<i64>) -> bool {
+        *no_match_id == Some(self.id)
+    }
+
+    pub fn display_name(&self) -> String {
+        match &self.label {
+            Some(lbl) if !lbl.trim().is_empty() => format!("Step {} ({})", self.display_number, lbl.trim()),
+            _ => format!("Step {} ({})", self.display_number, self.step_type),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct NewMouseClickQuery {
     pub x: Option<i32>,
@@ -283,6 +309,48 @@ pub struct NewFindBitmapQuery {
     pub search_height: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NewBranchQuery {
+    pub condition_type: Option<String>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub reference_bitmap_id: Option<i64>,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+}
+
+#[derive(Template)]
+#[template(path = "automations/step_branch.html")]
+pub struct StepBranchTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub condition_type: String,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub expected_r: Option<i16>,
+    pub expected_g: Option<i16>,
+    pub expected_b: Option<i16>,
+    pub tolerance: Option<i16>,
+    pub reference_bitmap_id: Option<i64>,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub match_threshold: Option<f32>,
+    pub on_match_step_id: Option<i64>,
+    pub on_no_match_step_id: Option<i64>,
+    pub steps: Vec<StepOption>,
+    pub bitmaps: Vec<BitmapOption>,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
 #[derive(Template)]
 #[template(path = "automations/step_find_bitmap.html")]
 pub struct StepFindBitmapTemplate {
@@ -331,6 +399,13 @@ pub struct MouseClickStepForm {
     pub output_found_variable_id: Option<i64>,
     pub output_x_variable_id: Option<i64>,
     pub output_y_variable_id: Option<i64>,
+    pub condition_type: Option<String>,
+    pub expected_r: Option<i16>,
+    pub expected_g: Option<i16>,
+    pub expected_b: Option<i16>,
+    pub tolerance: Option<i16>,
+    pub on_match_step_id: Option<i64>,
+    pub on_no_match_step_id: Option<i64>,
 }
 
 pub async fn fetch_automation_variables(db: &PgPool, automation_id: i64) -> Vec<VariableOption> {
@@ -341,6 +416,41 @@ pub async fn fetch_automation_variables(db: &PgPool, automation_id: i64) -> Vec<
     .fetch_all(db)
     .await
     .unwrap_or_default()
+}
+
+pub async fn fetch_automation_step_options(
+    db: &PgPool,
+    automation_id: i64,
+    exclude_step_id: Option<i64>,
+) -> Vec<StepOption> {
+    let raw_steps = sqlx::query(
+        "SELECT id, step_type, label, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    raw_steps
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, row)| {
+            let id: i64 = row.get("id");
+            if exclude_step_id == Some(id) {
+                return None;
+            }
+            let step_type: String = row.get("step_type");
+            let label: Option<String> = row.get("label");
+            let position: f64 = row.get("position");
+            Some(StepOption {
+                id,
+                step_type,
+                label,
+                position,
+                display_number: idx + 1,
+            })
+        })
+        .collect()
 }
 
 pub async fn fetch_available_bitmaps(db: &PgPool, automation_id: i64) -> Vec<BitmapOption> {
@@ -632,6 +742,42 @@ pub fn generate_find_bitmap_summary(
     }
 }
 
+/// Generates plain-language string summary for `branch` step.
+pub fn generate_branch_summary(
+    condition_type: &str,
+    x: Option<i32>,
+    y: Option<i32>,
+    expected_r: Option<i16>,
+    expected_g: Option<i16>,
+    expected_b: Option<i16>,
+    tolerance: Option<i16>,
+    bitmap_name: Option<&str>,
+    match_target: Option<&str>,
+    no_match_target: Option<&str>,
+) -> String {
+    let match_str = match_target.unwrap_or("Next Step");
+    let no_match_str = no_match_target.unwrap_or("Next Step");
+
+    if condition_type == "pixel_rgb" {
+        let px = x.unwrap_or(0);
+        let py = y.unwrap_or(0);
+        let r = expected_r.unwrap_or(0);
+        let g = expected_g.unwrap_or(0);
+        let b = expected_b.unwrap_or(0);
+        let tol = tolerance.unwrap_or(0);
+        format!(
+            "BRANCH: if pixel at ({}, {}) ≈ RGB({},{},{}) ±{} → go to {}, else → go to {}",
+            px, py, r, g, b, tol, match_str, no_match_str
+        )
+    } else {
+        let bname = bitmap_name.unwrap_or("bitmap");
+        format!(
+            "BRANCH: if bitmap «{}» found → go to {}, else → go to {}",
+            bname, match_str, no_match_str
+        )
+    }
+}
+
 /// Helper to generate plain-language description for a step
 async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> String {
     match step_type {
@@ -725,9 +871,91 @@ async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> S
             }
         }
         "branch" => {
-            "BRANCH evaluation".to_string()
+            let row = sqlx::query(
+                r#"
+                SELECT
+                    sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
+                    b.name AS bitmap_name,
+                    sm.id AS match_id, sm.step_type AS match_type, sm.label AS match_label, sm.position AS match_pos,
+                    sn.id AS no_match_id, sn.step_type AS no_match_type, sn.label AS no_match_label, sn.position AS no_match_pos,
+                    s.automation_id
+                FROM step_branches sb
+                JOIN automation_steps s ON sb.step_id = s.id
+                LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
+                LEFT JOIN automation_steps sm ON sb.on_match_step_id = sm.id
+                LEFT JOIN automation_steps sn ON sb.on_no_match_step_id = sn.id
+                WHERE sb.step_id = $1
+                "#,
+            )
+            .bind(step_id)
+            .fetch_optional(db)
+            .await;
+
+            if let Ok(Some(r)) = row {
+                let condition_type: String = r.get("condition_type");
+                let x: Option<i32> = r.get("x");
+                let y: Option<i32> = r.get("y");
+                let expected_r: Option<i16> = r.get("expected_r");
+                let expected_g: Option<i16> = r.get("expected_g");
+                let expected_b: Option<i16> = r.get("expected_b");
+                let tolerance: Option<i16> = r.get("tolerance");
+                let bitmap_name: Option<String> = r.get("bitmap_name");
+                let automation_id: i64 = r.get("automation_id");
+
+                let match_target_str = if let Some(m_id) = r.get::<Option<i64>, _>("match_id") {
+                    get_step_target_label(db, automation_id, m_id, r.get("match_label"), r.get("match_type")).await
+                } else {
+                    "Next Step".to_string()
+                };
+
+                let no_match_target_str = if let Some(n_id) = r.get::<Option<i64>, _>("no_match_id") {
+                    get_step_target_label(db, automation_id, n_id, r.get("no_match_label"), r.get("no_match_type")).await
+                } else {
+                    "Next Step".to_string()
+                };
+
+                generate_branch_summary(
+                    &condition_type,
+                    x,
+                    y,
+                    expected_r,
+                    expected_g,
+                    expected_b,
+                    tolerance,
+                    bitmap_name.as_deref(),
+                    Some(&match_target_str),
+                    Some(&no_match_target_str),
+                )
+            } else {
+                "BRANCH evaluation".to_string()
+            }
         }
         _ => "Unknown step".to_string(),
+    }
+}
+
+async fn get_step_target_label(
+    db: &PgPool,
+    automation_id: i64,
+    step_id: i64,
+    label: Option<String>,
+    step_type: Option<String>,
+) -> String {
+    let step_num = sqlx::query(
+        "SELECT COUNT(*) AS num FROM automation_steps WHERE automation_id = $1 AND position <= (SELECT position FROM automation_steps WHERE id = $2)",
+    )
+    .bind(automation_id)
+    .bind(step_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .map(|r| r.get::<i64, _>("num"))
+    .unwrap_or(0);
+
+    match label {
+        Some(lbl) if !lbl.trim().is_empty() => format!("Step {} ({})", step_num, lbl.trim()),
+        _ => format!("Step {} ({})", step_num, step_type.as_deref().unwrap_or("step")),
     }
 }
 
@@ -862,6 +1090,47 @@ pub async fn get_new_key_press_step_handler(
     })
 }
 
+/// GET /automations/{id}/steps/new/branch
+pub async fn get_new_branch_step_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<NewBranchQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let condition_type = query.condition_type.unwrap_or_else(|| "pixel_rgb".to_string());
+    let steps = fetch_automation_step_options(&state.db, id, None).await;
+    let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+
+    HtmlTemplate(StepBranchTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        condition_type,
+        x: query.x,
+        y: query.y,
+        expected_r: Some(0),
+        expected_g: Some(0),
+        expected_b: Some(0),
+        tolerance: Some(10),
+        reference_bitmap_id: query.reference_bitmap_id,
+        search_x: query.search_x,
+        search_y: query.search_y,
+        search_width: query.search_width,
+        search_height: query.search_height,
+        match_threshold: Some(0.95),
+        on_match_step_id: None,
+        on_no_match_step_id: None,
+        steps,
+        bitmaps,
+        error: None,
+        is_edit: false,
+    })
+}
+
 /// GET /automations/{id}/steps/new/find_bitmap
 pub async fn get_new_find_bitmap_step_handler(
     State(state): State<AppState>,
@@ -967,6 +1236,173 @@ pub async fn post_create_step_handler(
     }
 
     let step_type_str = form.step_type.as_deref().unwrap_or("");
+
+    if step_type_str == "branch" {
+        let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb").to_string();
+
+        let mut error_msg = None;
+        if condition_type == "pixel_rgb" {
+            if form.x.is_none() || form.y.is_none() {
+                error_msg = Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string());
+            }
+        } else if condition_type == "bitmap" {
+            if form.reference_bitmap_id.is_none() || form.reference_bitmap_id == Some(0) {
+                error_msg = Some("Please select a reference bitmap for bitmap condition.".to_string());
+            }
+        }
+
+        if let Some(err) = error_msg {
+            let steps = fetch_automation_step_options(&state.db, id, None).await;
+            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                HtmlTemplate(StepBranchTemplate {
+                    user,
+                    csrf_token,
+                    automation_id: id,
+                    step_id: None,
+                    label: form.label.unwrap_or_default(),
+                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                    condition_type,
+                    x: form.x,
+                    y: form.y,
+                    expected_r: form.expected_r,
+                    expected_g: form.expected_g,
+                    expected_b: form.expected_b,
+                    tolerance: form.tolerance,
+                    reference_bitmap_id: form.reference_bitmap_id,
+                    search_x: form.search_x,
+                    search_y: form.search_y,
+                    search_width: form.search_width,
+                    search_height: form.search_height,
+                    match_threshold: form.match_threshold,
+                    on_match_step_id: form.on_match_step_id,
+                    on_no_match_step_id: form.on_no_match_step_id,
+                    steps,
+                    bitmaps,
+                    error: Some(err),
+                    is_edit: false,
+                }),
+            )
+                .into_response();
+        }
+
+        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
+        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+
+        let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await;
+
+        let next_pos: f64 = match max_pos_row {
+            Ok(r) => {
+                let max_pos: Option<f64> = r.get("max_pos");
+                max_pos.map(|p| p + 10.0).unwrap_or(10.0)
+            }
+            _ => 10.0,
+        };
+
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::error!("Failed to start transaction: {}", e);
+                return Redirect::to(&format!("/automations/{}", id)).into_response();
+            }
+        };
+
+        let step_row = sqlx::query(
+            "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'branch', $3, $4) RETURNING id",
+        )
+        .bind(id)
+        .bind(next_pos)
+        .bind(&label)
+        .bind(post_delay_ms)
+        .fetch_one(&mut *tx)
+        .await;
+
+        let step_id: i64 = match step_row {
+            Ok(r) => r.get("id"),
+            Err(e) => {
+                tracing::error!("Failed to insert branch step: {}", e);
+                return Redirect::to(&format!("/automations/{}", id)).into_response();
+            }
+        };
+
+        let detail_res = if condition_type == "pixel_rgb" {
+            sqlx::query(
+                r#"
+                INSERT INTO step_branches
+                    (step_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                     reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                     on_match_step_id, on_no_match_step_id)
+                VALUES ($1, 'pixel_rgb', $2, $3, $4, $5, $6, $7, NULL, NULL, NULL, NULL, NULL, NULL, $8, $9)
+                "#,
+            )
+            .bind(step_id)
+            .bind(form.x.unwrap_or(0))
+            .bind(form.y.unwrap_or(0))
+            .bind(form.expected_r.unwrap_or(0))
+            .bind(form.expected_g.unwrap_or(0))
+            .bind(form.expected_b.unwrap_or(0))
+            .bind(form.tolerance.unwrap_or(10))
+            .bind(form.on_match_step_id.filter(|&sid| sid > 0))
+            .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .execute(&mut *tx)
+            .await
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO step_branches
+                    (step_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                     reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                     on_match_step_id, on_no_match_step_id)
+                VALUES ($1, 'bitmap', NULL, NULL, NULL, NULL, NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
+                "#,
+            )
+            .bind(step_id)
+            .bind(form.reference_bitmap_id.unwrap())
+            .bind(form.search_x)
+            .bind(form.search_y)
+            .bind(form.search_width)
+            .bind(form.search_height)
+            .bind(form.match_threshold.unwrap_or(0.95))
+            .bind(form.on_match_step_id.filter(|&sid| sid > 0))
+            .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .execute(&mut *tx)
+            .await
+        };
+
+        if let Err(e) = detail_res {
+            tracing::error!("Failed to insert step_branches: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
+
+        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
+
+        if tx.commit().await.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "create_step",
+                "automation_step",
+                Some(step_id),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "step_type": "branch",
+                    "condition_type": condition_type,
+                    "on_match_step_id": form.on_match_step_id,
+                    "on_no_match_step_id": form.on_no_match_step_id
+                })),
+            )
+            .await;
+        }
+
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
 
     if step_type_str == "find_pixel_rgb" {
         let (final_x, final_y) = (form.x, form.y);
@@ -1571,6 +2007,124 @@ pub async fn get_edit_step_handler(
             is_edit: true,
         })
         .into_response()
+    } else if step_type == "branch" {
+        let branch_row = sqlx::query(
+            r#"
+            SELECT
+                condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                on_match_step_id, on_no_match_step_id
+            FROM step_branches
+            WHERE step_id = $1
+            "#,
+        )
+        .bind(sid)
+        .fetch_optional(&state.db)
+        .await;
+
+        let (
+            db_condition_type,
+            db_x,
+            db_y,
+            db_expected_r,
+            db_expected_g,
+            db_expected_b,
+            db_tolerance,
+            db_reference_bitmap_id,
+            db_search_x,
+            db_search_y,
+            db_search_width,
+            db_search_height,
+            db_match_threshold,
+            on_match_step_id,
+            on_no_match_step_id,
+        ) = match branch_row {
+            Ok(Some(r)) => (
+                r.get::<String, _>("condition_type"),
+                r.get::<Option<i32>, _>("x"),
+                r.get::<Option<i32>, _>("y"),
+                r.get::<Option<i16>, _>("expected_r"),
+                r.get::<Option<i16>, _>("expected_g"),
+                r.get::<Option<i16>, _>("expected_b"),
+                r.get::<Option<i16>, _>("tolerance"),
+                r.get::<Option<i64>, _>("reference_bitmap_id"),
+                r.get::<Option<i32>, _>("search_x"),
+                r.get::<Option<i32>, _>("search_y"),
+                r.get::<Option<i32>, _>("search_width"),
+                r.get::<Option<i32>, _>("search_height"),
+                r.get::<Option<f32>, _>("match_threshold"),
+                r.get::<Option<i64>, _>("on_match_step_id"),
+                r.get::<Option<i64>, _>("on_no_match_step_id"),
+            ),
+            _ => (
+                "pixel_rgb".to_string(),
+                None,
+                None,
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(10),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0.95),
+                None,
+                None,
+            ),
+        };
+
+        let branch_query = NewBranchQuery {
+            condition_type: None,
+            x: query.search_x,
+            y: query.search_y,
+            reference_bitmap_id: query.reference_bitmap_id,
+            search_x: query.search_x,
+            search_y: query.search_y,
+            search_width: query.search_width,
+            search_height: query.search_height,
+        };
+
+        let x = branch_query.x.or(db_x);
+        let y = branch_query.y.or(db_y);
+        let reference_bitmap_id = branch_query.reference_bitmap_id.or(db_reference_bitmap_id);
+        let search_x = branch_query.search_x.or(db_search_x);
+        let search_y = branch_query.search_y.or(db_search_y);
+        let search_width = branch_query.search_width.or(db_search_width);
+        let search_height = branch_query.search_height.or(db_search_height);
+
+        let steps = fetch_automation_step_options(&state.db, id, Some(sid)).await;
+        let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+
+        HtmlTemplate(StepBranchTemplate {
+            user,
+            csrf_token,
+            automation_id: id,
+            step_id: Some(sid),
+            label: label.unwrap_or_default(),
+            post_delay_seconds: post_delay_ms as f64 / 1000.0,
+            condition_type: db_condition_type,
+            x,
+            y,
+            expected_r: db_expected_r,
+            expected_g: db_expected_g,
+            expected_b: db_expected_b,
+            tolerance: db_tolerance,
+            reference_bitmap_id,
+            search_x,
+            search_y,
+            search_width,
+            search_height,
+            match_threshold: db_match_threshold,
+            on_match_step_id,
+            on_no_match_step_id,
+            steps,
+            bitmaps,
+            error: None,
+            is_edit: true,
+        })
+        .into_response()
     } else if step_type == "find_pixel_rgb" {
         let fp_row = sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
             .bind(sid)
@@ -1674,6 +2228,151 @@ pub async fn post_edit_step_handler(
         Ok(Some(r)) => r.get("step_type"),
         _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     };
+
+    if step_type == "branch" {
+        let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb").to_string();
+
+        let mut error_msg = None;
+        if condition_type == "pixel_rgb" {
+            if form.x.is_none() || form.y.is_none() {
+                error_msg = Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string());
+            }
+        } else if condition_type == "bitmap" {
+            if form.reference_bitmap_id.is_none() || form.reference_bitmap_id == Some(0) {
+                error_msg = Some("Please select a reference bitmap for bitmap condition.".to_string());
+            }
+        }
+
+        if let Some(err) = error_msg {
+            let steps = fetch_automation_step_options(&state.db, id, Some(sid)).await;
+            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                HtmlTemplate(StepBranchTemplate {
+                    user,
+                    csrf_token,
+                    automation_id: id,
+                    step_id: Some(sid),
+                    label: form.label.unwrap_or_default(),
+                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                    condition_type,
+                    x: form.x,
+                    y: form.y,
+                    expected_r: form.expected_r,
+                    expected_g: form.expected_g,
+                    expected_b: form.expected_b,
+                    tolerance: form.tolerance,
+                    reference_bitmap_id: form.reference_bitmap_id,
+                    search_x: form.search_x,
+                    search_y: form.search_y,
+                    search_width: form.search_width,
+                    search_height: form.search_height,
+                    match_threshold: form.match_threshold,
+                    on_match_step_id: form.on_match_step_id,
+                    on_no_match_step_id: form.on_no_match_step_id,
+                    steps,
+                    bitmaps,
+                    error: Some(err),
+                    is_edit: true,
+                }),
+            )
+                .into_response();
+        }
+
+        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
+        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
+        };
+
+        let _ = sqlx::query(
+            "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+        )
+        .bind(&label)
+        .bind(post_delay_ms)
+        .bind(sid)
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
+
+        let detail_res = if condition_type == "pixel_rgb" {
+            sqlx::query(
+                r#"
+                UPDATE step_branches
+                SET condition_type = 'pixel_rgb',
+                    x = $1, y = $2, expected_r = $3, expected_g = $4, expected_b = $5, tolerance = $6,
+                    reference_bitmap_id = NULL, search_x = NULL, search_y = NULL, search_width = NULL, search_height = NULL, match_threshold = NULL,
+                    on_match_step_id = $7, on_no_match_step_id = $8
+                WHERE step_id = $9
+                "#,
+            )
+            .bind(form.x.unwrap_or(0))
+            .bind(form.y.unwrap_or(0))
+            .bind(form.expected_r.unwrap_or(0))
+            .bind(form.expected_g.unwrap_or(0))
+            .bind(form.expected_b.unwrap_or(0))
+            .bind(form.tolerance.unwrap_or(10))
+            .bind(form.on_match_step_id.filter(|&sid| sid > 0))
+            .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .bind(sid)
+            .execute(&mut *tx)
+            .await
+        } else {
+            sqlx::query(
+                r#"
+                UPDATE step_branches
+                SET condition_type = 'bitmap',
+                    x = NULL, y = NULL, expected_r = NULL, expected_g = NULL, expected_b = NULL, tolerance = NULL,
+                    reference_bitmap_id = $1, search_x = $2, search_y = $3, search_width = $4, search_height = $5, match_threshold = $6,
+                    on_match_step_id = $7, on_no_match_step_id = $8
+                WHERE step_id = $9
+                "#,
+            )
+            .bind(form.reference_bitmap_id.unwrap())
+            .bind(form.search_x)
+            .bind(form.search_y)
+            .bind(form.search_width)
+            .bind(form.search_height)
+            .bind(form.match_threshold.unwrap_or(0.95))
+            .bind(form.on_match_step_id.filter(|&sid| sid > 0))
+            .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .bind(sid)
+            .execute(&mut *tx)
+            .await
+        };
+
+        if let Err(e) = detail_res {
+            tracing::error!("Failed to update step_branches: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
+
+        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
+
+        if tx.commit().await.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "update_step",
+                "automation_step",
+                Some(sid),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "step_type": "branch",
+                    "condition_type": condition_type,
+                    "on_match_step_id": form.on_match_step_id,
+                    "on_no_match_step_id": form.on_no_match_step_id
+                })),
+            )
+            .await;
+        }
+
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
 
     if step_type == "find_pixel_rgb" {
         let (final_x, final_y) = (form.x, form.y);
@@ -2270,6 +2969,45 @@ mod tests {
         // With whitespace output variable name
         let s3 = generate_find_bitmap_summary("login_button", Some("   "));
         assert_eq!(s3, "Search for «login_button» on screen");
+    }
+
+    #[test]
+    fn test_generate_branch_summary() {
+        // Pixel RGB branch condition
+        let s1 = generate_branch_summary(
+            "pixel_rgb",
+            Some(824),
+            Some(391),
+            Some(40),
+            Some(180),
+            Some(60),
+            Some(10),
+            None,
+            Some("Step 12 (Success)"),
+            Some("Step 10 (Retry)"),
+        );
+        assert_eq!(
+            s1,
+            "BRANCH: if pixel at (824, 391) ≈ RGB(40,180,60) ±10 → go to Step 12 (Success), else → go to Step 10 (Retry)"
+        );
+
+        // Bitmap branch condition
+        let s2 = generate_branch_summary(
+            "bitmap",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("submit_btn"),
+            Some("Step 5 (Click)"),
+            Some("Next Step"),
+        );
+        assert_eq!(
+            s2,
+            "BRANCH: if bitmap «submit_btn» found → go to Step 5 (Click), else → go to Next Step"
+        );
     }
 
     #[test]

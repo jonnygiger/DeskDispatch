@@ -87,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/automations/{id}/steps/new/mouse_click", get(get_new_mouse_click_step_handler))
         .route("/automations/{id}/steps/new/find_pixel_rgb", get(get_new_find_pixel_rgb_step_handler))
         .route("/automations/{id}/steps/new/find_bitmap", get(get_new_find_bitmap_step_handler))
+        .route("/automations/{id}/steps/new/branch", get(get_new_branch_step_handler))
         .route("/automations/{id}/steps", post(post_create_step_handler))
         .route("/automations/{id}/steps/{sid}/edit", get(get_edit_step_handler))
         .route("/automations/{id}/steps/{sid}", post(post_edit_step_handler))
