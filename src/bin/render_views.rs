@@ -202,5 +202,11 @@ fn main() {
     };
     fs::write("rendered_templates/bitmaps_pick_region_stage3.html", pick_region_stage3_tmpl.render().unwrap()).unwrap();
 
+    let step_picker_tmpl = app::routes::automations::StepTypePickerTemplate {
+        user: user.clone(),
+        automation_id: 1,
+    };
+    fs::write("rendered_templates/step_type_picker.html", step_picker_tmpl.render().unwrap()).unwrap();
+
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

@@ -1,33 +1,66 @@
-{% extends "layout.html" %}
-{% import "macros.html" as macros %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Select Step Type - DeskDispatch</title>
+    <link rel="stylesheet" href="/static/style.css">
 
-{% block title %}Select Step Type - DeskDispatch{% endblock %}
+</head>
+<body>
 
-{% block top_nav %}
-{% call macros::top_nav(user, "automations") %}
-{% endblock %}
 
-{% block content %}
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+    <ul class="top-nav-menu">
+        <li><a href="/" >Dashboard</a></li>
+        <li><a href="/automations" class="active">Automations</a></li>
+        <li><a href="/schedules" >Schedules</a></li>
+        <li><a href="/runs" >Runs</a></li>
+        <li><a href="/workers" >Workers</a></li>
+
+        <li><a href="/users" >Users</a></li>
+
+    </ul>
+    <div class="top-nav-user">
+        <a href="/account" >Admin User</a>
+        <form method="post" action="/logout" style="display:inline;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
+        </form>
+    </div>
+</header>
+
+
+
+    <div class="app-container">
+
+        <main class="main-content">
+
 <div class="dashboard-header">
     <h1 class="dashboard-title">Select Step Type</h1>
-    <a href="/automations/{{ automation_id }}" class="btn btn-outline">Back to Automation</a>
+    <a href="/automations/1" class="btn btn-outline">Back to Automation</a>
 </div>
 
 <div class="card" style="max-width: 600px; margin: 0 auto;">
     <p style="margin-bottom: 1.5rem; color: var(--color-text-muted);">Choose a step primitive to add to this automation:</p>
 
     <div style="display: flex; flex-direction: column; gap: 1rem;">
-        <a href="/automations/{{ automation_id }}/steps/new/key_press" class="btn btn-outline" style="text-align: left; padding: 1rem; display: flex; flex-direction: column; gap: 0.25rem;">
+        <a href="/automations/1/steps/new/key_press" class="btn btn-outline" style="text-align: left; padding: 1rem; display: flex; flex-direction: column; gap: 0.25rem;">
             <strong style="font-size: 1rem;">Key Press</strong>
             <span style="font-size: 0.875rem; color: var(--color-text-muted);">Simulate typing or pressing a key chord (e.g. ctrl+alt+delete, F5, enter)</span>
         </a>
 
-        <a href="/automations/{{ automation_id }}/steps/new/mouse_click" class="btn btn-outline" style="text-align: left; padding: 1rem; display: flex; flex-direction: column; gap: 0.25rem;">
+        <a href="/automations/1/steps/new/mouse_click" class="btn btn-outline" style="text-align: left; padding: 1rem; display: flex; flex-direction: column; gap: 0.25rem;">
             <strong style="font-size: 1rem;">Mouse Click</strong>
             <span style="font-size: 0.875rem; color: var(--color-text-muted);">Perform single or double click at fixed or variable coordinates</span>
         </a>
 
-        <a href="/automations/{{ automation_id }}/steps/new/find_pixel_rgb" class="btn btn-outline" style="text-align: left; padding: 1rem; display: flex; flex-direction: column; gap: 0.25rem;">
+        <a href="/automations/1/steps/new/find_pixel_rgb" class="btn btn-outline" style="text-align: left; padding: 1rem; display: flex; flex-direction: column; gap: 0.25rem;">
             <strong style="font-size: 1rem;">Find Pixel RGB</strong>
             <span style="font-size: 0.875rem; color: var(--color-text-muted);">Read pixel RGB color at specific coordinate and store in variable</span>
         </a>
@@ -43,4 +76,14 @@
         </div>
     </div>
 </div>
-{% endblock %}
+
+        </main>
+    </div>
+
+    <footer class="footer">
+
+        &copy; DeskDispatch — Task Server
+
+    </footer>
+</body>
+</html>
