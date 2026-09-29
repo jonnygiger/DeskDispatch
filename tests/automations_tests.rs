@@ -642,3 +642,187 @@ async fn test_step_type_picker_interface() {
     assert!(body_str.contains("Find Bitmap"));
     assert!(body_str.contains("Branch"));
 }
+
+#[tokio::test]
+async fn test_branch_step_target_selectors_and_foreign_keys() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_branch_step_target_selectors_and_foreign_keys");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(credentials)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let state = AppState {
+        db: pool.clone(),
+        s3_client,
+        config: config.clone(),
+        rate_limiter: app::auth::LoginRateLimiter::default(),
+    };
+
+    let app = Router::new()
+        .route("/automations", axum::routing::get(get_automations_handler).post(post_automations_handler))
+        .route("/automations/{id}", axum::routing::get(get_automation_detail_handler))
+        .route("/automations/{id}/steps/new/branch", axum::routing::get(get_new_branch_step_handler))
+        .route("/automations/{id}/steps", axum::routing::post(post_create_step_handler))
+        .route("/automations/{id}/steps/{sid}/edit", axum::routing::get(get_edit_step_handler))
+        .route("/automations/{id}/steps/{sid}", axum::routing::post(post_edit_step_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            app::auth::csrf_middleware,
+        ))
+        .with_state(state);
+
+    let (_admin_id, admin_session) = create_test_user(&pool, &format!("branch_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let csrf_token = app::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&admin_session).unwrap(),
+        &config.session_secret,
+    );
+
+    // 1. Create automation
+    let create_body = format!("name=Branch+Target+Automation&description=Test&csrf_token={}", csrf_token);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/automations")
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(create_body))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+
+    // 2. Add Step 1 (key_press)
+    let step1_body = format!("key_combo=F5&label=Step+Alpha&csrf_token={}", csrf_token);
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(step1_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Add Step 2 (key_press)
+    let step2_body = format!("key_combo=enter&label=Step+Beta&csrf_token={}", csrf_token);
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(step2_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Fetch step IDs
+    let steps = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC")
+        .bind(automation_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(steps.len(), 2);
+    let step1_id: i64 = sqlx::Row::get(&steps[0], "id");
+    let step2_id: i64 = sqlx::Row::get(&steps[1], "id");
+
+    // 3. GET /automations/{id}/steps/new/branch and check target step dropdown options
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}/steps/new/branch", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    assert!(body_str.contains("Step 1 (Step Alpha)"));
+    assert!(body_str.contains("Step 2 (Step Beta)"));
+
+    // 4. POST create branch step targeting step1_id (match) and step2_id (no_match)
+    let branch_create_body = format!(
+        "step_type=branch&label=Check+Pixel&condition_type=pixel_rgb&x=100&y=200&expected_r=10&expected_g=20&expected_b=30&tolerance=5&on_match_step_id={}&on_no_match_step_id={}&csrf_token={}",
+        step1_id, step2_id, csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(branch_create_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Fetch branch step ID
+    let steps_all = sqlx::query("SELECT id, step_type FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC")
+        .bind(automation_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(steps_all.len(), 3);
+    let branch_step_id: i64 = sqlx::Row::get(&steps_all[2], "id");
+
+    // Verify foreign keys in step_branches
+    let branch_row = sqlx::query("SELECT condition_type, on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1")
+        .bind(branch_step_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let cond_type: String = sqlx::Row::get(&branch_row, "condition_type");
+    let match_target: Option<i64> = sqlx::Row::get(&branch_row, "on_match_step_id");
+    let no_match_target: Option<i64> = sqlx::Row::get(&branch_row, "on_no_match_step_id");
+
+    assert_eq!(cond_type, "pixel_rgb");
+    assert_eq!(match_target, Some(step1_id));
+    assert_eq!(no_match_target, Some(step2_id));
+
+    // 5. GET edit branch step page and check selected targets
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}/steps/{}/edit", automation_id, branch_step_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 6. POST edit branch step swapping target foreign keys
+    let branch_edit_body = format!(
+        "step_type=branch&label=Check+Pixel+Updated&condition_type=pixel_rgb&x=100&y=200&expected_r=10&expected_g=20&expected_b=30&tolerance=5&on_match_step_id={}&on_no_match_step_id={}&csrf_token={}",
+        step2_id, step1_id, csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps/{}", automation_id, branch_step_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(branch_edit_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Verify updated foreign keys in step_branches
+    let updated_branch_row = sqlx::query("SELECT on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1")
+        .bind(branch_step_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let updated_match_target: Option<i64> = sqlx::Row::get(&updated_branch_row, "on_match_step_id");
+    let updated_no_match_target: Option<i64> = sqlx::Row::get(&updated_branch_row, "on_no_match_step_id");
+
+    assert_eq!(updated_match_target, Some(step2_id));
+    assert_eq!(updated_no_match_target, Some(step1_id));
+}
