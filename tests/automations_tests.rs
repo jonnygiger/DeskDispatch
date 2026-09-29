@@ -572,3 +572,60 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("Read pixel at (150, 250) → store as «bg_color»"));
 }
+
+#[tokio::test]
+async fn test_step_type_picker_interface() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_step_type_picker_interface");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(credentials)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let state = AppState {
+        db: pool.clone(),
+        s3_client,
+        config: config.clone(),
+        rate_limiter: app::auth::LoginRateLimiter::default(),
+    };
+
+    let app = Router::new()
+        .route("/automations/{id}/steps/new", axum::routing::get(get_step_type_picker_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            app::auth::csrf_middleware,
+        ))
+        .with_state(state);
+
+    let (_admin_id, admin_session) = create_test_user(&pool, &format!("picker_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/automations/42/steps/new")
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    assert!(body_str.contains("Select Step Type"));
+    assert!(body_str.contains("/automations/42/steps/new/key_press"));
+    assert!(body_str.contains("/automations/42/steps/new/mouse_click"));
+    assert!(body_str.contains("/automations/42/steps/new/find_pixel_rgb"));
+    assert!(body_str.contains("Key Press"));
+    assert!(body_str.contains("Mouse Click"));
+    assert!(body_str.contains("Find Pixel RGB"));
+    assert!(body_str.contains("Find Bitmap"));
+    assert!(body_str.contains("Branch"));
+}
