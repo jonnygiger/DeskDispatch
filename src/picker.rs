@@ -36,6 +36,36 @@ pub fn map_coarse_click_to_native(
     (native_x, native_y)
 }
 
+/// Maps click coordinates on the 20x grid panel view (320x320 viewport centered at `center_x`, `center_y`)
+/// to exact native image pixel coordinates.
+///
+/// The grid view renders each native pixel as a 20px x 20px cell. Clicks within the 320x320 panel
+/// are converted to relative native pixel offsets from `(center_x, center_y)` and clamped to
+/// image boundaries `(0..native_w - 1, 0..native_h - 1)`.
+pub fn map_grid_click_to_native(
+    click_x: u32,
+    click_y: u32,
+    center_x: u32,
+    center_y: u32,
+    native_w: u32,
+    native_h: u32,
+) -> (u32, u32) {
+    if native_w == 0 || native_h == 0 {
+        return (0, 0);
+    }
+
+    let dx = (click_x as f64 - 160.0 + 10.0) / 20.0;
+    let dy = (click_y as f64 - 160.0 + 10.0) / 20.0;
+
+    let offset_x = dx.floor() as i64;
+    let offset_y = dy.floor() as i64;
+
+    let target_x = (center_x as i64 + offset_x).clamp(0, (native_w - 1) as i64) as u32;
+    let target_y = (center_y as i64 + offset_y).clamp(0, (native_h - 1) as i64) as u32;
+
+    (target_x, target_y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +177,58 @@ mod tests {
 
         let (nx_neg, ny_neg) = map_coarse_click_to_native(100, 100, -100.0, -100.0, 1920, 1080);
         assert_eq!((nx_neg, ny_neg), (0, 0));
+    }
+
+    #[test]
+    fn test_map_grid_click_exact_center() {
+        // Center click at (160, 160) on 320x320 grid panel should return exact (center_x, center_y)
+        let (nx, ny) = map_grid_click_to_native(160, 160, 960, 540, 1920, 1080);
+        assert_eq!((nx, ny), (960, 540));
+    }
+
+    #[test]
+    fn test_map_grid_click_offsets() {
+        // +20px right on 20x grid panel -> +1 native x pixel
+        let (nx_r1, ny_r1) = map_grid_click_to_native(180, 160, 500, 300, 1920, 1080);
+        assert_eq!((nx_r1, ny_r1), (501, 300));
+
+        // +40px right -> +2 native x pixels
+        let (nx_r2, ny_r2) = map_grid_click_to_native(200, 160, 500, 300, 1920, 1080);
+        assert_eq!((nx_r2, ny_r2), (502, 300));
+
+        // -20px left -> -1 native x pixel
+        let (nx_l1, ny_l1) = map_grid_click_to_native(140, 160, 500, 300, 1920, 1080);
+        assert_eq!((nx_l1, ny_l1), (499, 300));
+
+        // +20px down -> +1 native y pixel
+        let (nx_d1, ny_d1) = map_grid_click_to_native(160, 180, 500, 300, 1920, 1080);
+        assert_eq!((nx_d1, ny_d1), (500, 301));
+
+        // -20px up -> -1 native y pixel
+        let (nx_u1, ny_u1) = map_grid_click_to_native(160, 140, 500, 300, 1920, 1080);
+        assert_eq!((nx_u1, ny_u1), (500, 299));
+    }
+
+    #[test]
+    fn test_map_grid_click_boundary_clamping() {
+        // Clicking far top-left (0, 0) near corner pixel (2, 2)
+        let (nx_zero, ny_zero) = map_grid_click_to_native(0, 0, 2, 2, 1920, 1080);
+        assert_eq!((nx_zero, ny_zero), (0, 0));
+
+        // Clicking far bottom-right (319, 319) near bottom-right edge (1918, 1078)
+        let (nx_max, ny_max) = map_grid_click_to_native(319, 319, 1918, 1078, 1920, 1080);
+        assert_eq!((nx_max, ny_max), (1919, 1079));
+    }
+
+    #[test]
+    fn test_map_grid_click_zero_and_invalid_dimensions() {
+        let (nx, ny) = map_grid_click_to_native(160, 160, 100, 100, 0, 0);
+        assert_eq!((nx, ny), (0, 0));
+
+        let (nx_w, ny_w) = map_grid_click_to_native(160, 160, 100, 100, 0, 1080);
+        assert_eq!((nx_w, ny_w), (0, 0));
+
+        let (nx_h, ny_h) = map_grid_click_to_native(160, 160, 100, 100, 1920, 0);
+        assert_eq!((nx_h, ny_h), (0, 0));
     }
 }
