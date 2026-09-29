@@ -178,6 +178,10 @@ impl VariableOption {
     pub fn is_selected_y(&self, y_var_id: &Option<i64>) -> bool {
         *y_var_id == Some(self.id)
     }
+
+    pub fn is_selected_output(&self, output_var_id: &Option<i64>) -> bool {
+        *output_var_id == Some(self.id)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -229,6 +233,29 @@ pub struct KeyPressStepForm {
     pub key_combo: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NewFindPixelRgbQuery {
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+}
+
+#[derive(Template)]
+#[template(path = "automations/step_find_pixel_rgb.html")]
+pub struct StepFindPixelRgbTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub output_variable_id: Option<i64>,
+    pub variables: Vec<VariableOption>,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
 #[derive(Deserialize)]
 pub struct MouseClickStepForm {
     pub step_type: Option<String>,
@@ -243,6 +270,7 @@ pub struct MouseClickStepForm {
     pub button: Option<String>,
     pub click_type: Option<String>,
     pub key_combo: Option<String>,
+    pub output_variable_id: Option<i64>,
 }
 
 pub async fn fetch_automation_variables(db: &PgPool, automation_id: i64) -> Vec<VariableOption> {
@@ -514,16 +542,29 @@ async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> S
             }
         }
         "find_pixel_rgb" => {
-            let row = sqlx::query("SELECT x, y FROM step_find_pixel_rgb WHERE step_id = $1")
-                .bind(step_id)
-                .fetch_optional(db)
-                .await;
+            let row = sqlx::query(
+                r#"
+                SELECT fp.x, fp.y, v.name AS var_name
+                FROM step_find_pixel_rgb fp
+                LEFT JOIN automation_variables v ON fp.output_variable_id = v.id
+                WHERE fp.step_id = $1
+                "#,
+            )
+            .bind(step_id)
+            .fetch_optional(db)
+            .await;
+
             if let Ok(Some(r)) = row {
                 let x: i32 = r.get("x");
                 let y: i32 = r.get("y");
-                format!("Read pixel at ({}, {})", x, y)
+                let var_name: Option<String> = r.get("var_name");
+                if let Some(v) = var_name {
+                    format!("Read pixel at ({}, {}) → store as «{}»", x, y, v)
+                } else {
+                    format!("Read pixel at ({}, {})", x, y)
+                }
             } else {
-                "Find pixel RGB".to_string()
+                "Read pixel at coordinate".to_string()
             }
         }
         "find_bitmap" => {
@@ -667,6 +708,32 @@ pub async fn get_new_key_press_step_handler(
     })
 }
 
+/// GET /automations/{id}/steps/new/find_pixel_rgb
+pub async fn get_new_find_pixel_rgb_step_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<NewFindPixelRgbQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let variables = fetch_automation_variables(&state.db, id).await;
+
+    HtmlTemplate(StepFindPixelRgbTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        x: query.x,
+        y: query.y,
+        output_variable_id: None,
+        variables,
+        error: None,
+        is_edit: false,
+    })
+}
+
 /// GET /automations/{id}/steps/new/mouse_click
 pub async fn get_new_mouse_click_step_handler(
     State(state): State<AppState>,
@@ -711,12 +778,118 @@ pub async fn post_create_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let is_mouse_click = form.step_type.as_deref() == Some("mouse_click")
-        || (form.x.is_some()
-            || form.x_variable_id.is_some()
-            || form.y.is_some()
-            || form.y_variable_id.is_some()
-            || form.x_mode.is_some());
+    let step_type_str = form.step_type.as_deref().unwrap_or("");
+
+    if step_type_str == "find_pixel_rgb" {
+        let (final_x, final_y) = (form.x, form.y);
+
+        if final_x.is_none() || final_y.is_none() {
+            let variables = fetch_automation_variables(&state.db, id).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                HtmlTemplate(StepFindPixelRgbTemplate {
+                    user,
+                    csrf_token,
+                    automation_id: id,
+                    step_id: None,
+                    label: form.label.unwrap_or_default(),
+                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                    x: form.x,
+                    y: form.y,
+                    output_variable_id: form.output_variable_id,
+                    variables,
+                    error: Some("Please provide valid X and Y coordinates.".to_string()),
+                    is_edit: false,
+                }),
+            )
+                .into_response();
+        }
+
+        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
+        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+
+        let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await;
+
+        let next_pos: f64 = match max_pos_row {
+            Ok(r) => {
+                let max_pos: Option<f64> = r.get("max_pos");
+                max_pos.map(|p| p + 10.0).unwrap_or(10.0)
+            }
+            _ => 10.0,
+        };
+
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::error!("Failed to start transaction: {}", e);
+                return Redirect::to(&format!("/automations/{}", id)).into_response();
+            }
+        };
+
+        let step_row = sqlx::query(
+            "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'find_pixel_rgb', $3, $4) RETURNING id",
+        )
+        .bind(id)
+        .bind(next_pos)
+        .bind(&label)
+        .bind(post_delay_ms)
+        .fetch_one(&mut *tx)
+        .await;
+
+        let step_id: i64 = match step_row {
+            Ok(r) => r.get("id"),
+            Err(e) => {
+                tracing::error!("Failed to insert step: {}", e);
+                return Redirect::to(&format!("/automations/{}", id)).into_response();
+            }
+        };
+
+        let detail_res = sqlx::query(
+            "INSERT INTO step_find_pixel_rgb (step_id, x, y, output_variable_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(step_id)
+        .bind(final_x.unwrap())
+        .bind(final_y.unwrap())
+        .bind(form.output_variable_id)
+        .execute(&mut *tx)
+        .await;
+
+        if let Err(e) = detail_res {
+            tracing::error!("Failed to insert step_find_pixel_rgb: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
+
+        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
+
+        if tx.commit().await.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "create_step",
+                "automation_step",
+                Some(step_id),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "step_type": "find_pixel_rgb",
+                    "x": final_x,
+                    "y": final_y,
+                    "output_variable_id": form.output_variable_id
+                })),
+            )
+            .await;
+        }
+
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
+
+    let is_mouse_click = step_type_str == "mouse_click"
+        || (form.x_mode.is_some() || form.x_variable_id.is_some() || form.y_variable_id.is_some());
 
     if is_mouse_click {
         let x_mode = form.x_mode.unwrap_or_else(|| "fixed".to_string());
@@ -1011,6 +1184,38 @@ pub async fn get_edit_step_handler(
             is_edit: true,
         })
         .into_response()
+    } else if step_type == "find_pixel_rgb" {
+        let fp_row = sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
+            .bind(sid)
+            .fetch_optional(&state.db)
+            .await;
+
+        let (x, y, output_variable_id) = match fp_row {
+            Ok(Some(r)) => (
+                r.get::<Option<i32>, _>("x"),
+                r.get::<Option<i32>, _>("y"),
+                r.get::<Option<i64>, _>("output_variable_id"),
+            ),
+            _ => (None, None, None),
+        };
+
+        let variables = fetch_automation_variables(&state.db, id).await;
+
+        HtmlTemplate(StepFindPixelRgbTemplate {
+            user,
+            csrf_token,
+            automation_id: id,
+            step_id: Some(sid),
+            label: label.unwrap_or_default(),
+            post_delay_seconds: post_delay_ms as f64 / 1000.0,
+            x,
+            y,
+            output_variable_id,
+            variables,
+            error: None,
+            is_edit: true,
+        })
+        .into_response()
     } else if step_type == "mouse_click" {
         let mc_row = sqlx::query("SELECT x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
             .bind(sid)
@@ -1082,6 +1287,85 @@ pub async fn post_edit_step_handler(
         Ok(Some(r)) => r.get("step_type"),
         _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     };
+
+    if step_type == "find_pixel_rgb" {
+        let (final_x, final_y) = (form.x, form.y);
+
+        if final_x.is_none() || final_y.is_none() {
+            let variables = fetch_automation_variables(&state.db, id).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                HtmlTemplate(StepFindPixelRgbTemplate {
+                    user,
+                    csrf_token,
+                    automation_id: id,
+                    step_id: Some(sid),
+                    label: form.label.unwrap_or_default(),
+                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                    x: form.x,
+                    y: form.y,
+                    output_variable_id: form.output_variable_id,
+                    variables,
+                    error: Some("Please provide valid X and Y coordinates.".to_string()),
+                    is_edit: true,
+                }),
+            )
+                .into_response();
+        }
+
+        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
+        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
+        };
+
+        let _ = sqlx::query(
+            "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+        )
+        .bind(&label)
+        .bind(post_delay_ms)
+        .bind(sid)
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
+
+        let _ = sqlx::query(
+            "UPDATE step_find_pixel_rgb SET x = $1, y = $2, output_variable_id = $3 WHERE step_id = $4",
+        )
+        .bind(final_x.unwrap())
+        .bind(final_y.unwrap())
+        .bind(form.output_variable_id)
+        .bind(sid)
+        .execute(&mut *tx)
+        .await;
+
+        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
+
+        if tx.commit().await.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "update_step",
+                "automation_step",
+                Some(sid),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "step_type": "find_pixel_rgb",
+                    "x": final_x,
+                    "y": final_y,
+                    "output_variable_id": form.output_variable_id
+                })),
+            )
+            .await;
+        }
+
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
 
     if step_type == "mouse_click" {
         let x_mode = form.x_mode.unwrap_or_else(|| "fixed".to_string());
