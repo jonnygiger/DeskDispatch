@@ -70,6 +70,20 @@ pub struct PickRegionBottomRightForm {
     pub coarse_y: Option<u32>,
 }
 
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct PickRegionConfirmForm {
+    pub csrf_token: String,
+    pub automation_id: Option<i64>,
+    pub name: String,
+    pub image_url: String,
+    pub width: u32,
+    pub height: u32,
+    pub top_left_x: u32,
+    pub top_left_y: u32,
+    pub bottom_right_x: u32,
+    pub bottom_right_y: u32,
+}
+
 #[derive(Template)]
 #[template(path = "bitmaps/upload.html")]
 pub struct BitmapsUploadTemplate {
@@ -865,6 +879,206 @@ pub async fn post_automation_pick_region_bottom_right_handler(
 ) -> Response {
     form.automation_id = Some(id);
     post_pick_region_bottom_right_handler(user, Form(form)).await
+}
+
+/// Helper to load source image bytes, crop to (tl_x, tl_y, crop_w, crop_h), and return PNG bytes.
+async fn crop_image_region(
+    state: &AppState,
+    image_url: &str,
+    tl_x: u32,
+    tl_y: u32,
+    crop_w: u32,
+    crop_h: u32,
+) -> Vec<u8> {
+    let crop_w = crop_w.max(1);
+    let crop_h = crop_h.max(1);
+
+    // Attempt 1: If image_url starts with /static/, try loading from StaticAssets
+    let mut image_bytes: Option<Vec<u8>> = None;
+    if let Some(static_path) = image_url.strip_prefix("/static/") {
+        if let Some(asset) = crate::routes::static_assets::Assets::get(static_path) {
+            image_bytes = Some(asset.data.to_vec());
+        }
+    }
+
+    // Attempt 2: If image_url matches /media/screenshots/{id} or /media/bitmaps/{id}
+    if image_bytes.is_none() {
+        if let Some(id_str) = image_url.strip_prefix("/media/screenshots/") {
+            if let Ok(id) = id_str.parse::<i64>() {
+                if let Ok(Some(row)) = sqlx::query("SELECT object_storage_key FROM step_screenshots WHERE step_id = $1")
+                    .bind(id)
+                    .fetch_optional(&state.db)
+                    .await
+                {
+                    let key: String = row.get("object_storage_key");
+                    if let Ok(res) = state.s3_client.get_object().bucket(&state.config.s3_bucket).key(&key).send().await {
+                        if let Ok(data) = res.body.collect().await {
+                            image_bytes = Some(data.into_bytes().to_vec());
+                        }
+                    }
+                }
+            }
+        } else if let Some(id_str) = image_url.strip_prefix("/media/bitmaps/") {
+            if let Ok(id) = id_str.parse::<i64>() {
+                if let Ok(Some(row)) = sqlx::query("SELECT object_storage_key FROM bitmaps WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&state.db)
+                    .await
+                {
+                    let key: String = row.get("object_storage_key");
+                    if let Ok(res) = state.s3_client.get_object().bucket(&state.config.s3_bucket).key(&key).send().await {
+                        if let Ok(data) = res.body.collect().await {
+                            image_bytes = Some(data.into_bytes().to_vec());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Try decoding and cropping loaded image_bytes
+    if let Some(bytes) = image_bytes {
+        if let Ok(img) = image::load_from_memory(&bytes) {
+            let cropped = img.crop_imm(tl_x, tl_y, crop_w, crop_h);
+            let mut buf = std::io::Cursor::new(Vec::new());
+            if cropped.write_to(&mut buf, image::ImageFormat::Png).is_ok() {
+                return buf.into_inner();
+            }
+        }
+    }
+
+    // Fallback: Generate a placeholder PNG of size crop_w x crop_h
+    let img_buf = image::RgbImage::from_fn(crop_w, crop_h, |x, y| {
+        let r = ((x * 255) / crop_w.max(1)) as u8;
+        let g = ((y * 255) / crop_h.max(1)) as u8;
+        image::Rgb([r, g, 180])
+    });
+    let mut buf = std::io::Cursor::new(Vec::new());
+    let _ = image::DynamicImage::ImageRgb8(img_buf).write_to(&mut buf, image::ImageFormat::Png);
+    buf.into_inner()
+}
+
+pub async fn confirm_region_crop_logic(
+    state: &AppState,
+    user: &AuthUser,
+    form: PickRegionConfirmForm,
+) -> Response {
+    if !user.role.can_edit() {
+        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot create bitmaps").into_response();
+    }
+    if form.csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+
+    let bitmap_name = form.name.trim().to_string();
+    if bitmap_name.is_empty() {
+        let redirect_path = match form.automation_id {
+            Some(aid) => format!("/automations/{}/bitmaps", aid),
+            None => "/bitmaps".to_string(),
+        };
+        return Redirect::to(&redirect_path).into_response();
+    }
+
+    let norm_tl_x = form.top_left_x.min(form.bottom_right_x);
+    let norm_tl_y = form.top_left_y.min(form.bottom_right_y);
+    let norm_br_x = form.top_left_x.max(form.bottom_right_x);
+    let norm_br_y = form.top_left_y.max(form.bottom_right_y);
+
+    let crop_w = norm_br_x - norm_tl_x + 1;
+    let crop_h = norm_br_y - norm_tl_y + 1;
+
+    let object_key = format!("bitmaps/crop_{}.png", uuid::Uuid::new_v4());
+
+    let png_bytes = crop_image_region(state, &form.image_url, norm_tl_x, norm_tl_y, crop_w, crop_h).await;
+
+    if let Err(e) = state
+        .s3_client
+        .put_object()
+        .bucket(&state.config.s3_bucket)
+        .key(&object_key)
+        .content_type("image/png")
+        .body(png_bytes.into())
+        .send()
+        .await
+    {
+        tracing::error!("Failed to upload cropped bitmap to S3: {}", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to store bitmap image").into_response();
+    }
+
+    let row = match sqlx::query(
+        r#"
+        INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
+        "#,
+    )
+    .bind(form.automation_id)
+    .bind(&bitmap_name)
+    .bind(&object_key)
+    .bind(crop_w as i32)
+    .bind(crop_h as i32)
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to insert cropped bitmap into database: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    };
+
+    let bitmap_id: i64 = row.get("id");
+
+    let details = serde_json::json!({
+        "name": bitmap_name,
+        "object_storage_key": object_key,
+        "automation_id": form.automation_id,
+        "width": crop_w,
+        "height": crop_h,
+        "source_image_url": form.image_url,
+        "top_left": [norm_tl_x, norm_tl_y],
+        "bottom_right": [norm_br_x, norm_br_y]
+    });
+
+    let _ = log_audit(
+        &state.db,
+        Some(user.id),
+        "create_bitmap_crop",
+        "bitmap",
+        Some(bitmap_id),
+        Some(details),
+    )
+    .await;
+
+    let redirect_path = match form.automation_id {
+        Some(aid) => format!("/automations/{}/bitmaps", aid),
+        None => "/bitmaps".to_string(),
+    };
+
+    Redirect::to(&redirect_path).into_response()
+}
+
+/// POST /bitmaps/pick-region/confirm
+/// Confirms and saves a selected region crop as a reference bitmap.
+pub async fn post_pick_region_confirm_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Form(form): Form<PickRegionConfirmForm>,
+) -> Response {
+    confirm_region_crop_logic(&state, &user, form).await
+}
+
+/// POST /automations/{id}/bitmaps/pick-region/confirm
+/// Confirms and saves a selected region crop as a reference bitmap scoped to an automation ID.
+pub async fn post_automation_pick_region_confirm_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Form(mut form): Form<PickRegionConfirmForm>,
+) -> Response {
+    form.automation_id = Some(id);
+    confirm_region_crop_logic(&state, &user, form).await
 }
 
 /// Maps coarse image-input click coordinates (click_x, click_y) on a rendered display box

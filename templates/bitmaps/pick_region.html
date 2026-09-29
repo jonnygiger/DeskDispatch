@@ -99,7 +99,7 @@ Region Picker - DeskDispatch
     {% else %}
 
     <div style="margin-bottom: 1.5rem;">
-        <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Region Selection Completed</h2>
+        <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 3: Confirm Crop Preview</h2>
         <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
             Top-Left: <strong>({{ top_left_x.unwrap() }}, {{ top_left_y.unwrap() }})</strong> &nbsp;|&nbsp;
             Bottom-Right: <strong>({{ bottom_right_x.unwrap() }}, {{ bottom_right_y.unwrap() }})</strong> &nbsp;|&nbsp;
@@ -111,13 +111,37 @@ Region Picker - DeskDispatch
         {% call macros::image_magnifier(magnifier) %}
     </div>
 
-    <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
+    {% if let Some(aid) = automation_id %}
+    <form action="/automations/{{ aid }}/bitmaps/pick-region/confirm" method="post" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1.5rem;">
+    {% else %}
+    <form action="/bitmaps/pick-region/confirm" method="post" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1.5rem;">
+    {% endif %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         {% if let Some(aid) = automation_id %}
-        <a href="/automations/{{ aid }}/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Region</a>
-        {% else %}
-        <a href="/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Region</a>
+        <input type="hidden" name="automation_id" value="{{ aid }}">
         {% endif %}
-    </div>
+        <input type="hidden" name="image_url" value="{{ image_url }}">
+        <input type="hidden" name="width" value="{{ width }}">
+        <input type="hidden" name="height" value="{{ height }}">
+        <input type="hidden" name="top_left_x" value="{{ top_left_x.unwrap() }}">
+        <input type="hidden" name="top_left_y" value="{{ top_left_y.unwrap() }}">
+        <input type="hidden" name="bottom_right_x" value="{{ bottom_right_x.unwrap() }}">
+        <input type="hidden" name="bottom_right_y" value="{{ bottom_right_y.unwrap() }}">
+
+        <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start;">
+            <label for="bitmap-name" style="font-weight: 600; font-size: 0.875rem;">Reference Bitmap Name:</label>
+            <input type="text" id="bitmap-name" name="name" placeholder="Enter bitmap name..." required style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; width: 100%; max-width: 400px; background: var(--color-bg); color: var(--color-text);">
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
+            {% if let Some(aid) = automation_id %}
+            <a href="/automations/{{ aid }}/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Region</a>
+            {% else %}
+            <a href="/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Region</a>
+            {% endif %}
+            <button type="submit" class="btn btn-primary" style="padding: 0.5rem 1rem; background: var(--color-primary); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">Confirm &amp; Save Bitmap</button>
+        </div>
+    </form>
     {% endif %}
 </div>
 {% endblock %}
