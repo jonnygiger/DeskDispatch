@@ -1,0 +1,68 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}{% if is_edit %}Edit Find Pixel RGB Step{% else %}New Find Pixel RGB Step{% endif %} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">{% if is_edit %}Edit Find Pixel RGB Step{% else %}New Find Pixel RGB Step{% endif %}</h1>
+    <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    {% if let Some(err) = error %}
+        <div class="alert alert-danger" style="margin-bottom: 1rem; color: var(--color-danger);">
+            {{ err }}
+        </div>
+    {% endif %}
+
+    <form method="post" action="{% if let Some(sid) = step_id %}/automations/{{ automation_id }}/steps/{{ sid }}{% else %}/automations/{{ automation_id }}/steps{% endif %}">
+        {% call macros::csrf_field(csrf_token) %}
+        <input type="hidden" name="step_type" value="find_pixel_rgb">
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="label" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Step Label (Optional)</label>
+            <input type="text" id="label" name="label" value="{{ label }}" class="form-control" style="width: 100%;" placeholder="e.g. Read Background Color">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="x" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">X Coordinate *</label>
+            <input type="number" id="x" name="x" value="{% if let Some(v) = x %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="Pixel X (e.g. 100)">
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">The horizontal pixel coordinate to sample.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="y" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Y Coordinate *</label>
+            <input type="number" id="y" name="y" value="{% if let Some(v) = y %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="Pixel Y (e.g. 200)">
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">The vertical pixel coordinate to sample.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="output_variable_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Output Variable (Optional)</label>
+            <select name="output_variable_id" id="output_variable_id" class="form-control" style="width: 100%;">
+                <option value="">-- Do Not Store --</option>
+                {% for var in variables %}
+                    <option value="{{ var.id }}" {% if var.is_selected_output(output_variable_id) %}selected{% endif %}>
+                        {{ var.name }} ({{ var.var_type }})
+                    </option>
+                {% endfor %}
+            </select>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Store the captured RGB color into a declared automation variable.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label for="post_delay_seconds" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Wait after this step (seconds)</label>
+            <input type="number" step="0.1" min="0" id="post_delay_seconds" name="post_delay_seconds" value="{{ post_delay_seconds }}" class="form-control" style="width: 100%;" placeholder="0.0">
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">{% if is_edit %}Save Changes{% else %}Add Step{% endif %}</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
