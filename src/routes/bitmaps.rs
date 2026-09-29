@@ -10,7 +10,7 @@ use std::time::Duration;
 use super::auth::HtmlTemplate;
 use crate::auth::{log_audit, AuthUser, UserRole};
 use crate::magnifier::ImageMagnifier;
-use crate::picker::map_coarse_click_to_native;
+use crate::picker::{map_coarse_click_to_native, map_grid_click_to_native};
 use crate::AppState;
 
 #[derive(serde::Deserialize)]
@@ -1083,31 +1083,6 @@ pub async fn post_automation_pick_region_confirm_handler(
 }
 
 
-/// Maps click coordinates on the 20x grid panel view (320x320 viewport centered at `center_x`, `center_y`)
-/// to exact native image pixel coordinates.
-pub fn map_grid_click_to_native(
-    click_x: u32,
-    click_y: u32,
-    center_x: u32,
-    center_y: u32,
-    native_w: u32,
-    native_h: u32,
-) -> (u32, u32) {
-    if native_w == 0 || native_h == 0 {
-        return (0, 0);
-    }
-
-    let dx = (click_x as f64 - 160.0 + 10.0) / 20.0;
-    let dy = (click_y as f64 - 160.0 + 10.0) / 20.0;
-
-    let offset_x = dx.floor() as i64;
-    let offset_y = dy.floor() as i64;
-
-    let target_x = (center_x as i64 + offset_x).clamp(0, (native_w - 1) as i64) as u32;
-    let target_y = (center_y as i64 + offset_y).clamp(0, (native_h - 1) as i64) as u32;
-
-    (target_x, target_y)
-}
 
 #[cfg(test)]
 mod tests {
