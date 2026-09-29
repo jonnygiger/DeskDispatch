@@ -178,5 +178,29 @@ fn main() {
     };
     fs::write("rendered_templates/bitmaps_pick_region.html", pick_region_tmpl.render().unwrap()).unwrap();
 
+    let pick_region_stage3_tmpl = RegionPickerTopLeftTemplate {
+        user: user.clone(),
+        csrf_token: "test_csrf_token_12345".to_string(),
+        automation_id: None,
+        image_url: "/static/sample_screenshot.png".to_string(),
+        width: 1920,
+        height: 1080,
+        step_stage: 3,
+        top_left_x: Some(100),
+        top_left_y: Some(100),
+        bottom_right_x: Some(250),
+        bottom_right_y: Some(200),
+        click_x: Some(250),
+        click_y: Some(200),
+        magnifier: app::magnifier::ImageMagnifier::new(
+            "/static/sample_screenshot.png",
+            1920,
+            1080,
+            Some(250),
+            Some(200),
+        ),
+    };
+    fs::write("rendered_templates/bitmaps_pick_region_stage3.html", pick_region_stage3_tmpl.render().unwrap()).unwrap();
+
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

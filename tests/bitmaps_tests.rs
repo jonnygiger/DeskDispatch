@@ -505,3 +505,169 @@ async fn test_region_picker_top_left_flow() {
     assert!(body_str_post.contains("Coarse Top-Left Corner Selected"));
     assert!(body_str_post.contains("(600, 340)"));
 }
+
+#[tokio::test]
+async fn test_region_picker_confirm_crop_flow() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_region_picker_confirm_crop_flow");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(credentials)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .endpoint_url("http://localhost:9000")
+        .force_path_style(true)
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let state = AppState {
+        db: pool.clone(),
+        s3_client,
+        config: config.clone(),
+        rate_limiter: app::auth::LoginRateLimiter::default(),
+    };
+
+    let app = Router::new()
+        .route("/bitmaps/pick-region/bottom-right", axum::routing::post(post_pick_region_bottom_right_handler))
+        .route("/bitmaps/pick-region/confirm", axum::routing::post(post_pick_region_confirm_handler))
+        .route("/automations/{id}/bitmaps/pick-region/confirm", axum::routing::post(post_automation_pick_region_confirm_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            app::auth::csrf_middleware,
+        ))
+        .with_state(state);
+
+    let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_confirm_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
+    let (editor_id, editor_session) = create_test_user(&pool, &format!("editor_confirm_{}", uuid::Uuid::new_v4().simple()), "editor").await;
+
+    let viewer_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), &config.session_secret);
+    let editor_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), &config.session_secret);
+
+    // 1. Editor POST /bitmaps/pick-region/bottom-right -> Stage 3 HTML with Step 3 Confirm Crop Preview
+    let br_post_body = format!(
+        "csrf_token={}&image_url=/static/sample.png&width=1200&height=680&top_left_x=100&top_left_y=100&coarse_click.x=300&coarse_click.y=200",
+        editor_csrf
+    );
+
+    let req_br = Request::builder()
+        .method("POST")
+        .uri("/bitmaps/pick-region/bottom-right")
+        .header(header::COOKIE, format!("session_id={}", editor_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(br_post_body))
+        .unwrap();
+
+    let res_br = app.clone().oneshot(req_br).await.unwrap();
+    assert_eq!(res_br.status(), StatusCode::OK);
+
+    let body_bytes_br = axum::body::to_bytes(res_br.into_body(), usize::MAX).await.unwrap();
+    let body_str_br = String::from_utf8(body_bytes_br.to_vec()).unwrap();
+    assert!(body_str_br.contains("Step 3: Confirm Crop Preview"));
+    assert!(body_str_br.contains("/bitmaps/pick-region/confirm"));
+    assert!(body_str_br.contains("Confirm &amp; Save Bitmap"));
+
+    // 2. Viewer POST /bitmaps/pick-region/confirm -> 403 Forbidden
+    let viewer_confirm_body = format!(
+        "csrf_token={}&name=ForbiddenCrop&image_url=/static/sample.png&width=1200&height=680&top_left_x=100&top_left_y=100&bottom_right_x=200&bottom_right_y=200",
+        viewer_csrf
+    );
+
+    let req_viewer_confirm = Request::builder()
+        .method("POST")
+        .uri("/bitmaps/pick-region/confirm")
+        .header(header::COOKIE, format!("session_id={}", viewer_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(viewer_confirm_body))
+        .unwrap();
+
+    let res_viewer_confirm = app.clone().oneshot(req_viewer_confirm).await.unwrap();
+    assert_eq!(res_viewer_confirm.status(), StatusCode::FORBIDDEN);
+
+    // 3. Editor POST /bitmaps/pick-region/confirm -> 303 Redirect to /bitmaps
+    let editor_confirm_body = format!(
+        "csrf_token={}&name=Crop%20Selection%20Bitmap&image_url=/static/sample.png&width=1200&height=680&top_left_x=100&top_left_y=100&bottom_right_x=199&bottom_right_y=149",
+        editor_csrf
+    );
+
+    let req_editor_confirm = Request::builder()
+        .method("POST")
+        .uri("/bitmaps/pick-region/confirm")
+        .header(header::COOKIE, format!("session_id={}", editor_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(editor_confirm_body))
+        .unwrap();
+
+    let res_editor_confirm = app.clone().oneshot(req_editor_confirm).await.unwrap();
+    assert_eq!(res_editor_confirm.status(), StatusCode::SEE_OTHER);
+    let location = res_editor_confirm.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(location, "/bitmaps");
+
+    // Verify row inserted in database: width = 100, height = 50
+    let crop_row = sqlx::query("SELECT id, name, width, height, created_by FROM bitmaps WHERE name = 'Crop Selection Bitmap'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(crop_row.is_some());
+    let row = crop_row.unwrap();
+    let crop_bm_id: i64 = sqlx::Row::get(&row, "id");
+    let db_width: i32 = sqlx::Row::get(&row, "width");
+    let db_height: i32 = sqlx::Row::get(&row, "height");
+    let db_created_by: i64 = sqlx::Row::get(&row, "created_by");
+
+    assert_eq!(db_width, 100);
+    assert_eq!(db_height, 50);
+    assert_eq!(db_created_by, editor_id);
+
+    // Verify audit log entry
+    let audit_row = sqlx::query("SELECT id, user_id, action FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = $1")
+        .bind(crop_bm_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(audit_row.is_some());
+    let audit_action: String = sqlx::Row::get(&audit_row.unwrap(), "action");
+    assert_eq!(audit_action, "create_bitmap_crop");
+
+    // 4. Scoped confirmation: POST /automations/{id}/bitmaps/pick-region/confirm
+    let auto_row = sqlx::query("INSERT INTO automations (name, description, status, created_by) VALUES ('Scoped Confirm Auto', '', 'draft', $1) RETURNING id")
+        .bind(editor_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let auto_id: i64 = sqlx::Row::get(&auto_row, "id");
+
+    let scoped_confirm_body = format!(
+        "csrf_token={}&name=Scoped%20Crop%20Bitmap&image_url=/static/sample.png&width=1200&height=680&top_left_x=50&top_left_y=50&bottom_right_x=89&bottom_right_y=89",
+        editor_csrf
+    );
+
+    let req_scoped_confirm = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/bitmaps/pick-region/confirm", auto_id))
+        .header(header::COOKIE, format!("session_id={}", editor_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(scoped_confirm_body))
+        .unwrap();
+
+    let res_scoped_confirm = app.clone().oneshot(req_scoped_confirm).await.unwrap();
+    assert_eq!(res_scoped_confirm.status(), StatusCode::SEE_OTHER);
+    let scoped_loc = res_scoped_confirm.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    assert_eq!(scoped_loc, format!("/automations/{}/bitmaps", auto_id));
+
+    let scoped_row = sqlx::query("SELECT id, automation_id, width, height FROM bitmaps WHERE name = 'Scoped Crop Bitmap'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(scoped_row.is_some());
+    let s_row = scoped_row.unwrap();
+    let s_auto_id: Option<i64> = sqlx::Row::get(&s_row, "automation_id");
+    let s_w: i32 = sqlx::Row::get(&s_row, "width");
+    let s_h: i32 = sqlx::Row::get(&s_row, "height");
+    assert_eq!(s_auto_id, Some(auto_id));
+    assert_eq!(s_w, 40);
+    assert_eq!(s_h, 40);
+}
