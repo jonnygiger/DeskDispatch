@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod config;
 pub mod magnifier;
+pub mod picker;
 pub mod routes;
 pub mod storage;
 
