@@ -1,0 +1,134 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}{% if is_edit %}Edit Find Bitmap Step{% else %}New Find Bitmap Step{% endif %} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">{% if is_edit %}Edit Find Bitmap Step{% else %}New Find Bitmap Step{% endif %}</h1>
+    <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    {% if let Some(err) = error %}
+        <div class="alert alert-danger" style="margin-bottom: 1rem; color: var(--color-danger);">
+            {{ err }}
+        </div>
+    {% endif %}
+
+    <form method="post" action="{% if let Some(sid) = step_id %}/automations/{{ automation_id }}/steps/{{ sid }}{% else %}/automations/{{ automation_id }}/steps{% endif %}">
+        {% call macros::csrf_field(csrf_token) %}
+        <input type="hidden" name="step_type" value="find_bitmap">
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="label" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Step Label (Optional)</label>
+            <input type="text" id="label" name="label" value="{{ label }}" class="form-control" style="width: 100%;" placeholder="e.g. Find Login Button">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="reference_bitmap_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Reference Bitmap *</label>
+            {% if bitmaps.is_empty() %}
+                <div class="alert alert-warning" style="margin-bottom: 0.5rem;">
+                    No reference bitmaps available. <a href="/automations/{{ automation_id }}/bitmaps" style="text-decoration: underline;">Upload a bitmap or pick a region</a> first.
+                </div>
+            {% else %}
+                <select name="reference_bitmap_id" id="reference_bitmap_id" class="form-control" style="width: 100%;" required>
+                    <option value="">-- Select Reference Bitmap --</option>
+                    {% for bmp in bitmaps %}
+                        <option value="{{ bmp.id }}" {% if bmp.is_selected(reference_bitmap_id) %}selected{% endif %}>
+                            {{ bmp.name }} ({{ bmp.width }}x{{ bmp.height }}px)
+                        </option>
+                    {% endfor %}
+                </select>
+                <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Select the reference bitmap image to search for on screen.</span>
+            {% endif %}
+        </div>
+
+        <fieldset style="border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 1rem; margin-bottom: 1.25rem;">
+            <legend style="padding: 0 0.5rem; font-weight: 600; font-size: 0.9375rem;">Bounding Search Region (Optional)</legend>
+            <p style="font-size: 0.8125rem; color: var(--color-text-muted); margin-bottom: 0.75rem;">Leave blank to search the entire screen.</p>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem;">
+                <div>
+                    <label for="search_x" style="display: block; font-size: 0.875rem; margin-bottom: 0.25rem;">Search X</label>
+                    <input type="number" id="search_x" name="search_x" value="{% if let Some(v) = search_x %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="Left offset">
+                </div>
+                <div>
+                    <label for="search_y" style="display: block; font-size: 0.875rem; margin-bottom: 0.25rem;">Search Y</label>
+                    <input type="number" id="search_y" name="search_y" value="{% if let Some(v) = search_y %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="Top offset">
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                <div>
+                    <label for="search_width" style="display: block; font-size: 0.875rem; margin-bottom: 0.25rem;">Search Width</label>
+                    <input type="number" id="search_width" name="search_width" value="{% if let Some(v) = search_width %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="Region width">
+                </div>
+                <div>
+                    <label for="search_height" style="display: block; font-size: 0.875rem; margin-bottom: 0.25rem;">Search Height</label>
+                    <input type="number" id="search_height" name="search_height" value="{% if let Some(v) = search_height %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="Region height">
+                </div>
+            </div>
+        </fieldset>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="match_threshold" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Match Threshold (0.0 to 1.0)</label>
+            <input type="number" step="0.01" min="0" max="1" id="match_threshold" name="match_threshold" value="{{ match_threshold }}" class="form-control" style="width: 100%;" placeholder="0.95">
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Required similarity ratio (0.95 = 95% match required).</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="output_found_variable_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Output Variable: Is Found? (Optional)</label>
+            <select name="output_found_variable_id" id="output_found_variable_id" class="form-control" style="width: 100%;">
+                <option value="">-- Do Not Store --</option>
+                {% for var in variables %}
+                    <option value="{{ var.id }}" {% if var.is_selected_found(output_found_variable_id) %}selected{% endif %}>
+                        {{ var.name }} ({{ var.var_type }})
+                    </option>
+                {% endfor %}
+            </select>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Store boolean true/false indicating whether the bitmap was found.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="output_x_variable_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Output Variable: Found X Coordinate (Optional)</label>
+            <select name="output_x_variable_id" id="output_x_variable_id" class="form-control" style="width: 100%;">
+                <option value="">-- Do Not Store --</option>
+                {% for var in variables %}
+                    <option value="{{ var.id }}" {% if var.is_selected_x(output_x_variable_id) %}selected{% endif %}>
+                        {{ var.name }} ({{ var.var_type }})
+                    </option>
+                {% endfor %}
+            </select>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Store the matched top-left X coordinate into a declared variable.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="output_y_variable_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Output Variable: Found Y Coordinate (Optional)</label>
+            <select name="output_y_variable_id" id="output_y_variable_id" class="form-control" style="width: 100%;">
+                <option value="">-- Do Not Store --</option>
+                {% for var in variables %}
+                    <option value="{{ var.id }}" {% if var.is_selected_y(output_y_variable_id) %}selected{% endif %}>
+                        {{ var.name }} ({{ var.var_type }})
+                    </option>
+                {% endfor %}
+            </select>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Store the matched top-left Y coordinate into a declared variable.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label for="post_delay_seconds" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Wait after this step (seconds)</label>
+            <input type="number" step="0.1" min="0" id="post_delay_seconds" name="post_delay_seconds" value="{{ post_delay_seconds }}" class="form-control" style="width: 100%;" placeholder="0.0">
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">{% if is_edit %}Save Changes{% else %}Add Step{% endif %}</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

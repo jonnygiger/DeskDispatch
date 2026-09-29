@@ -182,6 +182,24 @@ impl VariableOption {
     pub fn is_selected_output(&self, output_var_id: &Option<i64>) -> bool {
         *output_var_id == Some(self.id)
     }
+
+    pub fn is_selected_found(&self, found_var_id: &Option<i64>) -> bool {
+        *found_var_id == Some(self.id)
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, sqlx::FromRow)]
+pub struct BitmapOption {
+    pub id: i64,
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl BitmapOption {
+    pub fn is_selected(&self, selected_id: &Option<i64>) -> bool {
+        *selected_id == Some(self.id)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -256,6 +274,39 @@ pub struct StepFindPixelRgbTemplate {
     pub is_edit: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NewFindBitmapQuery {
+    pub reference_bitmap_id: Option<i64>,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+}
+
+#[derive(Template)]
+#[template(path = "automations/step_find_bitmap.html")]
+pub struct StepFindBitmapTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub reference_bitmap_id: Option<i64>,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub match_threshold: f32,
+    pub output_found_variable_id: Option<i64>,
+    pub output_x_variable_id: Option<i64>,
+    pub output_y_variable_id: Option<i64>,
+    pub bitmaps: Vec<BitmapOption>,
+    pub variables: Vec<VariableOption>,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
 #[derive(Deserialize)]
 pub struct MouseClickStepForm {
     pub step_type: Option<String>,
@@ -271,11 +322,30 @@ pub struct MouseClickStepForm {
     pub click_type: Option<String>,
     pub key_combo: Option<String>,
     pub output_variable_id: Option<i64>,
+    pub reference_bitmap_id: Option<i64>,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub match_threshold: Option<f32>,
+    pub output_found_variable_id: Option<i64>,
+    pub output_x_variable_id: Option<i64>,
+    pub output_y_variable_id: Option<i64>,
 }
 
 pub async fn fetch_automation_variables(db: &PgPool, automation_id: i64) -> Vec<VariableOption> {
     sqlx::query_as::<_, VariableOption>(
         "SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1 ORDER BY name ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default()
+}
+
+pub async fn fetch_available_bitmaps(db: &PgPool, automation_id: i64) -> Vec<BitmapOption> {
+    sqlx::query_as::<_, BitmapOption>(
+        "SELECT id, name, width, height FROM bitmaps WHERE automation_id = $1 OR automation_id IS NULL ORDER BY name ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(db)
@@ -549,6 +619,19 @@ pub fn generate_find_pixel_rgb_summary(
     }
 }
 
+/// Generates plain-language string summary for `find_bitmap` step.
+pub fn generate_find_bitmap_summary(
+    bitmap_name: &str,
+    output_found_var_name: Option<&str>,
+) -> String {
+    match output_found_var_name {
+        Some(name) if !name.trim().is_empty() => {
+            format!("Search for «{}» on screen → store as «{}»", bitmap_name, name.trim())
+        }
+        _ => format!("Search for «{}» on screen", bitmap_name),
+    }
+}
+
 /// Helper to generate plain-language description for a step
 async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> String {
     match step_type {
@@ -620,7 +703,26 @@ async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> S
             }
         }
         "find_bitmap" => {
-            "Search for bitmap on screen".to_string()
+            let row = sqlx::query(
+                r#"
+                SELECT b.name AS bitmap_name, v.name AS var_name
+                FROM step_find_bitmap fb
+                JOIN bitmaps b ON fb.reference_bitmap_id = b.id
+                LEFT JOIN automation_variables v ON fb.output_found_variable_id = v.id
+                WHERE fb.step_id = $1
+                "#,
+            )
+            .bind(step_id)
+            .fetch_optional(db)
+            .await;
+
+            if let Ok(Some(r)) = row {
+                let bitmap_name: String = r.get("bitmap_name");
+                let var_name: Option<String> = r.get("var_name");
+                generate_find_bitmap_summary(&bitmap_name, var_name.as_deref())
+            } else {
+                "Search for bitmap on screen".to_string()
+            }
         }
         "branch" => {
             "BRANCH evaluation".to_string()
@@ -755,6 +857,40 @@ pub async fn get_new_key_press_step_handler(
         label: String::new(),
         post_delay_seconds: 0.0,
         key_combo: String::new(),
+        error: None,
+        is_edit: false,
+    })
+}
+
+/// GET /automations/{id}/steps/new/find_bitmap
+pub async fn get_new_find_bitmap_step_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<NewFindBitmapQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+    let variables = fetch_automation_variables(&state.db, id).await;
+
+    HtmlTemplate(StepFindBitmapTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        reference_bitmap_id: query.reference_bitmap_id,
+        search_x: query.search_x,
+        search_y: query.search_y,
+        search_width: query.search_width,
+        search_height: query.search_height,
+        match_threshold: 0.95,
+        output_found_variable_id: None,
+        output_x_variable_id: None,
+        output_y_variable_id: None,
+        bitmaps,
+        variables,
         error: None,
         is_edit: false,
     })
@@ -932,6 +1068,140 @@ pub async fn post_create_step_handler(
                     "x": final_x,
                     "y": final_y,
                     "output_variable_id": form.output_variable_id
+                })),
+            )
+            .await;
+        }
+
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
+
+    if step_type_str == "find_bitmap" {
+        let ref_bitmap_id = match form.reference_bitmap_id {
+            Some(id) if id > 0 => id,
+            _ => {
+                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+                let variables = fetch_automation_variables(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindBitmapTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: None,
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        reference_bitmap_id: form.reference_bitmap_id,
+                        search_x: form.search_x,
+                        search_y: form.search_y,
+                        search_width: form.search_width,
+                        search_height: form.search_height,
+                        match_threshold: form.match_threshold.unwrap_or(0.95),
+                        output_found_variable_id: form.output_found_variable_id,
+                        output_x_variable_id: form.output_x_variable_id,
+                        output_y_variable_id: form.output_y_variable_id,
+                        bitmaps,
+                        variables,
+                        error: Some("Please select a reference bitmap.".to_string()),
+                        is_edit: false,
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
+        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
+
+        let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await;
+
+        let next_pos: f64 = match max_pos_row {
+            Ok(r) => {
+                let max_pos: Option<f64> = r.get("max_pos");
+                max_pos.map(|p| p + 10.0).unwrap_or(10.0)
+            }
+            _ => 10.0,
+        };
+
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::error!("Failed to start transaction: {}", e);
+                return Redirect::to(&format!("/automations/{}", id)).into_response();
+            }
+        };
+
+        let step_row = sqlx::query(
+            "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'find_bitmap', $3, $4) RETURNING id",
+        )
+        .bind(id)
+        .bind(next_pos)
+        .bind(&label)
+        .bind(post_delay_ms)
+        .fetch_one(&mut *tx)
+        .await;
+
+        let step_id: i64 = match step_row {
+            Ok(r) => r.get("id"),
+            Err(e) => {
+                tracing::error!("Failed to insert step: {}", e);
+                return Redirect::to(&format!("/automations/{}", id)).into_response();
+            }
+        };
+
+        let detail_res = sqlx::query(
+            r#"
+            INSERT INTO step_find_bitmap
+                (step_id, reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(step_id)
+        .bind(ref_bitmap_id)
+        .bind(form.search_x)
+        .bind(form.search_y)
+        .bind(form.search_width)
+        .bind(form.search_height)
+        .bind(match_threshold)
+        .bind(form.output_found_variable_id)
+        .bind(form.output_x_variable_id)
+        .bind(form.output_y_variable_id)
+        .execute(&mut *tx)
+        .await;
+
+        if let Err(e) = detail_res {
+            tracing::error!("Failed to insert step_find_bitmap: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
+
+        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
+
+        if tx.commit().await.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "create_step",
+                "automation_step",
+                Some(step_id),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "step_type": "find_bitmap",
+                    "reference_bitmap_id": ref_bitmap_id,
+                    "search_x": form.search_x,
+                    "search_y": form.search_y,
+                    "search_width": form.search_width,
+                    "search_height": form.search_height,
+                    "match_threshold": match_threshold,
+                    "output_found_variable_id": form.output_found_variable_id,
+                    "output_x_variable_id": form.output_x_variable_id,
+                    "output_y_variable_id": form.output_y_variable_id
                 })),
             )
             .await;
@@ -1236,6 +1506,64 @@ pub async fn get_edit_step_handler(
             is_edit: true,
         })
         .into_response()
+    } else if step_type == "find_bitmap" {
+        let fb_row = sqlx::query(
+            "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id FROM step_find_bitmap WHERE step_id = $1",
+        )
+        .bind(sid)
+        .fetch_optional(&state.db)
+        .await;
+
+        let (
+            reference_bitmap_id,
+            search_x,
+            search_y,
+            search_width,
+            search_height,
+            match_threshold,
+            output_found_variable_id,
+            output_x_variable_id,
+            output_y_variable_id,
+        ) = match fb_row {
+            Ok(Some(r)) => (
+                r.get::<Option<i64>, _>("reference_bitmap_id"),
+                r.get::<Option<i32>, _>("search_x"),
+                r.get::<Option<i32>, _>("search_y"),
+                r.get::<Option<i32>, _>("search_width"),
+                r.get::<Option<i32>, _>("search_height"),
+                r.get::<f32, _>("match_threshold"),
+                r.get::<Option<i64>, _>("output_found_variable_id"),
+                r.get::<Option<i64>, _>("output_x_variable_id"),
+                r.get::<Option<i64>, _>("output_y_variable_id"),
+            ),
+            _ => (None, None, None, None, None, 0.95, None, None, None),
+        };
+
+        let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+        let variables = fetch_automation_variables(&state.db, id).await;
+
+        HtmlTemplate(StepFindBitmapTemplate {
+            user,
+            csrf_token,
+            automation_id: id,
+            step_id: Some(sid),
+            label: label.unwrap_or_default(),
+            post_delay_seconds: post_delay_ms as f64 / 1000.0,
+            reference_bitmap_id,
+            search_x,
+            search_y,
+            search_width,
+            search_height,
+            match_threshold,
+            output_found_variable_id,
+            output_x_variable_id,
+            output_y_variable_id,
+            bitmaps,
+            variables,
+            error: None,
+            is_edit: true,
+        })
+        .into_response()
     } else if step_type == "find_pixel_rgb" {
         let fp_row = sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
             .bind(sid)
@@ -1411,6 +1739,112 @@ pub async fn post_edit_step_handler(
                     "x": final_x,
                     "y": final_y,
                     "output_variable_id": form.output_variable_id
+                })),
+            )
+            .await;
+        }
+
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
+
+    if step_type == "find_bitmap" {
+        let ref_bitmap_id = match form.reference_bitmap_id {
+            Some(id) if id > 0 => id,
+            _ => {
+                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+                let variables = fetch_automation_variables(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindBitmapTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: Some(sid),
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        reference_bitmap_id: form.reference_bitmap_id,
+                        search_x: form.search_x,
+                        search_y: form.search_y,
+                        search_width: form.search_width,
+                        search_height: form.search_height,
+                        match_threshold: form.match_threshold.unwrap_or(0.95),
+                        output_found_variable_id: form.output_found_variable_id,
+                        output_x_variable_id: form.output_x_variable_id,
+                        output_y_variable_id: form.output_y_variable_id,
+                        bitmaps,
+                        variables,
+                        error: Some("Please select a reference bitmap.".to_string()),
+                        is_edit: true,
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
+        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
+
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
+        };
+
+        let _ = sqlx::query(
+            "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+        )
+        .bind(&label)
+        .bind(post_delay_ms)
+        .bind(sid)
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
+
+        let _ = sqlx::query(
+            r#"
+            UPDATE step_find_bitmap
+            SET reference_bitmap_id = $1, search_x = $2, search_y = $3, search_width = $4, search_height = $5,
+                match_threshold = $6, output_found_variable_id = $7, output_x_variable_id = $8, output_y_variable_id = $9
+            WHERE step_id = $10
+            "#,
+        )
+        .bind(ref_bitmap_id)
+        .bind(form.search_x)
+        .bind(form.search_y)
+        .bind(form.search_width)
+        .bind(form.search_height)
+        .bind(match_threshold)
+        .bind(form.output_found_variable_id)
+        .bind(form.output_x_variable_id)
+        .bind(form.output_y_variable_id)
+        .bind(sid)
+        .execute(&mut *tx)
+        .await;
+
+        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
+
+        if tx.commit().await.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "update_step",
+                "automation_step",
+                Some(sid),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "step_type": "find_bitmap",
+                    "reference_bitmap_id": ref_bitmap_id,
+                    "search_x": form.search_x,
+                    "search_y": form.search_y,
+                    "search_width": form.search_width,
+                    "search_height": form.search_height,
+                    "match_threshold": match_threshold,
+                    "output_found_variable_id": form.output_found_variable_id,
+                    "output_x_variable_id": form.output_x_variable_id,
+                    "output_y_variable_id": form.output_y_variable_id
                 })),
             )
             .await;
@@ -1814,5 +2248,20 @@ mod tests {
         // With empty output variable string
         let s3 = generate_find_pixel_rgb_summary(150, 250, Some("   "));
         assert_eq!(s3, "Read pixel at (150, 250)");
+    }
+
+    #[test]
+    fn test_generate_find_bitmap_summary() {
+        // Without output variable
+        let s1 = generate_find_bitmap_summary("login_button", None);
+        assert_eq!(s1, "Search for «login_button» on screen");
+
+        // With output variable
+        let s2 = generate_find_bitmap_summary("login_button", Some("found_login"));
+        assert_eq!(s2, "Search for «login_button» on screen → store as «found_login»");
+
+        // With whitespace output variable name
+        let s3 = generate_find_bitmap_summary("login_button", Some("   "));
+        assert_eq!(s3, "Search for «login_button» on screen");
     }
 }
