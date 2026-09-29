@@ -10,6 +10,7 @@ use std::time::Duration;
 use super::auth::HtmlTemplate;
 use crate::auth::{log_audit, AuthUser, UserRole};
 use crate::magnifier::ImageMagnifier;
+use crate::picker::map_coarse_click_to_native;
 use crate::AppState;
 
 #[derive(serde::Deserialize)]
@@ -1081,39 +1082,6 @@ pub async fn post_automation_pick_region_confirm_handler(
     confirm_region_crop_logic(&state, &user, form).await
 }
 
-/// Maps coarse image-input click coordinates (click_x, click_y) on a rendered display box
-/// of size (display_w, display_h) to exact native image pixel coordinates (native_x, native_y)
-/// based on aspect-ratio scale-to-fit calculation.
-pub fn map_coarse_click_to_native(
-    click_x: u32,
-    click_y: u32,
-    display_w: f64,
-    display_h: f64,
-    native_w: u32,
-    native_h: u32,
-) -> (u32, u32) {
-    if native_w == 0 || native_h == 0 || display_w <= 0.0 || display_h <= 0.0 {
-        return (0, 0);
-    }
-
-    let scale_w = display_w / native_w as f64;
-    let scale_h = display_h / native_h as f64;
-    let scale = scale_w.min(scale_h);
-
-    let rendered_w = native_w as f64 * scale;
-    let rendered_h = native_h as f64 * scale;
-
-    let offset_x = (display_w - rendered_w) / 2.0;
-    let offset_y = (display_h - rendered_h) / 2.0;
-
-    let img_x = (click_x as f64 - offset_x).clamp(0.0, rendered_w);
-    let img_y = (click_y as f64 - offset_y).clamp(0.0, rendered_h);
-
-    let native_x = (img_x / scale).floor().min((native_w - 1) as f64) as u32;
-    let native_y = (img_y / scale).floor().min((native_h - 1) as f64) as u32;
-
-    (native_x, native_y)
-}
 
 /// Maps click coordinates on the 20x grid panel view (320x320 viewport centered at `center_x`, `center_y`)
 /// to exact native image pixel coordinates.
