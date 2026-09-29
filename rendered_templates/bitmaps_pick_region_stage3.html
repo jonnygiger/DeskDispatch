@@ -54,7 +54,9 @@ Region Picker - DeskDispatch
 
 
     <div style="margin-bottom: 1.5rem;">
+
         <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 3: Confirm Crop Preview</h2>
+
         <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
             Top-Left: <strong>(100, 100)</strong> &nbsp;|&nbsp;
             Bottom-Right: <strong>(250, 200)</strong> &nbsp;|&nbsp;
@@ -97,16 +99,25 @@ Region Picker - DeskDispatch
         <input type="hidden" name="bottom_right_x" value="250">
         <input type="hidden" name="bottom_right_y" value="200">
 
+
+
+
+
+
         <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start;">
             <label for="bitmap-name" style="font-weight: 600; font-size: 0.875rem;">Reference Bitmap Name:</label>
             <input type="text" id="bitmap-name" name="name" placeholder="Enter bitmap name..." required style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; width: 100%; max-width: 400px; background: var(--color-bg); color: var(--color-text);">
         </div>
 
+
         <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
 
             <a href="/bitmaps/pick-region?image_url=/static/sample_screenshot.png&width=1920&height=1080" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Region</a>
 
+
+
             <button type="submit" class="btn btn-primary" style="padding: 0.5rem 1rem; background: var(--color-primary); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">Confirm &amp; Save Bitmap</button>
+
         </div>
     </form>
 

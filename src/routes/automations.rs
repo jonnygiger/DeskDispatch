@@ -1464,6 +1464,7 @@ pub async fn get_edit_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, sid)): Path<(i64, i64)>,
+    Query(query): Query<NewFindBitmapQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -1515,11 +1516,11 @@ pub async fn get_edit_step_handler(
         .await;
 
         let (
-            reference_bitmap_id,
-            search_x,
-            search_y,
-            search_width,
-            search_height,
+            db_reference_bitmap_id,
+            db_search_x,
+            db_search_y,
+            db_search_width,
+            db_search_height,
             match_threshold,
             output_found_variable_id,
             output_x_variable_id,
@@ -1538,6 +1539,12 @@ pub async fn get_edit_step_handler(
             ),
             _ => (None, None, None, None, None, 0.95, None, None, None),
         };
+
+        let reference_bitmap_id = query.reference_bitmap_id.or(db_reference_bitmap_id);
+        let search_x = query.search_x.or(db_search_x);
+        let search_y = query.search_y.or(db_search_y);
+        let search_width = query.search_width.or(db_search_width);
+        let search_height = query.search_height.or(db_search_height);
 
         let bitmaps = fetch_available_bitmaps(&state.db, id).await;
         let variables = fetch_automation_variables(&state.db, id).await;
@@ -2263,5 +2270,25 @@ mod tests {
         // With whitespace output variable name
         let s3 = generate_find_bitmap_summary("login_button", Some("   "));
         assert_eq!(s3, "Search for «login_button» on screen");
+    }
+
+    #[test]
+    fn test_find_bitmap_query_overrides() {
+        let q = NewFindBitmapQuery {
+            reference_bitmap_id: Some(42),
+            search_x: Some(10),
+            search_y: Some(20),
+            search_width: Some(300),
+            search_height: Some(400),
+        };
+
+        let db_ref_id: Option<i64> = None;
+        let db_x: Option<i32> = None;
+
+        assert_eq!(q.reference_bitmap_id.or(db_ref_id), Some(42));
+        assert_eq!(q.search_x.or(db_x), Some(10));
+        assert_eq!(q.search_y, Some(20));
+        assert_eq!(q.search_width, Some(300));
+        assert_eq!(q.search_height, Some(400));
     }
 }

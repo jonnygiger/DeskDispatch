@@ -175,6 +175,10 @@ fn main() {
             None,
             None,
         ),
+        return_to: None,
+        mode: None,
+        step_id: None,
+        reference_bitmap_id: None,
     };
     fs::write("rendered_templates/bitmaps_pick_region.html", pick_region_tmpl.render().unwrap()).unwrap();
 
@@ -199,6 +203,10 @@ fn main() {
             Some(250),
             Some(200),
         ),
+        return_to: None,
+        mode: None,
+        step_id: None,
+        reference_bitmap_id: None,
     };
     fs::write("rendered_templates/bitmaps_pick_region_stage3.html", pick_region_stage3_tmpl.render().unwrap()).unwrap();
 

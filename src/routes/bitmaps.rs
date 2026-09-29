@@ -37,6 +37,10 @@ pub struct PickRegionQuery {
     pub image_url: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub return_to: Option<String>,
+    pub mode: Option<String>,
+    pub step_id: Option<i64>,
+    pub reference_bitmap_id: Option<i64>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -46,6 +50,10 @@ pub struct PickRegionTopLeftForm {
     pub image_url: String,
     pub width: u32,
     pub height: u32,
+    pub return_to: Option<String>,
+    pub mode: Option<String>,
+    pub step_id: Option<i64>,
+    pub reference_bitmap_id: Option<i64>,
     #[serde(alias = "click.x", default)]
     pub x: u32,
     #[serde(alias = "click.y", default)]
@@ -61,6 +69,10 @@ pub struct PickRegionBottomRightForm {
     pub height: u32,
     pub top_left_x: u32,
     pub top_left_y: u32,
+    pub return_to: Option<String>,
+    pub mode: Option<String>,
+    pub step_id: Option<i64>,
+    pub reference_bitmap_id: Option<i64>,
     #[serde(alias = "grid_click.x", default)]
     pub grid_x: Option<u32>,
     #[serde(alias = "grid_click.y", default)]
@@ -75,7 +87,7 @@ pub struct PickRegionBottomRightForm {
 pub struct PickRegionConfirmForm {
     pub csrf_token: String,
     pub automation_id: Option<i64>,
-    pub name: String,
+    pub name: Option<String>,
     pub image_url: String,
     pub width: u32,
     pub height: u32,
@@ -83,6 +95,10 @@ pub struct PickRegionConfirmForm {
     pub top_left_y: u32,
     pub bottom_right_x: u32,
     pub bottom_right_y: u32,
+    pub return_to: Option<String>,
+    pub mode: Option<String>,
+    pub step_id: Option<i64>,
+    pub reference_bitmap_id: Option<i64>,
 }
 
 #[derive(Template)]
@@ -115,6 +131,10 @@ pub struct RegionPickerTopLeftTemplate {
     pub click_x: Option<u32>,
     pub click_y: Option<u32>,
     pub magnifier: ImageMagnifier,
+    pub return_to: Option<String>,
+    pub mode: Option<String>,
+    pub step_id: Option<i64>,
+    pub reference_bitmap_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -679,6 +699,10 @@ pub async fn get_pick_region_handler(
         click_x: None,
         click_y: None,
         magnifier,
+        return_to: query.return_to,
+        mode: query.mode,
+        step_id: query.step_id,
+        reference_bitmap_id: query.reference_bitmap_id,
     })
 }
 
@@ -711,6 +735,10 @@ pub async fn get_automation_pick_region_handler(
         click_x: None,
         click_y: None,
         magnifier,
+        return_to: query.return_to,
+        mode: query.mode,
+        step_id: query.step_id,
+        reference_bitmap_id: query.reference_bitmap_id,
     })
 }
 
@@ -756,6 +784,10 @@ pub async fn post_pick_region_top_left_handler(
         click_x: Some(form.x),
         click_y: Some(form.y),
         magnifier,
+        return_to: form.return_to,
+        mode: form.mode,
+        step_id: form.step_id,
+        reference_bitmap_id: form.reference_bitmap_id,
     })
     .into_response()
 }
@@ -803,6 +835,10 @@ pub async fn post_automation_pick_region_top_left_handler(
         click_x: Some(form.x),
         click_y: Some(form.y),
         magnifier,
+        return_to: form.return_to,
+        mode: form.mode,
+        step_id: form.step_id,
+        reference_bitmap_id: form.reference_bitmap_id,
     })
     .into_response()
 }
@@ -867,6 +903,10 @@ pub async fn post_pick_region_bottom_right_handler(
         click_x: form.grid_x.or(form.coarse_x),
         click_y: form.grid_y.or(form.coarse_y),
         magnifier,
+        return_to: form.return_to,
+        mode: form.mode,
+        step_id: form.step_id,
+        reference_bitmap_id: form.reference_bitmap_id,
     })
     .into_response()
 }
@@ -971,15 +1011,6 @@ pub async fn confirm_region_crop_logic(
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
 
-    let bitmap_name = form.name.trim().to_string();
-    if bitmap_name.is_empty() {
-        let redirect_path = match form.automation_id {
-            Some(aid) => format!("/automations/{}/bitmaps", aid),
-            None => "/bitmaps".to_string(),
-        };
-        return Redirect::to(&redirect_path).into_response();
-    }
-
     let norm_tl_x = form.top_left_x.min(form.bottom_right_x);
     let norm_tl_y = form.top_left_y.min(form.bottom_right_y);
     let norm_br_x = form.top_left_x.max(form.bottom_right_x);
@@ -987,6 +1018,38 @@ pub async fn confirm_region_crop_logic(
 
     let crop_w = norm_br_x - norm_tl_x + 1;
     let crop_h = norm_br_y - norm_tl_y + 1;
+
+    if form.mode.as_deref() == Some("search_region") {
+        let ref_param = form
+            .reference_bitmap_id
+            .map(|id| format!("&reference_bitmap_id={}", id))
+            .unwrap_or_default();
+
+        let redirect_url = if let (Some(aid), Some(sid)) = (form.automation_id, form.step_id) {
+            format!(
+                "/automations/{}/steps/{}/edit?search_x={}&search_y={}&search_width={}&search_height={}{}",
+                aid, sid, norm_tl_x, norm_tl_y, crop_w, crop_h, ref_param
+            )
+        } else if let Some(aid) = form.automation_id {
+            format!(
+                "/automations/{}/steps/new/find_bitmap?search_x={}&search_y={}&search_width={}&search_height={}{}",
+                aid, norm_tl_x, norm_tl_y, crop_w, crop_h, ref_param
+            )
+        } else {
+            "/automations".to_string()
+        };
+
+        return Redirect::to(&redirect_url).into_response();
+    }
+
+    let bitmap_name = form.name.as_deref().unwrap_or("").trim().to_string();
+    if bitmap_name.is_empty() {
+        let redirect_path = match form.automation_id {
+            Some(aid) => format!("/automations/{}/bitmaps", aid),
+            None => "/bitmaps".to_string(),
+        };
+        return Redirect::to(&redirect_path).into_response();
+    }
 
     let object_key = format!("bitmaps/crop_{}.png", uuid::Uuid::new_v4());
 
@@ -1051,6 +1114,17 @@ pub async fn confirm_region_crop_logic(
         Some(details),
     )
     .await;
+
+    if form.return_to.as_deref() == Some("find_bitmap") || form.return_to.as_deref() == Some("edit_find_bitmap") {
+        let redirect_url = if let (Some(aid), Some(sid)) = (form.automation_id, form.step_id) {
+            format!("/automations/{}/steps/{}/edit?reference_bitmap_id={}", aid, sid, bitmap_id)
+        } else if let Some(aid) = form.automation_id {
+            format!("/automations/{}/steps/new/find_bitmap?reference_bitmap_id={}", aid, bitmap_id)
+        } else {
+            format!("/bitmaps")
+        };
+        return Redirect::to(&redirect_url).into_response();
+    }
 
     let redirect_path = match form.automation_id {
         Some(aid) => format!("/automations/{}/bitmaps", aid),
@@ -1147,5 +1221,26 @@ mod tests {
         // Boundary clamping near native max
         let (nx_max, ny_max) = map_grid_click_to_native(319, 319, 1918, 1078, 1920, 1080);
         assert_eq!((nx_max, ny_max), (1919, 1079));
+    }
+
+    #[test]
+    fn test_pick_region_query_search_region_bounding() {
+        let top_left_x = 100u32;
+        let top_left_y = 200u32;
+        let bottom_right_x = 299u32;
+        let bottom_right_y = 399u32;
+
+        let norm_tl_x = top_left_x.min(bottom_right_x);
+        let norm_tl_y = top_left_y.min(bottom_right_y);
+        let norm_br_x = top_left_x.max(bottom_right_x);
+        let norm_br_y = top_left_y.max(bottom_right_y);
+
+        let crop_w = norm_br_x - norm_tl_x + 1;
+        let crop_h = norm_br_y - norm_tl_y + 1;
+
+        assert_eq!(norm_tl_x, 100);
+        assert_eq!(norm_tl_y, 200);
+        assert_eq!(crop_w, 200);
+        assert_eq!(crop_h, 200);
     }
 }

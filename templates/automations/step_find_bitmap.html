@@ -46,11 +46,28 @@
                 </select>
                 <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Select the reference bitmap image to search for on screen.</span>
             {% endif %}
+            <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem; align-items: center;">
+                <a href="/automations/{{ automation_id }}/bitmaps/pick-region?return_to={% if is_edit %}edit_find_bitmap{% else %}find_bitmap{% endif %}{% if let Some(sid) = step_id %}&step_id={{ sid }}{% endif %}" class="btn btn-outline" style="font-size: 0.8125rem; padding: 0.375rem 0.75rem; text-decoration: none;">
+                    📷 Pick New Region from Screenshot
+                </a>
+                <a href="/automations/{{ automation_id }}/bitmaps" class="btn btn-outline" style="font-size: 0.8125rem; padding: 0.375rem 0.75rem; text-decoration: none;" target="_blank">
+                    Manage Bitmap Library ↗
+                </a>
+            </div>
         </div>
 
         <fieldset style="border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 1rem; margin-bottom: 1.25rem;">
             <legend style="padding: 0 0.5rem; font-weight: 600; font-size: 0.9375rem;">Bounding Search Region (Optional)</legend>
-            <p style="font-size: 0.8125rem; color: var(--color-text-muted); margin-bottom: 0.75rem;">Leave blank to search the entire screen.</p>
+            <p style="font-size: 0.8125rem; color: var(--color-text-muted); margin-bottom: 0.75rem;">Leave blank to search the entire screen, or define coordinates/region to bound search area.</p>
+
+            <div style="margin-bottom: 0.75rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                <a href="/automations/{{ automation_id }}/bitmaps/pick-region?mode=search_region&return_to={% if is_edit %}edit_find_bitmap{% else %}find_bitmap{% endif %}{% if let Some(sid) = step_id %}&step_id={{ sid }}{% endif %}{% if let Some(ref_id) = reference_bitmap_id %}&reference_bitmap_id={{ ref_id }}{% endif %}" class="btn btn-outline" style="font-size: 0.8125rem; padding: 0.375rem 0.75rem; text-decoration: none;">
+                    🎯 Pick Search Region visually
+                </a>
+                <button type="button" onclick="document.getElementById('search_x').value=''; document.getElementById('search_y').value=''; document.getElementById('search_width').value=''; document.getElementById('search_height').value='';" class="btn btn-outline" style="font-size: 0.8125rem; padding: 0.375rem 0.75rem; cursor: pointer;">
+                    Clear Region (Full Screen)
+                </button>
+            </div>
 
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem;">
                 <div>

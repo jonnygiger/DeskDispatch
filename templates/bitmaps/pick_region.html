@@ -38,6 +38,18 @@ Region Picker - DeskDispatch
         <input type="hidden" name="image_url" value="{{ image_url }}">
         <input type="hidden" name="width" value="{{ width }}">
         <input type="hidden" name="height" value="{{ height }}">
+        {% if let Some(rt) = return_to %}
+        <input type="hidden" name="return_to" value="{{ rt }}">
+        {% endif %}
+        {% if let Some(m) = mode %}
+        <input type="hidden" name="mode" value="{{ m }}">
+        {% endif %}
+        {% if let Some(sid) = step_id %}
+        <input type="hidden" name="step_id" value="{{ sid }}">
+        {% endif %}
+        {% if let Some(ref_id) = reference_bitmap_id %}
+        <input type="hidden" name="reference_bitmap_id" value="{{ ref_id }}">
+        {% endif %}
 
         <div style="position: relative; display: inline-block;">
             <input type="image" name="click" src="{{ image_url }}" alt="Click top-left corner" style="width: 600px; height: 340px; object-fit: contain; border: 2px solid var(--color-primary); border-radius: 4px; cursor: crosshair; background: #111;">
@@ -76,6 +88,18 @@ Region Picker - DeskDispatch
         <input type="hidden" name="height" value="{{ height }}">
         <input type="hidden" name="top_left_x" value="{{ top_left_x.unwrap() }}">
         <input type="hidden" name="top_left_y" value="{{ top_left_y.unwrap() }}">
+        {% if let Some(rt) = return_to %}
+        <input type="hidden" name="return_to" value="{{ rt }}">
+        {% endif %}
+        {% if let Some(m) = mode %}
+        <input type="hidden" name="mode" value="{{ m }}">
+        {% endif %}
+        {% if let Some(sid) = step_id %}
+        <input type="hidden" name="step_id" value="{{ sid }}">
+        {% endif %}
+        {% if let Some(ref_id) = reference_bitmap_id %}
+        <input type="hidden" name="reference_bitmap_id" value="{{ ref_id }}">
+        {% endif %}
 
         <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
             <p style="font-weight: 600; font-size: 0.875rem; margin: 0;">High-Precision Grid Panel View (20× Zoom):</p>
@@ -99,7 +123,15 @@ Region Picker - DeskDispatch
     {% else %}
 
     <div style="margin-bottom: 1.5rem;">
+        {% if let Some(m) = mode %}
+            {% if m == "search_region" %}
+            <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 3: Confirm Bounding Search Region</h2>
+            {% else %}
+            <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 3: Confirm Crop Preview</h2>
+            {% endif %}
+        {% else %}
         <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 3: Confirm Crop Preview</h2>
+        {% endif %}
         <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
             Top-Left: <strong>({{ top_left_x.unwrap() }}, {{ top_left_y.unwrap() }})</strong> &nbsp;|&nbsp;
             Bottom-Right: <strong>({{ bottom_right_x.unwrap() }}, {{ bottom_right_y.unwrap() }})</strong> &nbsp;|&nbsp;
@@ -127,11 +159,32 @@ Region Picker - DeskDispatch
         <input type="hidden" name="top_left_y" value="{{ top_left_y.unwrap() }}">
         <input type="hidden" name="bottom_right_x" value="{{ bottom_right_x.unwrap() }}">
         <input type="hidden" name="bottom_right_y" value="{{ bottom_right_y.unwrap() }}">
+        {% if let Some(rt) = return_to %}
+        <input type="hidden" name="return_to" value="{{ rt }}">
+        {% endif %}
+        {% if let Some(m) = mode %}
+        <input type="hidden" name="mode" value="{{ m }}">
+        {% endif %}
+        {% if let Some(sid) = step_id %}
+        <input type="hidden" name="step_id" value="{{ sid }}">
+        {% endif %}
+        {% if let Some(ref_id) = reference_bitmap_id %}
+        <input type="hidden" name="reference_bitmap_id" value="{{ ref_id }}">
+        {% endif %}
 
+        {% if let Some(m) = mode %}
+            {% if m != "search_region" %}
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start;">
+                <label for="bitmap-name" style="font-weight: 600; font-size: 0.875rem;">Reference Bitmap Name:</label>
+                <input type="text" id="bitmap-name" name="name" placeholder="Enter bitmap name..." required style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; width: 100%; max-width: 400px; background: var(--color-bg); color: var(--color-text);">
+            </div>
+            {% endif %}
+        {% else %}
         <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start;">
             <label for="bitmap-name" style="font-weight: 600; font-size: 0.875rem;">Reference Bitmap Name:</label>
             <input type="text" id="bitmap-name" name="name" placeholder="Enter bitmap name..." required style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; width: 100%; max-width: 400px; background: var(--color-bg); color: var(--color-text);">
         </div>
+        {% endif %}
 
         <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
             {% if let Some(aid) = automation_id %}
@@ -139,7 +192,16 @@ Region Picker - DeskDispatch
             {% else %}
             <a href="/bitmaps/pick-region?image_url={{ image_url }}&width={{ width }}&height={{ height }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text);">Re-pick Region</a>
             {% endif %}
+
+            {% if let Some(m) = mode %}
+                {% if m == "search_region" %}
+                <button type="submit" class="btn btn-primary" style="padding: 0.5rem 1rem; background: var(--color-primary); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">Confirm Bounding Search Region</button>
+                {% else %}
+                <button type="submit" class="btn btn-primary" style="padding: 0.5rem 1rem; background: var(--color-primary); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">Confirm &amp; Save Bitmap</button>
+                {% endif %}
+            {% else %}
             <button type="submit" class="btn btn-primary" style="padding: 0.5rem 1rem; background: var(--color-primary); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">Confirm &amp; Save Bitmap</button>
+            {% endif %}
         </div>
     </form>
     {% endif %}
