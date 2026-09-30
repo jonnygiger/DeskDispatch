@@ -4497,4 +4497,40 @@ mod tests {
         assert!(vars.iter().any(|v| Some(v.id) == valid_x));
         assert!(!vars.iter().any(|v| Some(v.id) == invalid_x));
     }
+
+    #[test]
+    fn test_step_description_variable_formatting() {
+        // Variable-bound X and Y coordinates
+        let summary1 = generate_mouse_click_summary(
+            None,
+            None,
+            Some("button_x"),
+            Some("button_y"),
+            "left",
+            "single",
+        );
+        assert_eq!(summary1, "Click («button_x», «button_y») [left, single]");
+
+        // Variable-bound X coordinate and fixed Y coordinate
+        let summary2 = generate_mouse_click_summary(
+            None,
+            Some(250),
+            Some("target_x"),
+            None,
+            "right",
+            "double",
+        );
+        assert_eq!(summary2, "Click («target_x», 250) [right, double]");
+
+        // Fixed X coordinate and variable-bound Y coordinate
+        let summary3 = generate_mouse_click_summary(
+            Some(500),
+            None,
+            None,
+            Some("target_y"),
+            "middle",
+            "single",
+        );
+        assert_eq!(summary3, "Click (500, «target_y») [middle, single]");
+    }
 }
