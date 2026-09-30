@@ -825,4 +825,17 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
 
     assert_eq!(updated_match_target, Some(step2_id));
     assert_eq!(updated_no_match_target, Some(step1_id));
+
+    // 7. Verify plain-language branch step description rendering in automation detail view
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(body_str.contains("BRANCH: if pixel at (100, 200) ≈ RGB(10,20,30) ±5 → go to Step 2 (Step Beta), else → go to Step 1 (Step Alpha)"));
 }
