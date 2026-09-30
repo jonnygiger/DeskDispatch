@@ -3008,6 +3008,41 @@ mod tests {
             s2,
             "BRANCH: if bitmap «submit_btn» found → go to Step 5 (Click), else → go to Next Step"
         );
+
+        // Fallback targets and values when None
+        let s3 = generate_branch_summary(
+            "pixel_rgb",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            s3,
+            "BRANCH: if pixel at (0, 0) ≈ RGB(0,0,0) ±0 → go to Next Step, else → go to Next Step"
+        );
+
+        let s4 = generate_branch_summary(
+            "bitmap",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            s4,
+            "BRANCH: if bitmap «bitmap» found → go to Next Step, else → go to Next Step"
+        );
     }
 
     #[test]
