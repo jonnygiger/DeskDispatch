@@ -839,3 +839,158 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("BRANCH: if pixel at (100, 200) ≈ RGB(10,20,30) ±5 → go to Step 2 (Step Beta), else → go to Step 1 (Step Alpha)"));
 }
+
+#[tokio::test]
+async fn test_automation_parameters_crud_and_validation() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_automation_parameters_crud_and_validation");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(credentials)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let state = AppState {
+        db: pool.clone(),
+        s3_client,
+        config: config.clone(),
+        rate_limiter: app::auth::LoginRateLimiter::default(),
+    };
+
+    let app = Router::new()
+        .route("/automations", axum::routing::get(get_automations_handler).post(post_automations_handler))
+        .route("/automations/{id}/parameters", axum::routing::get(get_automation_parameters_handler).post(post_create_automation_parameter_handler))
+        .route("/automations/{id}/parameters/{pid}", axum::routing::post(post_update_automation_parameter_handler))
+        .route("/automations/{id}/parameters/{pid}/delete", axum::routing::post(post_delete_automation_parameter_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            app::auth::csrf_middleware,
+        ))
+        .with_state(state);
+
+    let (_admin_id, admin_session) = create_test_user(&pool, &format!("param_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let csrf_token = app::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&admin_session).unwrap(),
+        &config.session_secret,
+    );
+
+    // 1. Create automation
+    let create_body = format!("name=Param+Test+Automation&description=Test&csrf_token={}", csrf_token);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/automations")
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(create_body))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+
+    // 2. GET /automations/{id}/parameters
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}/parameters", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 3. POST invalid parameter (invalid default_value for int)
+    let invalid_param_body = format!(
+        "name=click_tolerance&param_type=int&default_value=invalid_num&description=Tolerance&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/parameters", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(invalid_param_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // 4. POST valid parameter
+    let valid_param_body = format!(
+        "name=click_tolerance&param_type=int&default_value=10&description=Tolerance&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/parameters", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(valid_param_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Check parameter in DB
+    let param_row = sqlx::query("SELECT id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1")
+        .bind(automation_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let param_id: i64 = sqlx::Row::get(&param_row, "id");
+    let name: String = sqlx::Row::get(&param_row, "name");
+    let param_type: String = sqlx::Row::get(&param_row, "param_type");
+    let default_val: String = sqlx::Row::get(&param_row, "default_value");
+
+    assert_eq!(name, "click_tolerance");
+    assert_eq!(param_type, "int");
+    assert_eq!(default_val, "10");
+
+    // 5. POST update parameter
+    let update_param_body = format!(
+        "name=click_tolerance&param_type=int&default_value=15&description=Updated+Tolerance&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/parameters/{}", automation_id, param_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(update_param_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    let updated_row = sqlx::query("SELECT default_value, description FROM automation_parameters WHERE id = $1")
+        .bind(param_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let updated_val: String = sqlx::Row::get(&updated_row, "default_value");
+    let updated_desc: String = sqlx::Row::get(&updated_row, "description");
+    assert_eq!(updated_val, "15");
+    assert_eq!(updated_desc, "Updated Tolerance");
+
+    // 6. POST delete parameter
+    let delete_param_body = format!("csrf_token={}", csrf_token);
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/parameters/{}/delete", automation_id, param_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(delete_param_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM automation_parameters WHERE automation_id = $1")
+        .bind(automation_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}

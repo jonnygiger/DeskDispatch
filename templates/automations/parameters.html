@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% import "macros.html" as macros %}
 
-{% block title %}Variables - {{ automation.name }} - DeskDispatch{% endblock %}
+{% block title %}Parameters - {{ automation.name }} - DeskDispatch{% endblock %}
 
 {% block top_nav %}
 {% call macros::top_nav(user, "automations") %}
@@ -11,7 +11,7 @@
 <div class="dashboard-header" style="align-items: flex-start; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
     <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
         <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <h1 class="dashboard-title" style="margin: 0;">Variables: {{ automation.name }}</h1>
+            <h1 class="dashboard-title" style="margin: 0;">Parameters: {{ automation.name }}</h1>
             <span class="badge {{ automation.status_badge_class() }}">{{ automation.status }}</span>
         </div>
     </div>
@@ -23,8 +23,8 @@
 <!-- Sub-navigation -->
 <div style="display: flex; gap: 1rem; border-bottom: 1px solid var(--color-border); margin-bottom: 1.5rem; padding-bottom: 0.5rem;">
     <a href="/automations/{{ automation.id }}" style="padding-bottom: 0.5rem; color: var(--color-text-muted);">Steps</a>
-    <a href="/automations/{{ automation.id }}/variables" style="font-weight: 600; border-bottom: 2px solid var(--color-primary); padding-bottom: 0.5rem; color: var(--color-primary);">Variables</a>
-    <a href="/automations/{{ automation.id }}/parameters" style="padding-bottom: 0.5rem; color: var(--color-text-muted);">Parameters</a>
+    <a href="/automations/{{ automation.id }}/variables" style="padding-bottom: 0.5rem; color: var(--color-text-muted);">Variables</a>
+    <a href="/automations/{{ automation.id }}/parameters" style="font-weight: 600; border-bottom: 2px solid var(--color-primary); padding-bottom: 0.5rem; color: var(--color-primary);">Parameters</a>
     <a href="/automations/{{ automation.id }}/bitmaps" style="padding-bottom: 0.5rem; color: var(--color-text-muted);">Bitmaps</a>
 </div>
 
@@ -36,37 +36,40 @@
 
 {% if user.role.can_edit() %}
 <div class="card" style="margin-bottom: 1.5rem; padding: 1.25rem;">
-    <h3 style="margin-top: 0; margin-bottom: 0.75rem; font-size: 1.125rem;">Declare New Variable</h3>
-    <form method="post" action="/automations/{{ automation.id }}/variables" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+    <h3 style="margin-top: 0; margin-bottom: 0.75rem; font-size: 1.125rem;">Declare New Parameter</h3>
+    <form method="post" action="/automations/{{ automation.id }}/parameters" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
         {% call macros::csrf_field(csrf_token) %}
-        <div style="flex: 2; min-width: 180px; display: flex; flex-direction: column; gap: 0.375rem;">
-            <label for="var-name" style="font-size: 0.875rem; font-weight: 600;">Variable Name</label>
-            <input type="text" id="var-name" name="name" placeholder="e.g. bg_color, target_x" required class="form-control" style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+        <div style="flex: 2; min-width: 160px; display: flex; flex-direction: column; gap: 0.375rem;">
+            <label for="param-name" style="font-size: 0.875rem; font-weight: 600;">Parameter Name</label>
+            <input type="text" id="param-name" name="name" placeholder="e.g. click_tolerance" required class="form-control" style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
         </div>
-        <div style="flex: 1; min-width: 130px; display: flex; flex-direction: column; gap: 0.375rem;">
-            <label for="var-type" style="font-size: 0.875rem; font-weight: 600;">Type</label>
-            <select id="var-type" name="var_type" class="form-control" style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+        <div style="flex: 1; min-width: 120px; display: flex; flex-direction: column; gap: 0.375rem;">
+            <label for="param-type" style="font-size: 0.875rem; font-weight: 600;">Type</label>
+            <select id="param-type" name="param_type" class="form-control" style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
                 <option value="int">int</option>
                 <option value="bool">bool</option>
                 <option value="color">color</option>
-                <option value="point">point</option>
                 <option value="string">string</option>
             </select>
         </div>
-        <div style="flex: 3; min-width: 200px; display: flex; flex-direction: column; gap: 0.375rem;">
-            <label for="var-desc" style="font-size: 0.875rem; font-weight: 600;">Description (optional)</label>
-            <input type="text" id="var-desc" name="description" placeholder="e.g. Stores output color of pixel lookup" class="form-control" style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+        <div style="flex: 2; min-width: 160px; display: flex; flex-direction: column; gap: 0.375rem;">
+            <label for="param-default" style="font-size: 0.875rem; font-weight: 600;">Default Value</label>
+            <input type="text" id="param-default" name="default_value" placeholder="e.g. 10, true, #FF0000" required class="form-control" style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+        </div>
+        <div style="flex: 3; min-width: 180px; display: flex; flex-direction: column; gap: 0.375rem;">
+            <label for="param-desc" style="font-size: 0.875rem; font-weight: 600;">Description (optional)</label>
+            <input type="text" id="param-desc" name="description" placeholder="e.g. Maximum pixel offset allowed for matching" class="form-control" style="padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
         </div>
         <button type="submit" class="btn btn-primary" style="padding: 0.5rem 1.25rem; border-radius: 4px; font-weight: 600;">
-            Add Variable
+            Add Parameter
         </button>
     </form>
 </div>
 {% endif %}
 
-{% if variables.is_empty() %}
+{% if parameters.is_empty() %}
     <div class="card" style="text-align: center; padding: 3rem;">
-        <p style="color: var(--color-text-muted); font-size: 1.125rem; margin-bottom: 0;">No dynamic variables declared for this automation.</p>
+        <p style="color: var(--color-text-muted); font-size: 1.125rem; margin-bottom: 0;">No parameters declared for this automation.</p>
     </div>
 {% else %}
     <div class="card" style="padding: 0; overflow: hidden;">
@@ -75,6 +78,7 @@
                 <tr style="background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);">
                     <th style="padding: 0.75rem 1rem; font-weight: 600;">Name</th>
                     <th style="padding: 0.75rem 1rem; font-weight: 600;">Type</th>
+                    <th style="padding: 0.75rem 1rem; font-weight: 600;">Default Value</th>
                     <th style="padding: 0.75rem 1rem; font-weight: 600;">Description</th>
                     {% if user.role.can_edit() %}
                     <th style="padding: 0.75rem 1rem; font-weight: 600; text-align: right;">Actions</th>
@@ -82,47 +86,52 @@
                 </tr>
             </thead>
             <tbody>
-                {% for var_item in variables %}
+                {% for param_item in parameters %}
                 <tr style="border-bottom: 1px solid var(--color-border);">
                     <td style="padding: 0.75rem 1rem; font-weight: 600;">
-                        <code>«{{ var_item.name }}»</code>
+                        <code>«{{ param_item.name }}»</code>
                     </td>
                     <td style="padding: 0.75rem 1rem;">
-                        <span class="badge badge-neutral">{{ var_item.var_type }}</span>
+                        <span class="badge badge-neutral">{{ param_item.param_type }}</span>
+                    </td>
+                    <td style="padding: 0.75rem 1rem;">
+                        <code>{{ param_item.default_value }}</code>
                     </td>
                     <td style="padding: 0.75rem 1rem; color: var(--color-text-muted);">
-                        {% if var_item.description.is_empty() %}
+                        {% if param_item.description.is_empty() %}
                             <em>No description</em>
                         {% else %}
-                            {{ var_item.description }}
+                            {{ param_item.description }}
                         {% endif %}
                     </td>
                     {% if user.role.can_edit() %}
                     <td style="padding: 0.75rem 1rem; text-align: right;">
                         <div style="display: inline-flex; gap: 0.5rem; align-items: center;">
-                            <!-- Inline edit form expansion toggle or simple modal/inline form -->
                             <details style="display: inline-block;">
                                 <summary class="btn btn-sm btn-outline" style="cursor: pointer; list-style: none;">Edit</summary>
-                                <div style="position: absolute; right: 2rem; background: var(--color-bg-card, #fff); border: 1px solid var(--color-border); padding: 1rem; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 10; text-align: left; min-width: 300px; margin-top: 0.5rem;">
-                                    <form method="post" action="/automations/{{ automation.id }}/variables/{{ var_item.id }}" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                                <div style="position: absolute; right: 2rem; background: var(--color-bg-card, #fff); border: 1px solid var(--color-border); padding: 1rem; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 10; text-align: left; min-width: 320px; margin-top: 0.5rem;">
+                                    <form method="post" action="/automations/{{ automation.id }}/parameters/{{ param_item.id }}" style="display: flex; flex-direction: column; gap: 0.75rem;">
                                         {% call macros::csrf_field(csrf_token) %}
                                         <div>
                                             <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
-                                            <input type="text" name="name" value="{{ var_item.name }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <input type="text" name="name" value="{{ param_item.name }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
                                         </div>
                                         <div>
                                             <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Type</label>
-                                            <select name="var_type" class="form-control" style="width: 100%; padding: 0.375rem;">
-                                                <option value="int"{% if var_item.var_type == "int" %} selected{% endif %}>int</option>
-                                                <option value="bool"{% if var_item.var_type == "bool" %} selected{% endif %}>bool</option>
-                                                <option value="color"{% if var_item.var_type == "color" %} selected{% endif %}>color</option>
-                                                <option value="point"{% if var_item.var_type == "point" %} selected{% endif %}>point</option>
-                                                <option value="string"{% if var_item.var_type == "string" %} selected{% endif %}>string</option>
+                                            <select name="param_type" class="form-control" style="width: 100%; padding: 0.375rem;">
+                                                <option value="int"{% if param_item.param_type == "int" %} selected{% endif %}>int</option>
+                                                <option value="bool"{% if param_item.param_type == "bool" %} selected{% endif %}>bool</option>
+                                                <option value="color"{% if param_item.param_type == "color" %} selected{% endif %}>color</option>
+                                                <option value="string"{% if param_item.param_type == "string" %} selected{% endif %}>string</option>
                                             </select>
                                         </div>
                                         <div>
+                                            <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Default Value</label>
+                                            <input type="text" name="default_value" value="{{ param_item.default_value }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
+                                        </div>
+                                        <div>
                                             <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Description</label>
-                                            <input type="text" name="description" value="{{ var_item.description }}" class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <input type="text" name="description" value="{{ param_item.description }}" class="form-control" style="width: 100%; padding: 0.375rem;">
                                         </div>
                                         <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem;">
                                             <button type="submit" class="btn btn-sm btn-primary">Save Changes</button>
@@ -131,7 +140,7 @@
                                 </div>
                             </details>
 
-                            <form method="post" action="/automations/{{ automation.id }}/variables/{{ var_item.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete variable «{{ var_item.name }}»?');">
+                            <form method="post" action="/automations/{{ automation.id }}/parameters/{{ param_item.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete parameter «{{ param_item.name }}»?');">
                                 {% call macros::csrf_field(csrf_token) %}
                                 <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
                             </form>
