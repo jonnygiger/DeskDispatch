@@ -3942,4 +3942,84 @@ mod tests {
         assert_eq!(q.search_width, Some(300));
         assert_eq!(q.search_height, Some(400));
     }
+
+    #[test]
+    fn test_step_mouse_click_template_rendering_literal_and_reference_toggles() {
+        use crate::auth::UserRole;
+
+        let dummy_user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf".to_string(),
+        };
+
+        let vars = vec![
+            VariableOption {
+                id: 10,
+                name: "var_x".to_string(),
+                var_type: "int".to_string(),
+            },
+            VariableOption {
+                id: 11,
+                name: "var_y".to_string(),
+                var_type: "int".to_string(),
+            },
+        ];
+
+        // 1. Fixed mode (Literal values)
+        let tmpl_fixed = StepMouseClickTemplate {
+            user: dummy_user.clone(),
+            csrf_token: "test_csrf".to_string(),
+            automation_id: 1,
+            step_id: None,
+            label: "Test Click".to_string(),
+            post_delay_seconds: 0.5,
+            x_mode: "fixed".to_string(),
+            x: Some(824),
+            x_variable_id: None,
+            y_mode: "fixed".to_string(),
+            y: Some(391),
+            y_variable_id: None,
+            button: "left".to_string(),
+            click_type: "single".to_string(),
+            variables: vars.clone(),
+            error: None,
+            is_edit: false,
+        };
+
+        let rendered_fixed = tmpl_fixed.render().unwrap();
+        assert!(rendered_fixed.contains("<select name=\"x_mode\""));
+        assert!(rendered_fixed.contains("<option value=\"fixed\" selected>Fixed Value</option>"));
+        assert!(rendered_fixed.contains("value=\"824\""));
+
+        // 2. Variable mode (Reference values)
+        let tmpl_var = StepMouseClickTemplate {
+            user: dummy_user,
+            csrf_token: "test_csrf".to_string(),
+            automation_id: 1,
+            step_id: Some(5),
+            label: "Edit Click".to_string(),
+            post_delay_seconds: 1.0,
+            x_mode: "variable".to_string(),
+            x: None,
+            x_variable_id: Some(10),
+            y_mode: "variable".to_string(),
+            y: None,
+            y_variable_id: Some(11),
+            button: "right".to_string(),
+            click_type: "double".to_string(),
+            variables: vars,
+            error: None,
+            is_edit: true,
+        };
+
+        let rendered_var = tmpl_var.render().unwrap();
+        assert!(rendered_var.contains("<select name=\"x_mode\""));
+        assert!(rendered_var.contains("<option value=\"variable\" selected>From Variable</option>"));
+        assert!(rendered_var.contains("var_x (int)"));
+        assert!(rendered_var.contains("var_y (int)"));
+    }
 }
