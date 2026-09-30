@@ -2449,6 +2449,101 @@ pub async fn post_create_step_handler(
             }
         };
 
+        let variables = fetch_automation_variables(&state.db, id).await;
+
+        if let Some(var_id) = form.output_found_variable_id {
+            if !variables.iter().any(|v| v.id == var_id) {
+                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindBitmapTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: None,
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        reference_bitmap_id: form.reference_bitmap_id,
+                        search_x: form.search_x,
+                        search_y: form.search_y,
+                        search_width: form.search_width,
+                        search_height: form.search_height,
+                        match_threshold: form.match_threshold.unwrap_or(0.95),
+                        output_found_variable_id: form.output_found_variable_id,
+                        output_x_variable_id: form.output_x_variable_id,
+                        output_y_variable_id: form.output_y_variable_id,
+                        bitmaps,
+                        variables,
+                        error: Some("Selected 'Is Found' output variable is invalid for this automation.".to_string()),
+                        is_edit: false,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+
+        if let Some(var_id) = form.output_x_variable_id {
+            if !variables.iter().any(|v| v.id == var_id) {
+                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindBitmapTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: None,
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        reference_bitmap_id: form.reference_bitmap_id,
+                        search_x: form.search_x,
+                        search_y: form.search_y,
+                        search_width: form.search_width,
+                        search_height: form.search_height,
+                        match_threshold: form.match_threshold.unwrap_or(0.95),
+                        output_found_variable_id: form.output_found_variable_id,
+                        output_x_variable_id: form.output_x_variable_id,
+                        output_y_variable_id: form.output_y_variable_id,
+                        bitmaps,
+                        variables,
+                        error: Some("Selected 'Found X' output variable is invalid for this automation.".to_string()),
+                        is_edit: false,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+
+        if let Some(var_id) = form.output_y_variable_id {
+            if !variables.iter().any(|v| v.id == var_id) {
+                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindBitmapTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: None,
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        reference_bitmap_id: form.reference_bitmap_id,
+                        search_x: form.search_x,
+                        search_y: form.search_y,
+                        search_width: form.search_width,
+                        search_height: form.search_height,
+                        match_threshold: form.match_threshold.unwrap_or(0.95),
+                        output_found_variable_id: form.output_found_variable_id,
+                        output_x_variable_id: form.output_x_variable_id,
+                        output_y_variable_id: form.output_y_variable_id,
+                        bitmaps,
+                        variables,
+                        error: Some("Selected 'Found Y' output variable is invalid for this automation.".to_string()),
+                        is_edit: false,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
         let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
@@ -3419,6 +3514,101 @@ pub async fn post_edit_step_handler(
             }
         };
 
+        let variables = fetch_automation_variables(&state.db, id).await;
+
+        if let Some(var_id) = form.output_found_variable_id {
+            if !variables.iter().any(|v| v.id == var_id) {
+                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindBitmapTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: Some(sid),
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        reference_bitmap_id: form.reference_bitmap_id,
+                        search_x: form.search_x,
+                        search_y: form.search_y,
+                        search_width: form.search_width,
+                        search_height: form.search_height,
+                        match_threshold: form.match_threshold.unwrap_or(0.95),
+                        output_found_variable_id: form.output_found_variable_id,
+                        output_x_variable_id: form.output_x_variable_id,
+                        output_y_variable_id: form.output_y_variable_id,
+                        bitmaps,
+                        variables,
+                        error: Some("Selected 'Is Found' output variable is invalid for this automation.".to_string()),
+                        is_edit: true,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+
+        if let Some(var_id) = form.output_x_variable_id {
+            if !variables.iter().any(|v| v.id == var_id) {
+                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindBitmapTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: Some(sid),
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        reference_bitmap_id: form.reference_bitmap_id,
+                        search_x: form.search_x,
+                        search_y: form.search_y,
+                        search_width: form.search_width,
+                        search_height: form.search_height,
+                        match_threshold: form.match_threshold.unwrap_or(0.95),
+                        output_found_variable_id: form.output_found_variable_id,
+                        output_x_variable_id: form.output_x_variable_id,
+                        output_y_variable_id: form.output_y_variable_id,
+                        bitmaps,
+                        variables,
+                        error: Some("Selected 'Found X' output variable is invalid for this automation.".to_string()),
+                        is_edit: true,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+
+        if let Some(var_id) = form.output_y_variable_id {
+            if !variables.iter().any(|v| v.id == var_id) {
+                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindBitmapTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: Some(sid),
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        reference_bitmap_id: form.reference_bitmap_id,
+                        search_x: form.search_x,
+                        search_y: form.search_y,
+                        search_width: form.search_width,
+                        search_height: form.search_height,
+                        match_threshold: form.match_threshold.unwrap_or(0.95),
+                        output_found_variable_id: form.output_found_variable_id,
+                        output_x_variable_id: form.output_x_variable_id,
+                        output_y_variable_id: form.output_y_variable_id,
+                        bitmaps,
+                        variables,
+                        error: Some("Selected 'Found Y' output variable is invalid for this automation.".to_string()),
+                        is_edit: true,
+                    }),
+                )
+                    .into_response();
+            }
+        }
+
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
         let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
@@ -4208,5 +4398,103 @@ mod tests {
         assert!(rendered.contains("<select name=\"output_variable_id\""));
         assert!(rendered.contains("bg_color (color)"));
         assert!(rendered.contains("selected"));
+    }
+
+    #[test]
+    fn test_step_find_bitmap_template_rendering_with_output_variables() {
+        use crate::auth::UserRole;
+
+        let dummy_user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf".to_string(),
+        };
+
+        let vars = vec![
+            VariableOption {
+                id: 10,
+                name: "is_found".to_string(),
+                var_type: "bool".to_string(),
+            },
+            VariableOption {
+                id: 11,
+                name: "pos_x".to_string(),
+                var_type: "int".to_string(),
+            },
+            VariableOption {
+                id: 12,
+                name: "pos_y".to_string(),
+                var_type: "int".to_string(),
+            },
+        ];
+
+        let bitmaps = vec![
+            BitmapOption {
+                id: 1,
+                name: "login_button.png".to_string(),
+                width: 100,
+                height: 40,
+            },
+        ];
+
+        let tmpl = StepFindBitmapTemplate {
+            user: dummy_user,
+            csrf_token: "test_csrf".to_string(),
+            automation_id: 1,
+            step_id: Some(3),
+            label: "Find Login".to_string(),
+            post_delay_seconds: 0.2,
+            reference_bitmap_id: Some(1),
+            search_x: Some(10),
+            search_y: Some(20),
+            search_width: Some(300),
+            search_height: Some(200),
+            match_threshold: 0.95,
+            output_found_variable_id: Some(10),
+            output_x_variable_id: Some(11),
+            output_y_variable_id: Some(12),
+            bitmaps,
+            variables: vars,
+            error: None,
+            is_edit: true,
+        };
+
+        let rendered = tmpl.render().unwrap();
+        assert!(rendered.contains("output_found_variable_id"));
+        assert!(rendered.contains("output_x_variable_id"));
+        assert!(rendered.contains("output_y_variable_id"));
+        assert!(rendered.contains("is_found (bool)"));
+        assert!(rendered.contains("pos_x (int)"));
+        assert!(rendered.contains("pos_y (int)"));
+        assert!(rendered.contains("selected"));
+    }
+
+    #[test]
+    fn test_find_bitmap_output_variables_validation() {
+        let vars = vec![
+            VariableOption {
+                id: 10,
+                name: "found_var".to_string(),
+                var_type: "bool".to_string(),
+            },
+            VariableOption {
+                id: 11,
+                name: "x_var".to_string(),
+                var_type: "int".to_string(),
+            },
+        ];
+
+        let valid_found = Some(10);
+        let invalid_found = Some(999);
+        let valid_x = Some(11);
+        let invalid_x = Some(888);
+
+        assert!(vars.iter().any(|v| Some(v.id) == valid_found));
+        assert!(!vars.iter().any(|v| Some(v.id) == invalid_found));
+        assert!(vars.iter().any(|v| Some(v.id) == valid_x));
+        assert!(!vars.iter().any(|v| Some(v.id) == invalid_x));
     }
 }
