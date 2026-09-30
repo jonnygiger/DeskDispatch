@@ -706,6 +706,51 @@ pub fn validate_parameter_default_value(param_type: &str, default_value: &str) -
     Ok(())
 }
 
+/// Validates that exactly one of a literal value or a variable reference ID is provided.
+/// Returns `Ok((final_literal, final_variable))` if valid, where exactly one is `Some(...)`
+/// and the other is `None`, or `Err(String)` if validation fails.
+pub fn validate_literal_or_reference<T>(
+    mode: Option<&str>,
+    literal: Option<T>,
+    variable_id: Option<i64>,
+    field_name: &str,
+) -> Result<(Option<T>, Option<i64>), String> {
+    let var_id = variable_id.filter(|&v| v > 0);
+    let effective_mode = match mode {
+        Some("variable") => "variable",
+        Some("fixed") => "fixed",
+        _ => {
+            if literal.is_some() && var_id.is_none() {
+                "fixed"
+            } else if literal.is_none() && var_id.is_some() {
+                "variable"
+            } else if literal.is_some() && var_id.is_some() {
+                return Err(format!("Cannot specify both a fixed value and a variable for {}.", field_name));
+            } else {
+                return Err(format!("Please specify either a fixed value or a variable for {}.", field_name));
+            }
+        }
+    };
+
+    match effective_mode {
+        "variable" => {
+            if let Some(vid) = var_id {
+                Ok((None, Some(vid)))
+            } else {
+                Err(format!("Please select a valid variable for {}.", field_name))
+            }
+        }
+        "fixed" => {
+            if let Some(val) = literal {
+                Ok((Some(val), None))
+            } else {
+                Err(format!("Please provide a fixed value for {}.", field_name))
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
 /// GET /automations/{id}/variables
 pub async fn get_automation_variables_handler(
     State(state): State<AppState>,
@@ -2484,17 +2529,56 @@ pub async fn post_create_step_handler(
         || (form.x_mode.is_some() || form.x_variable_id.is_some() || form.y_variable_id.is_some());
 
     if is_mouse_click {
-        let x_mode = form.x_mode.unwrap_or_else(|| "fixed".to_string());
-        let y_mode = form.y_mode.unwrap_or_else(|| "fixed".to_string());
+        let x_res = validate_literal_or_reference(
+            form.x_mode.as_deref(),
+            form.x,
+            form.x_variable_id,
+            "X coordinate",
+        );
+        let y_res = validate_literal_or_reference(
+            form.y_mode.as_deref(),
+            form.y,
+            form.y_variable_id,
+            "Y coordinate",
+        );
 
-        let (final_x, final_x_var) = match x_mode.as_str() {
-            "variable" => (None, form.x_variable_id),
-            _ => (form.x, None),
-        };
-
-        let (final_y, final_y_var) = match y_mode.as_str() {
-            "variable" => (None, form.y_variable_id),
-            _ => (form.y, None),
+        let (final_x, final_x_var, final_y, final_y_var) = match (x_res, y_res) {
+            (Ok((fx, fx_v)), Ok((fy, fy_v))) => (fx, fx_v, fy, fy_v),
+            (Err(e), _) | (_, Err(e)) => {
+                let variables = fetch_automation_variables(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepMouseClickTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: None,
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
+                        x: form.x,
+                        x_variable_id: form.x_variable_id,
+                        y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
+                        y: form.y,
+                        y_variable_id: form.y_variable_id,
+                        button: match form.button.as_deref() {
+                            Some("right") => "right",
+                            Some("middle") => "middle",
+                            _ => "left",
+                        }
+                        .to_string(),
+                        click_type: match form.click_type.as_deref() {
+                            Some("double") => "double",
+                            _ => "single",
+                        }
+                        .to_string(),
+                        variables,
+                        error: Some(e),
+                        is_edit: false,
+                    }),
+                )
+                    .into_response();
+            }
         };
 
         let button = match form.button.as_deref() {
@@ -2509,40 +2593,6 @@ pub async fn post_create_step_handler(
             _ => "single",
         }
         .to_string();
-
-        let mut err = None;
-        if final_x.is_none() && final_x_var.is_none() {
-            err = Some("Please provide a fixed X coordinate or select an X variable.".to_string());
-        } else if final_y.is_none() && final_y_var.is_none() {
-            err = Some("Please provide a fixed Y coordinate or select a Y variable.".to_string());
-        }
-
-        if let Some(error_msg) = err {
-            let variables = fetch_automation_variables(&state.db, id).await;
-            return (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepMouseClickTemplate {
-                    user,
-                    csrf_token,
-                    automation_id: id,
-                    step_id: None,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    x_mode,
-                    x: form.x,
-                    x_variable_id: form.x_variable_id,
-                    y_mode,
-                    y: form.y,
-                    y_variable_id: form.y_variable_id,
-                    button,
-                    click_type,
-                    variables,
-                    error: Some(error_msg),
-                    is_edit: false,
-                }),
-            )
-                .into_response();
-        }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
         let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
@@ -3394,17 +3444,56 @@ pub async fn post_edit_step_handler(
     }
 
     if step_type == "mouse_click" {
-        let x_mode = form.x_mode.unwrap_or_else(|| "fixed".to_string());
-        let y_mode = form.y_mode.unwrap_or_else(|| "fixed".to_string());
+        let x_res = validate_literal_or_reference(
+            form.x_mode.as_deref(),
+            form.x,
+            form.x_variable_id,
+            "X coordinate",
+        );
+        let y_res = validate_literal_or_reference(
+            form.y_mode.as_deref(),
+            form.y,
+            form.y_variable_id,
+            "Y coordinate",
+        );
 
-        let (final_x, final_x_var) = match x_mode.as_str() {
-            "variable" => (None, form.x_variable_id),
-            _ => (form.x, None),
-        };
-
-        let (final_y, final_y_var) = match y_mode.as_str() {
-            "variable" => (None, form.y_variable_id),
-            _ => (form.y, None),
+        let (final_x, final_x_var, final_y, final_y_var) = match (x_res, y_res) {
+            (Ok((fx, fx_v)), Ok((fy, fy_v))) => (fx, fx_v, fy, fy_v),
+            (Err(e), _) | (_, Err(e)) => {
+                let variables = fetch_automation_variables(&state.db, id).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepMouseClickTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: Some(sid),
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
+                        x: form.x,
+                        x_variable_id: form.x_variable_id,
+                        y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
+                        y: form.y,
+                        y_variable_id: form.y_variable_id,
+                        button: match form.button.as_deref() {
+                            Some("right") => "right",
+                            Some("middle") => "middle",
+                            _ => "left",
+                        }
+                        .to_string(),
+                        click_type: match form.click_type.as_deref() {
+                            Some("double") => "double",
+                            _ => "single",
+                        }
+                        .to_string(),
+                        variables,
+                        error: Some(e),
+                        is_edit: true,
+                    }),
+                )
+                    .into_response();
+            }
         };
 
         let button = match form.button.as_deref() {
@@ -3419,40 +3508,6 @@ pub async fn post_edit_step_handler(
             _ => "single",
         }
         .to_string();
-
-        let mut err = None;
-        if final_x.is_none() && final_x_var.is_none() {
-            err = Some("Please provide a fixed X coordinate or select an X variable.".to_string());
-        } else if final_y.is_none() && final_y_var.is_none() {
-            err = Some("Please provide a fixed Y coordinate or select a Y variable.".to_string());
-        }
-
-        if let Some(error_msg) = err {
-            let variables = fetch_automation_variables(&state.db, id).await;
-            return (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepMouseClickTemplate {
-                    user,
-                    csrf_token,
-                    automation_id: id,
-                    step_id: Some(sid),
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    x_mode,
-                    x: form.x,
-                    x_variable_id: form.x_variable_id,
-                    y_mode,
-                    y: form.y,
-                    y_variable_id: form.y_variable_id,
-                    button,
-                    click_type,
-                    variables,
-                    error: Some(error_msg),
-                    is_edit: true,
-                }),
-            )
-                .into_response();
-        }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
         let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
@@ -3755,6 +3810,48 @@ pub async fn compact_positions(db: &PgPool, automation_id: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_validate_literal_or_reference() {
+        // 1. Mode "fixed" with literal value present -> Ok((Some(val), None))
+        let r1 = validate_literal_or_reference(Some("fixed"), Some(824), None, "X coordinate");
+        assert_eq!(r1, Ok((Some(824), None)));
+
+        // 2. Mode "fixed" with missing literal -> Err
+        let r2 = validate_literal_or_reference::<i32>(Some("fixed"), None, None, "X coordinate");
+        assert!(r2.is_err());
+        assert!(r2.unwrap_err().contains("Please provide a fixed value for X coordinate."));
+
+        // 3. Mode "variable" with valid variable ID (> 0) -> Ok((None, Some(var_id)))
+        let r3 = validate_literal_or_reference::<i32>(Some("variable"), None, Some(10), "X coordinate");
+        assert_eq!(r3, Ok((None, Some(10))));
+
+        // 4. Mode "variable" with invalid variable ID (None or <= 0) -> Err
+        let r4 = validate_literal_or_reference::<i32>(Some("variable"), None, Some(0), "X coordinate");
+        assert!(r4.is_err());
+        assert!(r4.unwrap_err().contains("Please select a valid variable for X coordinate."));
+
+        let r5 = validate_literal_or_reference::<i32>(Some("variable"), None, None, "X coordinate");
+        assert!(r5.is_err());
+
+        // 5. Unspecified mode with only literal -> Ok((Some(val), None))
+        let r6 = validate_literal_or_reference(None, Some(100), None, "X coordinate");
+        assert_eq!(r6, Ok((Some(100), None)));
+
+        // 6. Unspecified mode with only variable ID -> Ok((None, Some(var_id)))
+        let r7 = validate_literal_or_reference::<i32>(None, None, Some(15), "X coordinate");
+        assert_eq!(r7, Ok((None, Some(15))));
+
+        // 7. Unspecified mode with both literal and variable ID -> Err
+        let r8 = validate_literal_or_reference(None, Some(100), Some(15), "X coordinate");
+        assert!(r8.is_err());
+        assert!(r8.unwrap_err().contains("Cannot specify both a fixed value and a variable for X coordinate."));
+
+        // 8. Unspecified mode with neither literal nor variable ID -> Err
+        let r9 = validate_literal_or_reference::<i32>(None, None, None, "X coordinate");
+        assert!(r9.is_err());
+        assert!(r9.unwrap_err().contains("Please specify either a fixed value or a variable for X coordinate."));
+    }
 
     #[test]
     fn test_is_valid_param_type() {
