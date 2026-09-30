@@ -2286,8 +2286,9 @@ pub async fn post_create_step_handler(
     if step_type_str == "find_pixel_rgb" {
         let (final_x, final_y) = (form.x, form.y);
 
+        let variables = fetch_automation_variables(&state.db, id).await;
+
         if final_x.is_none() || final_y.is_none() {
-            let variables = fetch_automation_variables(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindPixelRgbTemplate {
@@ -2306,6 +2307,29 @@ pub async fn post_create_step_handler(
                 }),
             )
                 .into_response();
+        }
+
+        if let Some(out_var_id) = form.output_variable_id {
+            if !variables.iter().any(|v| v.id == out_var_id) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindPixelRgbTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: None,
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        x: form.x,
+                        y: form.y,
+                        output_variable_id: form.output_variable_id,
+                        variables,
+                        error: Some("Selected output variable is invalid for this automation.".to_string()),
+                        is_edit: false,
+                    }),
+                )
+                    .into_response();
+            }
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
@@ -3261,8 +3285,9 @@ pub async fn post_edit_step_handler(
     if step_type == "find_pixel_rgb" {
         let (final_x, final_y) = (form.x, form.y);
 
+        let variables = fetch_automation_variables(&state.db, id).await;
+
         if final_x.is_none() || final_y.is_none() {
-            let variables = fetch_automation_variables(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindPixelRgbTemplate {
@@ -3281,6 +3306,29 @@ pub async fn post_edit_step_handler(
                 }),
             )
                 .into_response();
+        }
+
+        if let Some(out_var_id) = form.output_variable_id {
+            if !variables.iter().any(|v| v.id == out_var_id) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    HtmlTemplate(StepFindPixelRgbTemplate {
+                        user,
+                        csrf_token,
+                        automation_id: id,
+                        step_id: Some(sid),
+                        label: form.label.unwrap_or_default(),
+                        post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                        x: form.x,
+                        y: form.y,
+                        output_variable_id: form.output_variable_id,
+                        variables,
+                        error: Some("Selected output variable is invalid for this automation.".to_string()),
+                        is_edit: true,
+                    }),
+                )
+                    .into_response();
+            }
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
@@ -4118,5 +4166,47 @@ mod tests {
         assert!(rendered_var.contains("<option value=\"variable\" selected>From Variable</option>"));
         assert!(rendered_var.contains("var_x (int)"));
         assert!(rendered_var.contains("var_y (int)"));
+    }
+
+    #[test]
+    fn test_step_find_pixel_rgb_template_rendering() {
+        use crate::auth::UserRole;
+
+        let dummy_user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf".to_string(),
+        };
+
+        let vars = vec![
+            VariableOption {
+                id: 10,
+                name: "bg_color".to_string(),
+                var_type: "color".to_string(),
+            },
+        ];
+
+        let tmpl = StepFindPixelRgbTemplate {
+            user: dummy_user,
+            csrf_token: "test_csrf".to_string(),
+            automation_id: 1,
+            step_id: Some(2),
+            label: "Sample Pixel".to_string(),
+            post_delay_seconds: 0.5,
+            x: Some(100),
+            y: Some(200),
+            output_variable_id: Some(10),
+            variables: vars,
+            error: None,
+            is_edit: true,
+        };
+
+        let rendered = tmpl.render().unwrap();
+        assert!(rendered.contains("<select name=\"output_variable_id\""));
+        assert!(rendered.contains("bg_color (color)"));
+        assert!(rendered.contains("selected"));
     }
 }
