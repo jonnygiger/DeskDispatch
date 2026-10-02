@@ -1942,6 +1942,63 @@ pub async fn post_automation_delete_handler(
     Redirect::to("/automations").into_response()
 }
 
+/// POST /automations/{id}/run-now
+pub async fn post_run_now_automation_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    if !user.role.can_edit() {
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
+
+    let automation_exists = match sqlx::query("SELECT id FROM automations WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(_)) => true,
+        _ => false,
+    };
+
+    if !automation_exists {
+        return Redirect::to("/automations").into_response();
+    }
+
+    let run_res = sqlx::query(
+        r#"
+        INSERT INTO task_runs (automation_id, schedule_id, worker_id, status, triggered_by_user_id, queued_at)
+        VALUES ($1, NULL, NULL, 'queued', $2, now())
+        RETURNING id
+        "#,
+    )
+    .bind(id)
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await;
+
+    match run_res {
+        Ok(row) => {
+            let task_run_id: i64 = row.get("id");
+            tracing::info!("Manually queued task run {} for automation {}", task_run_id, id);
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "trigger_run_now",
+                "task_run",
+                Some(task_run_id),
+                Some(serde_json::json!({ "automation_id": id })),
+            )
+            .await;
+        }
+        Err(e) => {
+            tracing::error!("Failed to queue manual task run for automation {}: {}", id, e);
+        }
+    }
+
+    Redirect::to(&format!("/automations/{}", id)).into_response()
+}
+
 /// GET /automations/{id}/steps/new
 pub async fn get_step_type_picker_handler(user: AuthUser, Path(id): Path<i64>) -> impl IntoResponse {
     HtmlTemplate(StepTypePickerTemplate {
@@ -4532,5 +4589,44 @@ mod tests {
             "single",
         );
         assert_eq!(summary3, "Click (500, «target_y») [middle, single]");
+    }
+
+    #[test]
+    fn test_automation_detail_template_renders_run_now_button() {
+        use crate::auth::UserRole;
+
+        let dummy_user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf_token".to_string(),
+        };
+
+        let automation = AutomationDetail {
+            id: 42,
+            name: "Test Automation".to_string(),
+            description: "Test Description".to_string(),
+            status: "active".to_string(),
+            created_by: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let template = AutomationDetailTemplate {
+            user: dummy_user,
+            csrf_token: "test_csrf_token".to_string(),
+            automation,
+            steps: vec![],
+            active_tab: "steps".to_string(),
+            error: None,
+            success: None,
+        };
+
+        let rendered = template.render().unwrap();
+        assert!(rendered.contains("action=\"/automations/42/run-now\""));
+        assert!(rendered.contains("Run Now"));
+        assert!(rendered.contains("test_csrf_token"));
     }
 }
