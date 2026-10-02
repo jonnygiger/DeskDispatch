@@ -45,6 +45,37 @@ impl WorkerPcItem {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthUser;
+
+    #[test]
+    fn test_worker_new_template_rendering() {
+        let user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: crate::auth::UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf_token".to_string(),
+        };
+
+        let tmpl = WorkerNewTemplate {
+            user,
+            hostname: "worker-01.local".to_string(),
+            display_name: "Worker 1".to_string(),
+            error: Some("Test error message".to_string()),
+        };
+
+        let rendered = tmpl.render().expect("Failed to render WorkerNewTemplate");
+        assert!(rendered.contains("Register New Task Worker PC"));
+        assert!(rendered.contains("worker-01.local"));
+        assert!(rendered.contains("Worker 1"));
+        assert!(rendered.contains("Test error message"));
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkerGroupItem {
     pub id: i64,
@@ -124,6 +155,15 @@ impl WorkerDetail {
 // Templates
 
 #[derive(Template)]
+#[template(path = "workers/new.html")]
+pub struct WorkerNewTemplate {
+    pub user: crate::auth::AuthUser,
+    pub hostname: String,
+    pub display_name: String,
+    pub error: Option<String>,
+}
+
+#[derive(Template)]
 #[template(path = "workers/index.html")]
 pub struct WorkersIndexTemplate {
     pub user: crate::auth::AuthUser,
@@ -176,6 +216,12 @@ impl WorkerGroupFormTemplate {
 // Form payloads
 
 #[derive(Deserialize)]
+pub struct WorkerCreateForm {
+    pub hostname: String,
+    pub display_name: String,
+}
+
+#[derive(Deserialize)]
 pub struct WorkerEditForm {
     pub hostname: String,
     pub display_name: String,
@@ -192,6 +238,84 @@ pub struct WorkerGroupForm {
 }
 
 // Handlers
+
+pub async fn get_new_worker_handler(
+    RequireAdmin(user): RequireAdmin,
+) -> impl IntoResponse {
+    HtmlTemplate(WorkerNewTemplate {
+        user,
+        hostname: String::new(),
+        display_name: String::new(),
+        error: None,
+    })
+    .into_response()
+}
+
+pub async fn post_create_worker_handler(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Form(form): Form<WorkerCreateForm>,
+) -> impl IntoResponse {
+    let hostname = form.hostname.trim();
+    let display_name = form.display_name.trim();
+
+    if hostname.is_empty() || display_name.is_empty() {
+        return HtmlTemplate(WorkerNewTemplate {
+            user,
+            hostname: hostname.to_string(),
+            display_name: display_name.to_string(),
+            error: Some("Hostname and Display Name are required.".to_string()),
+        })
+        .into_response();
+    }
+
+    let token = uuid::Uuid::new_v4().to_string();
+    let empty_api_key_hash: Vec<u8> = Vec::new();
+
+    let row = sqlx::query(
+        r#"
+        INSERT INTO task_worker_pcs (hostname, display_name, api_key_hash, registration_token, status)
+        VALUES ($1, $2, $3, $4, 'offline')
+        RETURNING id
+        "#,
+    )
+    .bind(hostname)
+    .bind(display_name)
+    .bind(&empty_api_key_hash)
+    .bind(&token)
+    .fetch_one(&state.db)
+    .await;
+
+    let worker_id: i64 = match row {
+        Ok(r) => r.get("id"),
+        Err(e) => {
+            tracing::error!("Failed to create task_worker_pc: {}", e);
+            return HtmlTemplate(WorkerNewTemplate {
+                user,
+                hostname: hostname.to_string(),
+                display_name: display_name.to_string(),
+                error: Some("Failed to register worker PC in database.".to_string()),
+            })
+            .into_response();
+        }
+    };
+
+    let _ = log_audit(
+        &state.db,
+        Some(user.id),
+        "create",
+        "task_worker_pc",
+        Some(worker_id),
+        Some(serde_json::json!({
+            "hostname": hostname,
+            "display_name": display_name,
+            "registration_token": token,
+        })),
+    )
+    .await;
+
+    Redirect::to(&format!("/workers/{}", worker_id)).into_response()
+}
 
 pub async fn get_workers_handler(
     State(state): State<AppState>,

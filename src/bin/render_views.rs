@@ -269,6 +269,14 @@ fn main() {
     };
     fs::write("rendered_templates/workers_detail.html", worker_detail_tmpl.render().unwrap()).unwrap();
 
+    let worker_new_tmpl = WorkerNewTemplate {
+        user: user.clone(),
+        hostname: "pc-warehouse-02.local".to_string(),
+        display_name: "Warehouse Worker PC 2".to_string(),
+        error: None,
+    };
+    fs::write("rendered_templates/workers_new.html", worker_new_tmpl.render().unwrap()).unwrap();
+
     let worker_edit_tmpl = WorkerEditTemplate {
         user: user.clone(),
         worker: worker_detail,
