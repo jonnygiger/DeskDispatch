@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>
+Edit Worker Group: Warehouse Fleet - DeskDispatch
+</title>
+    <link rel="stylesheet" href="/static/style.css">
+
+</head>
+<body>
+
+
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+    <ul class="top-nav-menu">
+        <li><a href="/" >Dashboard</a></li>
+        <li><a href="/automations" >Automations</a></li>
+        <li><a href="/schedules" >Schedules</a></li>
+        <li><a href="/runs" >Runs</a></li>
+        <li><a href="/workers" class="active">Workers</a></li>
+
+        <li><a href="/users" >Users</a></li>
+
+    </ul>
+    <div class="top-nav-user">
+        <a href="/account" >Admin User</a>
+        <form method="post" action="/logout" style="display:inline;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
+        </form>
+    </div>
+</header>
+
+
+
+    <div class="app-container">
+
+        <main class="main-content">
+
+<div class="dashboard-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+        <h1 class="dashboard-title" style="margin: 0;">
+            Edit Worker Group
+        </h1>
+        <p style="color: var(--color-text-muted); margin-top: 0.25rem;">
+            Update details and members for group 'Warehouse Fleet'.
+        </p>
+    </div>
+    <a href="/workers" class="btn btn-outline">&larr; Back to Workers</a>
+</div>
+
+
+
+<div class="card" style="max-width: 600px;">
+    <form method="post"
+
+
+            action="/worker-groups/1"
+
+
+        style="display: flex; flex-direction: column; gap: 1.25rem;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+
+        <div>
+            <label for="name" style="display: block; font-weight: 600; margin-bottom: 0.375rem;">Group Name</label>
+            <input type="text" id="name" name="name" value="Warehouse Fleet" required placeholder="e.g. Warehouse-Line-1, QA-Fleet" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+        </div>
+
+        <div>
+            <label for="description" style="display: block; font-weight: 600; margin-bottom: 0.375rem;">Description</label>
+            <textarea id="description" name="description" rows="3" placeholder="Optional description of the worker group's purpose" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">PCs in warehouse</textarea>
+        </div>
+
+        <div>
+            <label style="display: block; font-weight: 600; margin-bottom: 0.375rem;">Group Member Workers</label>
+
+                <div style="display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--color-border); padding: 0.75rem; border-radius: 4px; max-height: 200px; overflow-y: auto;">
+
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" name="worker_ids" value="1" checked>
+                        <span style="font-weight: 500;">Warehouse Worker PC</span>
+                        <span style="color: var(--color-text-muted); font-size: 0.8125rem;">(pc-warehouse-01)</span>
+                    </label>
+
+                </div>
+
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem;">
+            <a href="/workers" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">
+                Save Changes
+            </button>
+        </div>
+    </form>
+</div>
+
+        </main>
+    </div>
+
+    <footer class="footer">
+
+        &copy; DeskDispatch — Task Server
+
+    </footer>
+</body>
+</html>

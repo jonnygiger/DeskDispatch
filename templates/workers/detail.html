@@ -1,0 +1,117 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Worker: {{ worker.display_name }} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "workers") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <h1 class="dashboard-title" style="margin: 0;">{{ worker.display_name }}</h1>
+            <span class="badge {{ worker.status_badge_class() }}">{{ worker.status }}</span>
+        </div>
+        <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Hostname: <code>{{ worker.hostname }}</code></p>
+    </div>
+    <div style="display: flex; gap: 0.75rem;">
+        <a href="/workers" class="btn btn-outline">&larr; Back to Workers</a>
+        {% if user.role.is_admin() %}
+        <a href="/workers/{{ worker.id }}/edit" class="btn btn-primary">Edit Worker</a>
+        <form method="post" action="/workers/{{ worker.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker {{ worker.display_name }}?');">
+            {% call macros::csrf_field(user.csrf_token) %}
+            <button type="submit" class="btn btn-danger-outline">Delete Worker</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% if let Some(err) = error %}
+<div class="alert alert-danger" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 4px;">
+    {{ err }}
+</div>
+{% endif %}
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+    <!-- System Info Card -->
+    <div class="card">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">System Information</h2>
+        <dl style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.75rem 1rem; margin: 0;">
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Worker ID:</dt>
+            <dd style="margin: 0;">#{{ worker.id }}</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Hostname:</dt>
+            <dd style="margin: 0;"><code>{{ worker.hostname }}</code></dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Display Name:</dt>
+            <dd style="margin: 0;">{{ worker.display_name }}</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Status:</dt>
+            <dd style="margin: 0;"><span class="badge {{ worker.status_badge_class() }}">{{ worker.status }}</span></dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Last Heartbeat:</dt>
+            <dd style="margin: 0;">{{ worker.formatted_last_heartbeat() }}</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Screen Resolution:</dt>
+            <dd style="margin: 0;">
+                {% if let Some(w) = worker.screen_width %}
+                    {% if let Some(h) = worker.screen_height %}
+                        {{ w }} &times; {{ h }}
+                    {% else %}
+                        Unknown
+                    {% endif %}
+                {% else %}
+                    Unknown
+                {% endif %}
+            </dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Operating System:</dt>
+            <dd style="margin: 0;">
+                {% if let Some(os) = worker.os_info.as_deref() %}
+                    {{ os }}
+                {% else %}
+                    <span style="color: var(--color-text-muted);">Not reported</span>
+                {% endif %}
+            </dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Agent Version:</dt>
+            <dd style="margin: 0;">
+                {% if let Some(ver) = worker.agent_version.as_deref() %}
+                    <code>{{ ver }}</code>
+                {% else %}
+                    <span style="color: var(--color-text-muted);">Not reported</span>
+                {% endif %}
+            </dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Registered At:</dt>
+            <dd style="margin: 0;">{{ worker.formatted_created_at() }}</dd>
+
+            {% if let Some(token) = worker.registration_token.as_deref() %}
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Registration Token:</dt>
+            <dd style="margin: 0;"><code>{{ token }}</code> (pending activation)</dd>
+            {% endif %}
+        </dl>
+    </div>
+
+    <!-- Assigned Groups Card -->
+    <div class="card">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">Assigned Groups</h2>
+        {% if worker.groups.is_empty() %}
+            <p style="color: var(--color-text-muted); font-size: 0.875rem;">This worker is not assigned to any group.</p>
+        {% else %}
+            <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem;">
+                {% for g in worker.groups %}
+                <li style="padding: 0.5rem; background: var(--color-bg-secondary); border-radius: 4px; border: 1px solid var(--color-border);">
+                    <div style="font-weight: 600;">{{ g.name }}</div>
+                    {% if !g.description.is_empty() %}
+                    <div style="font-size: 0.8125rem; color: var(--color-text-muted);">{{ g.description }}</div>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

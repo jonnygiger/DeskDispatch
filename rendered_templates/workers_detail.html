@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Worker: Warehouse Worker PC - DeskDispatch</title>
+    <link rel="stylesheet" href="/static/style.css">
+
+</head>
+<body>
+
+
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+    <ul class="top-nav-menu">
+        <li><a href="/" >Dashboard</a></li>
+        <li><a href="/automations" >Automations</a></li>
+        <li><a href="/schedules" >Schedules</a></li>
+        <li><a href="/runs" >Runs</a></li>
+        <li><a href="/workers" class="active">Workers</a></li>
+
+        <li><a href="/users" >Users</a></li>
+
+    </ul>
+    <div class="top-nav-user">
+        <a href="/account" >Admin User</a>
+        <form method="post" action="/logout" style="display:inline;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
+        </form>
+    </div>
+</header>
+
+
+
+    <div class="app-container">
+
+        <main class="main-content">
+
+<div class="dashboard-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <h1 class="dashboard-title" style="margin: 0;">Warehouse Worker PC</h1>
+            <span class="badge badge-success">online</span>
+        </div>
+        <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Hostname: <code>pc-warehouse-01</code></p>
+    </div>
+    <div style="display: flex; gap: 0.75rem;">
+        <a href="/workers" class="btn btn-outline">&larr; Back to Workers</a>
+
+        <a href="/workers/1/edit" class="btn btn-primary">Edit Worker</a>
+        <form method="post" action="/workers/1/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker Warehouse Worker PC?');">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-danger-outline">Delete Worker</button>
+        </form>
+
+    </div>
+</div>
+
+
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+    <!-- System Info Card -->
+    <div class="card">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">System Information</h2>
+        <dl style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.75rem 1rem; margin: 0;">
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Worker ID:</dt>
+            <dd style="margin: 0;">#1</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Hostname:</dt>
+            <dd style="margin: 0;"><code>pc-warehouse-01</code></dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Display Name:</dt>
+            <dd style="margin: 0;">Warehouse Worker PC</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Status:</dt>
+            <dd style="margin: 0;"><span class="badge badge-success">online</span></dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Last Heartbeat:</dt>
+            <dd style="margin: 0;">2026-10-02 20:06:07 UTC</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Screen Resolution:</dt>
+            <dd style="margin: 0;">
+
+
+                        1920 &times; 1080
+
+
+            </dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Operating System:</dt>
+            <dd style="margin: 0;">
+
+                    Windows 11
+
+            </dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Agent Version:</dt>
+            <dd style="margin: 0;">
+
+                    <code>v2.1.0</code>
+
+            </dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Registered At:</dt>
+            <dd style="margin: 0;">2026-10-02 20:06:07 UTC</dd>
+
+
+        </dl>
+    </div>
+
+    <!-- Assigned Groups Card -->
+    <div class="card">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">Assigned Groups</h2>
+
+            <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem;">
+
+                <li style="padding: 0.5rem; background: var(--color-bg-secondary); border-radius: 4px; border: 1px solid var(--color-border);">
+                    <div style="font-weight: 600;">Warehouse Fleet</div>
+
+                    <div style="font-size: 0.8125rem; color: var(--color-text-muted);">PCs in warehouse</div>
+
+                </li>
+
+            </ul>
+
+    </div>
+</div>
+
+        </main>
+    </div>
+
+    <footer class="footer">
+
+        &copy; DeskDispatch — Task Server
+
+    </footer>
+</body>
+</html>

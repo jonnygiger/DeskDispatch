@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workers & Groups - DeskDispatch</title>
+    <link rel="stylesheet" href="/static/style.css">
+
+</head>
+<body>
+
+
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+    <ul class="top-nav-menu">
+        <li><a href="/" >Dashboard</a></li>
+        <li><a href="/automations" >Automations</a></li>
+        <li><a href="/schedules" >Schedules</a></li>
+        <li><a href="/runs" >Runs</a></li>
+        <li><a href="/workers" class="active">Workers</a></li>
+
+        <li><a href="/users" >Users</a></li>
+
+    </ul>
+    <div class="top-nav-user">
+        <a href="/account" >Admin User</a>
+        <form method="post" action="/logout" style="display:inline;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
+        </form>
+    </div>
+</header>
+
+
+
+    <div class="app-container">
+
+        <main class="main-content">
+
+<div class="dashboard-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+        <h1 class="dashboard-title" style="margin: 0;">Task Worker PCs & Groups</h1>
+        <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Manage registered task workers and group assignments.</p>
+    </div>
+
+    <div style="display: flex; gap: 0.75rem;">
+        <a href="/worker-groups/new" class="btn btn-outline">+ New Worker Group</a>
+    </div>
+
+</div>
+
+<!-- Task Worker PCs Table -->
+<div class="card" style="margin-bottom: 2rem; padding: 0; overflow: hidden;">
+    <div style="padding: 1rem 1.25rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin: 0;">Worker PCs</h2>
+    </div>
+
+        <table class="table" style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <th style="padding: 0.75rem 1rem;">Display Name</th>
+                    <th style="padding: 0.75rem 1rem;">Hostname</th>
+                    <th style="padding: 0.75rem 1rem;">Status</th>
+                    <th style="padding: 0.75rem 1rem;">Last Heartbeat</th>
+                    <th style="padding: 0.75rem 1rem;">Groups</th>
+                    <th style="padding: 0.75rem 1rem; text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <td style="padding: 0.75rem 1rem; font-weight: 600;">
+                        <a href="/workers/1">Warehouse Worker PC</a>
+                    </td>
+                    <td style="padding: 0.75rem 1rem; color: var(--color-text-muted);">pc-warehouse-01</td>
+                    <td style="padding: 0.75rem 1rem;">
+                        <span class="badge badge-success">online</span>
+                    </td>
+                    <td style="padding: 0.75rem 1rem; font-size: 0.875rem; color: var(--color-text-muted);">
+                        2026-10-02 20:06:07 UTC
+                    </td>
+                    <td style="padding: 0.75rem 1rem;">
+
+
+                                <span class="badge badge-neutral" style="margin-right: 0.25rem;">Warehouse Fleet</span>
+
+
+                    </td>
+                    <td style="padding: 0.75rem 1rem; text-align: right;">
+                        <div style="display: inline-flex; gap: 0.5rem;">
+                            <a href="/workers/1" class="btn btn-sm btn-outline">View</a>
+
+                            <a href="/workers/1/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <form method="post" action="/workers/1/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker Warehouse Worker PC?');">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                            </form>
+
+                        </div>
+                    </td>
+                </tr>
+
+            </tbody>
+        </table>
+
+</div>
+
+<!-- Worker Groups Table -->
+<div class="card" style="padding: 0; overflow: hidden;">
+    <div style="padding: 1rem 1.25rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin: 0;">Worker Groups</h2>
+
+        <a href="/worker-groups/new" class="btn btn-sm btn-primary">+ Create Group</a>
+
+    </div>
+
+        <table class="table" style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <th style="padding: 0.75rem 1rem;">Group Name</th>
+                    <th style="padding: 0.75rem 1rem;">Description</th>
+                    <th style="padding: 0.75rem 1rem;">Members Count</th>
+                    <th style="padding: 0.75rem 1rem;">Members</th>
+
+                    <th style="padding: 0.75rem 1rem; text-align: right;">Actions</th>
+
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <td style="padding: 0.75rem 1rem; font-weight: 600;">Warehouse Fleet</td>
+                    <td style="padding: 0.75rem 1rem; color: var(--color-text-muted);">
+
+                            PCs in warehouse
+
+                    </td>
+                    <td style="padding: 0.75rem 1rem;">1</td>
+                    <td style="padding: 0.75rem 1rem;">
+
+
+                                <span class="badge badge-neutral" style="margin-right: 0.25rem;">Warehouse Worker PC</span>
+
+
+                    </td>
+
+                    <td style="padding: 0.75rem 1rem; text-align: right;">
+                        <div style="display: inline-flex; gap: 0.5rem;">
+                            <a href="/worker-groups/1/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <form method="post" action="/worker-groups/1/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker group Warehouse Fleet?');">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+
+                </tr>
+
+            </tbody>
+        </table>
+
+</div>
+
+        </main>
+    </div>
+
+    <footer class="footer">
+
+        &copy; DeskDispatch — Task Server
+
+    </footer>
+</body>
+</html>

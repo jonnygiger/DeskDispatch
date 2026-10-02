@@ -1,0 +1,148 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Workers & Groups - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "workers") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+        <h1 class="dashboard-title" style="margin: 0;">Task Worker PCs & Groups</h1>
+        <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Manage registered task workers and group assignments.</p>
+    </div>
+    {% if user.role.is_admin() %}
+    <div style="display: flex; gap: 0.75rem;">
+        <a href="/worker-groups/new" class="btn btn-outline">+ New Worker Group</a>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Task Worker PCs Table -->
+<div class="card" style="margin-bottom: 2rem; padding: 0; overflow: hidden;">
+    <div style="padding: 1rem 1.25rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin: 0;">Worker PCs</h2>
+    </div>
+    {% if workers.is_empty() %}
+        <div style="padding: 2rem; text-align: center; color: var(--color-text-muted);">
+            No worker PCs registered yet.
+        </div>
+    {% else %}
+        <table class="table" style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <th style="padding: 0.75rem 1rem;">Display Name</th>
+                    <th style="padding: 0.75rem 1rem;">Hostname</th>
+                    <th style="padding: 0.75rem 1rem;">Status</th>
+                    <th style="padding: 0.75rem 1rem;">Last Heartbeat</th>
+                    <th style="padding: 0.75rem 1rem;">Groups</th>
+                    <th style="padding: 0.75rem 1rem; text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in workers %}
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <td style="padding: 0.75rem 1rem; font-weight: 600;">
+                        <a href="/workers/{{ w.id }}">{{ w.display_name }}</a>
+                    </td>
+                    <td style="padding: 0.75rem 1rem; color: var(--color-text-muted);">{{ w.hostname }}</td>
+                    <td style="padding: 0.75rem 1rem;">
+                        <span class="badge {{ w.status_badge_class() }}">{{ w.status }}</span>
+                    </td>
+                    <td style="padding: 0.75rem 1rem; font-size: 0.875rem; color: var(--color-text-muted);">
+                        {{ w.formatted_last_heartbeat() }}
+                    </td>
+                    <td style="padding: 0.75rem 1rem;">
+                        {% if w.groups.is_empty() %}
+                            <span style="color: var(--color-text-muted); font-size: 0.875rem;">None</span>
+                        {% else %}
+                            {% for g in w.groups %}
+                                <span class="badge badge-neutral" style="margin-right: 0.25rem;">{{ g }}</span>
+                            {% endfor %}
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.75rem 1rem; text-align: right;">
+                        <div style="display: inline-flex; gap: 0.5rem;">
+                            <a href="/workers/{{ w.id }}" class="btn btn-sm btn-outline">View</a>
+                            {% if user.role.is_admin() %}
+                            <a href="/workers/{{ w.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <form method="post" action="/workers/{{ w.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker {{ w.display_name }}?');">
+                                {% call macros::csrf_field(user.csrf_token) %}
+                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
+
+<!-- Worker Groups Table -->
+<div class="card" style="padding: 0; overflow: hidden;">
+    <div style="padding: 1rem 1.25rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin: 0;">Worker Groups</h2>
+        {% if user.role.is_admin() %}
+        <a href="/worker-groups/new" class="btn btn-sm btn-primary">+ Create Group</a>
+        {% endif %}
+    </div>
+    {% if worker_groups.is_empty() %}
+        <div style="padding: 2rem; text-align: center; color: var(--color-text-muted);">
+            No worker groups defined yet.
+        </div>
+    {% else %}
+        <table class="table" style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <th style="padding: 0.75rem 1rem;">Group Name</th>
+                    <th style="padding: 0.75rem 1rem;">Description</th>
+                    <th style="padding: 0.75rem 1rem;">Members Count</th>
+                    <th style="padding: 0.75rem 1rem;">Members</th>
+                    {% if user.role.is_admin() %}
+                    <th style="padding: 0.75rem 1rem; text-align: right;">Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in worker_groups %}
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <td style="padding: 0.75rem 1rem; font-weight: 600;">{{ g.name }}</td>
+                    <td style="padding: 0.75rem 1rem; color: var(--color-text-muted);">
+                        {% if g.description.is_empty() %}
+                            <em>No description</em>
+                        {% else %}
+                            {{ g.description }}
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.75rem 1rem;">{{ g.member_count }}</td>
+                    <td style="padding: 0.75rem 1rem;">
+                        {% if g.member_names.is_empty() %}
+                            <span style="color: var(--color-text-muted); font-size: 0.875rem;">None</span>
+                        {% else %}
+                            {% for m in g.member_names %}
+                                <span class="badge badge-neutral" style="margin-right: 0.25rem;">{{ m }}</span>
+                            {% endfor %}
+                        {% endif %}
+                    </td>
+                    {% if user.role.is_admin() %}
+                    <td style="padding: 0.75rem 1rem; text-align: right;">
+                        <div style="display: inline-flex; gap: 0.5rem;">
+                            <a href="/worker-groups/{{ g.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <form method="post" action="/worker-groups/{{ g.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker group {{ g.name }}?');">
+                                {% call macros::csrf_field(user.csrf_token) %}
+                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
+{% endblock %}
