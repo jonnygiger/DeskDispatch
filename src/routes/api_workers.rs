@@ -51,12 +51,137 @@ pub struct HeartbeatResponse {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NextAssignmentResponse {
     None,
+    ExecuteAutomation {
+        task_run_id: i64,
+        automation: serde_json::Value,
+    },
 }
 
 pub async fn get_next_assignment_handler(
-    _worker: AuthWorker,
+    worker: AuthWorker,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
-    (StatusCode::OK, Json(NextAssignmentResponse::None))
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            tracing::error!(worker_id = worker.id, "Failed to begin transaction for next assignment: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let select_res = sqlx::query(
+        r#"
+        SELECT tr.id AS task_run_id, tr.automation_id
+        FROM task_runs tr
+        LEFT JOIN schedules s ON tr.schedule_id = s.id
+        WHERE tr.status = 'queued'
+          AND (
+            tr.schedule_id IS NULL
+            OR s.worker_group_id IS NULL
+            OR EXISTS (
+              SELECT 1 FROM worker_group_members wgm
+              WHERE wgm.worker_id = $1 AND wgm.group_id = s.worker_group_id
+            )
+          )
+        ORDER BY tr.queued_at ASC, tr.id ASC
+        LIMIT 1
+        FOR UPDATE OF tr SKIP LOCKED
+        "#,
+    )
+    .bind(worker.id)
+    .fetch_optional(&mut *tx)
+    .await;
+
+    match select_res {
+        Ok(Some(row)) => {
+            let task_run_id: i64 = row.get("task_run_id");
+            let automation_id: i64 = row.get("automation_id");
+
+            let update_res = sqlx::query(
+                r#"
+                UPDATE task_runs
+                SET status = 'running',
+                    worker_id = $1,
+                    started_at = now()
+                WHERE id = $2
+                "#,
+            )
+            .bind(worker.id)
+            .bind(task_run_id)
+            .execute(&mut *tx)
+            .await;
+
+            if let Err(e) = update_res {
+                tracing::error!(
+                    worker_id = worker.id,
+                    task_run_id = task_run_id,
+                    "Failed to update task run status to running: {}",
+                    e
+                );
+                let _ = tx.rollback().await;
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to claim task run".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+
+            if let Err(e) = tx.commit().await {
+                tracing::error!(
+                    worker_id = worker.id,
+                    task_run_id = task_run_id,
+                    "Failed to commit transaction claiming task run: {}",
+                    e
+                );
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to commit task run claim".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+
+            tracing::info!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                automation_id = automation_id,
+                "Claimed queued task run for worker"
+            );
+
+            (
+                StatusCode::OK,
+                Json(NextAssignmentResponse::ExecuteAutomation {
+                    task_run_id,
+                    automation: serde_json::json!({ "id": automation_id }),
+                }),
+            )
+                .into_response()
+        }
+        Ok(None) => {
+            let _ = tx.commit().await;
+            (StatusCode::OK, Json(NextAssignmentResponse::None)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(worker_id = worker.id, "Error fetching next task run assignment: {}", e);
+            let _ = tx.rollback().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error querying next assignment".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
 }
 
 pub fn is_valid_worker_status(status: &str) -> bool {
@@ -343,5 +468,21 @@ mod tests {
         let deserialized: NextAssignmentResponse = serde_json::from_str(r#"{"type":"none"}"#)
             .expect("Failed to deserialize NextAssignmentResponse::None");
         assert_eq!(deserialized, NextAssignmentResponse::None);
+
+        let exec_resp = NextAssignmentResponse::ExecuteAutomation {
+            task_run_id: 4821,
+            automation: serde_json::json!({
+                "id": 12,
+                "parameters": { "click_tolerance": 8 }
+            }),
+        };
+        let exec_json = serde_json::to_string(&exec_resp).expect("Failed to serialize ExecuteAutomation");
+        assert!(exec_json.contains(r#""type":"execute_automation""#));
+        assert!(exec_json.contains(r#""task_run_id":4821"#));
+        assert!(exec_json.contains(r#""automation":{"id":12,"parameters":{"click_tolerance":8}}"#));
+
+        let exec_deserialized: NextAssignmentResponse = serde_json::from_str(&exec_json)
+            .expect("Failed to deserialize ExecuteAutomation");
+        assert_eq!(exec_deserialized, exec_resp);
     }
 }
