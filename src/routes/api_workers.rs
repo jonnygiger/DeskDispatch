@@ -47,6 +47,18 @@ pub struct HeartbeatResponse {
     pub cancel_requested: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum NextAssignmentResponse {
+    None,
+}
+
+pub async fn get_next_assignment_handler(
+    _worker: AuthWorker,
+) -> impl IntoResponse {
+    (StatusCode::OK, Json(NextAssignmentResponse::None))
+}
+
 pub fn is_valid_worker_status(status: &str) -> bool {
     matches!(status, "offline" | "online" | "busy" | "error")
 }
@@ -320,5 +332,16 @@ mod tests {
         let json_str = serde_json::to_string(&resp).expect("Failed to serialize HeartbeatResponse");
         assert!(json_str.contains(r#""status":"success""#));
         assert!(json_str.contains(r#""cancel_requested":true"#));
+    }
+
+    #[test]
+    fn test_next_assignment_response_serialization() {
+        let resp = NextAssignmentResponse::None;
+        let json_str = serde_json::to_string(&resp).expect("Failed to serialize NextAssignmentResponse");
+        assert_eq!(json_str, r#"{"type":"none"}"#);
+
+        let deserialized: NextAssignmentResponse = serde_json::from_str(r#"{"type":"none"}"#)
+            .expect("Failed to deserialize NextAssignmentResponse::None");
+        assert_eq!(deserialized, NextAssignmentResponse::None);
     }
 }
