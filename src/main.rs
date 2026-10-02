@@ -118,6 +118,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/workers/{id}", get(get_worker_detail_handler))
         .route("/workers/{id}/edit", get(get_edit_worker_handler).post(post_edit_worker_handler))
         .route("/workers/{id}/delete", post(post_delete_worker_handler))
+        .route("/workers/{id}/deactivate", post(post_deactivate_worker_handler))
+        .route("/workers/{id}/rotate-key", post(post_rotate_worker_key_handler))
         .route("/worker-groups/new", get(get_new_worker_group_handler))
         .route("/worker-groups", post(post_create_worker_group_handler))
         .route("/worker-groups/{id}/edit", get(get_edit_worker_group_handler).post(post_edit_worker_group_handler))

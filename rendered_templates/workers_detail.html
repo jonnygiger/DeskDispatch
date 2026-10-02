@@ -53,6 +53,18 @@
         <a href="/workers" class="btn btn-outline">&larr; Back to Workers</a>
 
         <a href="/workers/1/edit" class="btn btn-primary">Edit Worker</a>
+        <form method="post" action="/workers/1/rotate-key" style="display: inline;" onsubmit="return confirm('Are you sure you want to rotate the API key for Warehouse Worker PC? The current key will be invalidated immediately.');">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline">Rotate API Key</button>
+        </form>
+        <form method="post" action="/workers/1/deactivate" style="display: inline;" onsubmit="return confirm('Are you sure you want to deactivate Warehouse Worker PC?');">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline">Deactivate</button>
+        </form>
         <form method="post" action="/workers/1/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker Warehouse Worker PC?');">
 
 <input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
@@ -83,7 +95,7 @@
             <dd style="margin: 0;"><span class="badge badge-success">online</span></dd>
 
             <dt style="font-weight: 600; color: var(--color-text-muted);">Last Heartbeat:</dt>
-            <dd style="margin: 0;">2026-10-02 20:27:53 UTC</dd>
+            <dd style="margin: 0;">2026-10-02 20:51:57 UTC</dd>
 
             <dt style="font-weight: 600; color: var(--color-text-muted);">Screen Resolution:</dt>
             <dd style="margin: 0;">
@@ -109,7 +121,7 @@
             </dd>
 
             <dt style="font-weight: 600; color: var(--color-text-muted);">Registered At:</dt>
-            <dd style="margin: 0;">2026-10-02 20:27:53 UTC</dd>
+            <dd style="margin: 0;">2026-10-02 20:51:57 UTC</dd>
 
 
         </dl>
