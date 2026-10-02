@@ -45,6 +45,93 @@ impl WorkerPcItem {
     }
 }
 
+pub async fn post_deactivate_worker_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    RequireAdmin(user): RequireAdmin,
+) -> impl IntoResponse {
+    let empty_api_key_hash: Vec<u8> = Vec::new();
+    let result = sqlx::query(
+        r#"
+        UPDATE task_worker_pcs
+        SET status = 'offline', api_key_hash = $1, registration_token = NULL
+        WHERE id = $2
+        "#,
+    )
+    .bind(&empty_api_key_hash)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+
+    match result {
+        Ok(res) => {
+            if res.rows_affected() == 0 {
+                return (StatusCode::NOT_FOUND, "Worker PC not found").into_response();
+            }
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "deactivate",
+                "task_worker_pc",
+                Some(id),
+                None,
+            )
+            .await;
+            Redirect::to(&format!("/workers/{}", id)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to deactivate worker PC: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to deactivate worker PC").into_response()
+        }
+    }
+}
+
+pub async fn post_rotate_worker_key_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    RequireAdmin(user): RequireAdmin,
+) -> impl IntoResponse {
+    let new_token = uuid::Uuid::new_v4().to_string();
+    let empty_api_key_hash: Vec<u8> = Vec::new();
+
+    let result = sqlx::query(
+        r#"
+        UPDATE task_worker_pcs
+        SET status = 'offline', api_key_hash = $1, registration_token = $2
+        WHERE id = $3
+        "#,
+    )
+    .bind(&empty_api_key_hash)
+    .bind(&new_token)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+
+    match result {
+        Ok(res) => {
+            if res.rows_affected() == 0 {
+                return (StatusCode::NOT_FOUND, "Worker PC not found").into_response();
+            }
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "rotate_key",
+                "task_worker_pc",
+                Some(id),
+                Some(serde_json::json!({
+                    "registration_token": new_token,
+                })),
+            )
+            .await;
+            Redirect::to(&format!("/workers/{}", id)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to rotate worker key: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to rotate worker key").into_response()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +160,46 @@ mod tests {
         assert!(rendered.contains("worker-01.local"));
         assert!(rendered.contains("Worker 1"));
         assert!(rendered.contains("Test error message"));
+    }
+
+    #[test]
+    fn test_worker_detail_template_rendering_with_admin_actions() {
+        let user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: crate::auth::UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf_token".to_string(),
+        };
+
+        let worker = WorkerDetail {
+            id: 42,
+            hostname: "worker-42.local".to_string(),
+            display_name: "Worker 42".to_string(),
+            status: "online".to_string(),
+            last_heartbeat_at: Some(Utc::now()),
+            screen_width: Some(1920),
+            screen_height: Some(1080),
+            os_info: Some("Windows 11".to_string()),
+            agent_version: Some("1.0.0".to_string()),
+            created_at: Utc::now(),
+            groups: vec![],
+            registration_token: Some("sample-token-uuid".to_string()),
+        };
+
+        let tmpl = WorkerDetailTemplate {
+            user,
+            worker,
+            error: None,
+        };
+
+        let rendered = tmpl.render().expect("Failed to render WorkerDetailTemplate");
+        assert!(rendered.contains("Worker 42"));
+        assert!(rendered.contains("action=\"/workers/42/rotate-key\""));
+        assert!(rendered.contains("action=\"/workers/42/deactivate\""));
+        assert!(rendered.contains("Rotate API Key"));
+        assert!(rendered.contains("Deactivate"));
     }
 }
 
