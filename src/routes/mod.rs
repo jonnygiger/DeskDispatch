@@ -10,7 +10,7 @@ pub mod static_assets;
 pub mod workers;
 
 pub use account::{get_password_handler, post_password_handler};
-pub use api_workers::{get_next_assignment_handler, post_heartbeat_handler, post_register_worker_handler};
+pub use api_workers::*;
 pub use auth::{get_login_handler, post_login_handler, post_logout_handler};
 pub use automations::*;
 pub use bitmaps::*;
