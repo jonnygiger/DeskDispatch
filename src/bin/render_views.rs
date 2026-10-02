@@ -3,8 +3,9 @@ use app::routes::account::AccountPasswordTemplate;
 use app::routes::auth::LoginTemplate;
 use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate, BitmapsUploadTemplate, RegionPickerTopLeftTemplate};
 use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
-use app::routes::media::DevMagnifierTemplate;
 use app::routes::home::{IndexTemplate, RecentRunItem};
+use app::routes::media::DevMagnifierTemplate;
+use app::routes::workers::*;
 use askama::Template;
 use chrono::Utc;
 use std::fs;
@@ -215,6 +216,86 @@ fn main() {
         automation_id: 1,
     };
     fs::write("rendered_templates/step_type_picker.html", step_picker_tmpl.render().unwrap()).unwrap();
+
+    let worker_item = WorkerPcItem {
+        id: 1,
+        hostname: "pc-warehouse-01".to_string(),
+        display_name: "Warehouse Worker PC".to_string(),
+        status: "online".to_string(),
+        last_heartbeat_at: Some(Utc::now()),
+        screen_width: Some(1920),
+        screen_height: Some(1080),
+        os_info: Some("Windows 11".to_string()),
+        agent_version: Some("v2.1.0".to_string()),
+        created_at: Utc::now(),
+        groups: vec!["Warehouse Fleet".to_string()],
+    };
+    let group_item = WorkerGroupItem {
+        id: 1,
+        name: "Warehouse Fleet".to_string(),
+        description: "PCs in warehouse".to_string(),
+        member_count: 1,
+        member_names: vec!["Warehouse Worker PC".to_string()],
+    };
+    let workers_idx_tmpl = WorkersIndexTemplate {
+        user: user.clone(),
+        workers: vec![worker_item],
+        worker_groups: vec![group_item],
+    };
+    fs::write("rendered_templates/workers_index.html", workers_idx_tmpl.render().unwrap()).unwrap();
+
+    let worker_detail = WorkerDetail {
+        id: 1,
+        hostname: "pc-warehouse-01".to_string(),
+        display_name: "Warehouse Worker PC".to_string(),
+        status: "online".to_string(),
+        last_heartbeat_at: Some(Utc::now()),
+        screen_width: Some(1920),
+        screen_height: Some(1080),
+        os_info: Some("Windows 11".to_string()),
+        agent_version: Some("v2.1.0".to_string()),
+        created_at: Utc::now(),
+        groups: vec![WorkerGroupSimple {
+            id: 1,
+            name: "Warehouse Fleet".to_string(),
+            description: "PCs in warehouse".to_string(),
+        }],
+        registration_token: None,
+    };
+    let worker_detail_tmpl = WorkerDetailTemplate {
+        user: user.clone(),
+        worker: worker_detail.clone(),
+        error: None,
+    };
+    fs::write("rendered_templates/workers_detail.html", worker_detail_tmpl.render().unwrap()).unwrap();
+
+    let worker_edit_tmpl = WorkerEditTemplate {
+        user: user.clone(),
+        worker: worker_detail,
+        all_groups: vec![WorkerGroupSimple {
+            id: 1,
+            name: "Warehouse Fleet".to_string(),
+            description: "PCs in warehouse".to_string(),
+        }],
+        error: None,
+    };
+    fs::write("rendered_templates/workers_edit.html", worker_edit_tmpl.render().unwrap()).unwrap();
+
+    let group_form_tmpl = WorkerGroupFormTemplate {
+        user: user.clone(),
+        group_id: Some(1),
+        name: "Warehouse Fleet".to_string(),
+        description: "PCs in warehouse".to_string(),
+        member_worker_ids: vec![1],
+        all_workers: vec![WorkerSimple {
+            id: 1,
+            hostname: "pc-warehouse-01".to_string(),
+            display_name: "Warehouse Worker PC".to_string(),
+        }],
+        error: None,
+        is_edit: true,
+    };
+    fs::write("rendered_templates/worker_group_form.html", group_form_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

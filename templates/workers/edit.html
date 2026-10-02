@@ -1,0 +1,64 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Edit Worker: {{ worker.display_name }} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "workers") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+        <h1 class="dashboard-title" style="margin: 0;">Edit Worker PC</h1>
+        <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Update details for {{ worker.display_name }}.</p>
+    </div>
+    <a href="/workers/{{ worker.id }}" class="btn btn-outline">&larr; Cancel</a>
+</div>
+
+{% if let Some(err) = error %}
+<div class="alert alert-danger" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 4px;">
+    {{ err }}
+</div>
+{% endif %}
+
+<div class="card" style="max-width: 600px;">
+    <form method="post" action="/workers/{{ worker.id }}/edit" style="display: flex; flex-direction: column; gap: 1.25rem;">
+        {% call macros::csrf_field(user.csrf_token) %}
+
+        <div>
+            <label for="display_name" style="display: block; font-weight: 600; margin-bottom: 0.375rem;">Display Name</label>
+            <input type="text" id="display_name" name="display_name" value="{{ worker.display_name }}" required class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+        </div>
+
+        <div>
+            <label for="hostname" style="display: block; font-weight: 600; margin-bottom: 0.375rem;">Hostname</label>
+            <input type="text" id="hostname" name="hostname" value="{{ worker.hostname }}" required class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+        </div>
+
+        <div>
+            <label style="display: block; font-weight: 600; margin-bottom: 0.375rem;">Worker Group Memberships</label>
+            {% if all_groups.is_empty() %}
+                <p style="color: var(--color-text-muted); font-size: 0.875rem;">No worker groups exist yet. Create a group first from the Workers overview page.</p>
+            {% else %}
+                <div style="display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--color-border); padding: 0.75rem; border-radius: 4px; max-height: 200px; overflow-y: auto;">
+                    {% for group in all_groups %}
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" name="group_ids" value="{{ group.id }}"{% if self.is_group_selected(group.id) %} checked{% endif %}>
+                        <span style="font-weight: 500;">{{ group.name }}</span>
+                        {% if !group.description.is_empty() %}
+                            <span style="color: var(--color-text-muted); font-size: 0.8125rem;">({{ group.description }})</span>
+                        {% endif %}
+                    </label>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem;">
+            <a href="/workers/{{ worker.id }}" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
