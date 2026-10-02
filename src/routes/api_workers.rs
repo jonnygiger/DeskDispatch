@@ -64,6 +64,48 @@ pub struct TaskRunResponse {
     pub automation: serde_json::Value,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct VariableUpdateItem {
+    pub variable_id: i64,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StepResultRequest {
+    pub step_id: i64,
+    pub result: String,
+    pub captured_r: Option<i16>,
+    pub captured_g: Option<i16>,
+    pub captured_b: Option<i16>,
+    pub captured_rgb: Option<Vec<i16>>,
+    pub captured_found: Option<bool>,
+    pub captured_x: Option<i32>,
+    pub captured_y: Option<i32>,
+    pub captured_xy: Option<Vec<i32>>,
+    pub screenshot_object_key: Option<String>,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    pub variable_updates: Option<Vec<VariableUpdateItem>>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct StepResultResponse {
+    pub status: String,
+    pub step_result_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CompleteTaskRunRequest {
+    pub status: String,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct CompleteTaskRunResponse {
+    pub status: String,
+}
+
 pub async fn fetch_full_automation_json(
     conn: &mut sqlx::PgConnection,
     automation_id: i64,
@@ -430,6 +472,346 @@ pub async fn get_next_assignment_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
                     error: "Database error querying next assignment".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub fn is_valid_step_result(result: &str) -> bool {
+    matches!(
+        result,
+        "success" | "failed" | "branch_matched" | "branch_not_matched"
+    )
+}
+
+pub async fn post_step_result_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(task_run_id): Path<i64>,
+    Json(payload): Json<StepResultRequest>,
+) -> impl IntoResponse {
+    let result_str = payload.result.trim();
+    if !is_valid_step_result(result_str) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "Invalid step result '{}'. Expected one of: success, failed, branch_matched, branch_not_matched",
+                    payload.result
+                ),
+            }),
+        )
+            .into_response();
+    }
+
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Failed to begin transaction for step-result: {}",
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let run_exists: Option<(i64, String)> = match sqlx::query_as(
+        "SELECT id, status FROM task_runs WHERE id = $1 AND worker_id = $2",
+    )
+    .bind(task_run_id)
+    .bind(worker.id)
+    .fetch_optional(&mut *tx)
+    .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Error checking task run ownership: {}",
+                e
+            );
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error checking task run".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if run_exists.is_none() {
+        let _ = tx.rollback().await;
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Running task run {} not found for this worker", task_run_id),
+            }),
+        )
+            .into_response();
+    }
+
+    let captured_r = payload.captured_r.or_else(|| {
+        payload
+            .captured_rgb
+            .as_ref()
+            .and_then(|v| v.get(0).copied())
+    });
+    let captured_g = payload.captured_g.or_else(|| {
+        payload
+            .captured_rgb
+            .as_ref()
+            .and_then(|v| v.get(1).copied())
+    });
+    let captured_b = payload.captured_b.or_else(|| {
+        payload
+            .captured_rgb
+            .as_ref()
+            .and_then(|v| v.get(2).copied())
+    });
+
+    let captured_x = payload.captured_x.or_else(|| {
+        payload
+            .captured_xy
+            .as_ref()
+            .and_then(|v| v.get(0).copied())
+    });
+    let captured_y = payload.captured_y.or_else(|| {
+        payload
+            .captured_xy
+            .as_ref()
+            .and_then(|v| v.get(1).copied())
+    });
+
+    let completed_at = payload
+        .completed_at
+        .or(payload.timestamp)
+        .unwrap_or_else(chrono::Utc::now);
+    let started_at = payload.started_at.unwrap_or(completed_at);
+
+    let step_result_id: i64 = match sqlx::query_scalar(
+        r#"
+        INSERT INTO task_run_steps (
+            task_run_id, step_id, started_at, completed_at, result,
+            captured_r, captured_g, captured_b, captured_found, captured_x, captured_y,
+            screenshot_object_key
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING id
+        "#,
+    )
+    .bind(task_run_id)
+    .bind(payload.step_id)
+    .bind(started_at)
+    .bind(completed_at)
+    .bind(result_str)
+    .bind(captured_r)
+    .bind(captured_g)
+    .bind(captured_b)
+    .bind(payload.captured_found)
+    .bind(captured_x)
+    .bind(captured_y)
+    .bind(payload.screenshot_object_key.as_deref())
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                step_id = payload.step_id,
+                "Failed to insert task_run_steps: {}",
+                e
+            );
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to record step result".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(e) = sqlx::query(
+        "UPDATE task_runs SET current_step_id = $1 WHERE id = $2",
+    )
+    .bind(payload.step_id)
+    .bind(task_run_id)
+    .execute(&mut *tx)
+    .await
+    {
+        tracing::error!(
+            worker_id = worker.id,
+            task_run_id = task_run_id,
+            step_id = payload.step_id,
+            "Failed to update task_runs current_step_id: {}",
+            e
+        );
+        let _ = tx.rollback().await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to update current step on task run".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    if let Some(updates) = payload.variable_updates {
+        for item in updates {
+            let val_str = match &item.value {
+                serde_json::Value::String(s) => s.clone(),
+                v => v.to_string(),
+            };
+
+            if let Err(e) = sqlx::query(
+                r#"
+                INSERT INTO task_run_variable_values (task_run_id, variable_id, value, set_at_step_id, set_at)
+                VALUES ($1, $2, $3, $4, now())
+                ON CONFLICT (task_run_id, variable_id) DO UPDATE
+                SET value = EXCLUDED.value,
+                    set_at_step_id = EXCLUDED.set_at_step_id,
+                    set_at = EXCLUDED.set_at
+                "#,
+            )
+            .bind(task_run_id)
+            .bind(item.variable_id)
+            .bind(val_str)
+            .bind(payload.step_id)
+            .execute(&mut *tx)
+            .await
+            {
+                tracing::error!(
+                    worker_id = worker.id,
+                    task_run_id = task_run_id,
+                    variable_id = item.variable_id,
+                    "Failed to upsert variable value: {}",
+                    e
+                );
+                let _ = tx.rollback().await;
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to record variable updates".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    if let Err(e) = tx.commit().await {
+        tracing::error!(
+            worker_id = worker.id,
+            task_run_id = task_run_id,
+            "Failed to commit transaction for step-result: {}",
+            e
+        );
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to commit step result".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    (
+        StatusCode::OK,
+        Json(StepResultResponse {
+            status: "success".to_string(),
+            step_result_id,
+        }),
+    )
+        .into_response()
+}
+
+pub async fn post_complete_task_run_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(task_run_id): Path<i64>,
+    Json(payload): Json<CompleteTaskRunRequest>,
+) -> impl IntoResponse {
+    let final_status = payload.status.trim();
+    if final_status != "succeeded" && final_status != "failed" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "Invalid completion status '{}'. Expected 'succeeded' or 'failed'",
+                    payload.status
+                ),
+            }),
+        )
+            .into_response();
+    }
+
+    let update_res = sqlx::query(
+        r#"
+        UPDATE task_runs
+        SET status = $1,
+            completed_at = now(),
+            error_message = COALESCE($2, error_message)
+        WHERE id = $3 AND worker_id = $4
+        RETURNING id
+        "#,
+    )
+    .bind(final_status)
+    .bind(payload.error_message.as_deref())
+    .bind(task_run_id)
+    .bind(worker.id)
+    .fetch_optional(&state.db)
+    .await;
+
+    match update_res {
+        Ok(Some(_)) => {
+            tracing::info!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                status = final_status,
+                "Task run completed"
+            );
+            (
+                StatusCode::OK,
+                Json(CompleteTaskRunResponse {
+                    status: "success".to_string(),
+                }),
+            )
+                .into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Running task run {} not found for this worker", task_run_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Failed to update task run completion status: {}",
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error completing task run".to_string(),
                 }),
             )
                 .into_response()
@@ -922,5 +1304,66 @@ mod tests {
         let deserialized: TaskRunResponse =
             serde_json::from_str(&json_str).expect("Deserialization failed");
         assert_eq!(deserialized, resp);
+    }
+
+    #[test]
+    fn test_step_result_validation_and_deserialization() {
+        assert!(is_valid_step_result("success"));
+        assert!(is_valid_step_result("failed"));
+        assert!(is_valid_step_result("branch_matched"));
+        assert!(is_valid_step_result("branch_not_matched"));
+        assert!(!is_valid_step_result("unknown"));
+
+        let json_data = r#"{
+            "step_id": 101,
+            "result": "success",
+            "captured_rgb": [255, 128, 0],
+            "captured_found": true,
+            "captured_xy": [100, 200],
+            "screenshot_object_key": "runs/1/step_101.png",
+            "variable_updates": [
+                {
+                    "variable_id": 5,
+                    "value": {"x": 100, "y": 200}
+                }
+            ]
+        }"#;
+
+        let req: StepResultRequest =
+            serde_json::from_str(json_data).expect("Failed to deserialize StepResultRequest");
+        assert_eq!(req.step_id, 101);
+        assert_eq!(req.result, "success");
+        assert_eq!(req.captured_rgb, Some(vec![255, 128, 0]));
+        assert_eq!(req.captured_found, Some(true));
+        assert_eq!(req.captured_xy, Some(vec![100, 200]));
+        assert_eq!(
+            req.screenshot_object_key.as_deref(),
+            Some("runs/1/step_101.png")
+        );
+        let updates = req.variable_updates.expect("Expected variable updates");
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].variable_id, 5);
+    }
+
+    #[test]
+    fn test_complete_task_run_request_deserialization() {
+        let json_data = r#"{
+            "status": "succeeded",
+            "error_message": null
+        }"#;
+        let req: CompleteTaskRunRequest = serde_json::from_str(json_data).expect("Deserialization failed");
+        assert_eq!(req.status, "succeeded");
+        assert_eq!(req.error_message, None);
+
+        let json_failed = r#"{
+            "status": "failed",
+            "error_message": "Bitmap not found on target screen"
+        }"#;
+        let req_failed: CompleteTaskRunRequest = serde_json::from_str(json_failed).expect("Deserialization failed");
+        assert_eq!(req_failed.status, "failed");
+        assert_eq!(
+            req_failed.error_message.as_deref(),
+            Some("Bitmap not found on target screen")
+        );
     }
 }
