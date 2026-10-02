@@ -15,6 +15,7 @@
     </div>
     {% if user.role.is_admin() %}
     <div style="display: flex; gap: 0.75rem;">
+        <a href="/workers/new" class="btn btn-primary">+ Register New Worker</a>
         <a href="/worker-groups/new" class="btn btn-outline">+ New Worker Group</a>
     </div>
     {% endif %}
