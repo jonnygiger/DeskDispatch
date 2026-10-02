@@ -1,4 +1,5 @@
 pub mod account;
+pub mod api_workers;
 pub mod auth;
 pub mod automations;
 pub mod bitmaps;
@@ -9,6 +10,7 @@ pub mod static_assets;
 pub mod workers;
 
 pub use account::{get_password_handler, post_password_handler};
+pub use api_workers::post_register_worker_handler;
 pub use auth::{get_login_handler, post_login_handler, post_logout_handler};
 pub use automations::*;
 pub use bitmaps::*;
