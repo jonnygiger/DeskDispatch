@@ -15,7 +15,11 @@
             <span class="badge {{ automation.status_badge_class() }}">{{ automation.status }}</span>
         </div>
         {% if user.role.can_edit() %}
-        <div class="dashboard-actions">
+        <div class="dashboard-actions" style="display: flex; gap: 0.5rem; align-items: center;">
+            <form method="post" action="/automations/{{ automation.id }}/run-now" style="display: inline;">
+                {% call macros::csrf_field(csrf_token) %}
+                <button type="submit" class="btn btn-outline">Run Now</button>
+            </form>
             <a href="/automations/{{ automation.id }}/steps/new" class="btn btn-primary">+ New Step</a>
             <a href="/automations/{{ automation.id }}/delete" class="btn btn-danger-outline">Delete</a>
         </div>
