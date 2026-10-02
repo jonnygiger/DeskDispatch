@@ -117,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/workers/register", post(post_register_worker_handler))
         .route("/api/v1/workers/heartbeat", post(post_heartbeat_handler))
         .route("/api/v1/workers/next-assignment", get(get_next_assignment_handler))
+        .route("/api/v1/workers/task-runs/{id}", get(get_task_run_handler))
         .route("/workers", get(get_workers_handler).post(post_create_worker_handler))
         .route("/workers/new", get(get_new_worker_handler))
         .route("/workers/{id}", get(get_worker_detail_handler))

@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -55,6 +55,13 @@ pub enum NextAssignmentResponse {
         task_run_id: i64,
         automation: serde_json::Value,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunResponse {
+    pub task_run_id: i64,
+    pub status: String,
+    pub automation: serde_json::Value,
 }
 
 pub async fn fetch_full_automation_json(
@@ -423,6 +430,98 @@ pub async fn get_next_assignment_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
                     error: "Database error querying next assignment".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn get_task_run_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(task_run_id): Path<i64>,
+) -> impl IntoResponse {
+    let mut conn = match state.db.acquire().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Failed to acquire db connection for get_task_run: {}",
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let row = sqlx::query(
+        "SELECT id, automation_id, status FROM task_runs WHERE id = $1",
+    )
+    .bind(task_run_id)
+    .fetch_optional(&mut *conn)
+    .await;
+
+    match row {
+        Ok(Some(row)) => {
+            let id: i64 = row.get("id");
+            let automation_id: i64 = row.get("automation_id");
+            let status: String = row.get("status");
+
+            let automation_json = match fetch_full_automation_json(&mut *conn, automation_id).await {
+                Ok(json) => json,
+                Err(e) => {
+                    tracing::error!(
+                        worker_id = worker.id,
+                        automation_id = automation_id,
+                        task_run_id = task_run_id,
+                        "Failed to fetch automation json payload for task run: {}",
+                        e
+                    );
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "Failed to load automation details".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+            };
+
+            (
+                StatusCode::OK,
+                Json(TaskRunResponse {
+                    task_run_id: id,
+                    status,
+                    automation: automation_json,
+                }),
+            )
+                .into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Task run {} not found", task_run_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Error querying task run: {}",
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error querying task run".to_string(),
                 }),
             )
                 .into_response()
@@ -799,6 +898,28 @@ mod tests {
         assert!(json_str.contains(r#""expected_rgb":[40,180,60]"#));
 
         let deserialized: NextAssignmentResponse =
+            serde_json::from_str(&json_str).expect("Deserialization failed");
+        assert_eq!(deserialized, resp);
+    }
+
+    #[test]
+    fn test_task_run_response_serialization() {
+        let resp = TaskRunResponse {
+            task_run_id: 4821,
+            status: "running".to_string(),
+            automation: serde_json::json!({
+                "id": 12,
+                "name": "Sample Automation",
+                "steps": []
+            }),
+        };
+
+        let json_str = serde_json::to_string(&resp).expect("Serialization failed");
+        assert!(json_str.contains(r#""task_run_id":4821"#));
+        assert!(json_str.contains(r#""status":"running""#));
+        assert!(json_str.contains(r#""name":"Sample Automation""#));
+
+        let deserialized: TaskRunResponse =
             serde_json::from_str(&json_str).expect("Deserialization failed");
         assert_eq!(deserialized, resp);
     }
