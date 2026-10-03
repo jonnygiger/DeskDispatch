@@ -338,6 +338,8 @@ Every step primitive includes an optional post-execution delay (`post_delay_ms`)
 ### Sparse Floating-Point Step Ordering
 Step order is maintained via a `DOUBLE PRECISION` sparse `position` column. Inserting a step between position 10.0 and 20.0 assigns position 15.0 without requiring renumbering. If floating-point gaps become too tight after repeated midpoint insertions, the server automatically executes step position compaction to reset step gaps to clean increments.
 
+To prevent floating-point precision exhaustion, the task server evaluates step gaps after step additions or movements (`check_and_compact_positions`). If the difference between any two consecutive step positions falls below `0.0001`, the server automatically executes step compaction (`compact_positions`). Compaction resets all step positions within the automation back to clean increments of `10.0` (10.0, 20.0, 30.0, etc.) in a single database transaction, preserving the exact original execution order while restoring wide position gaps for future step insertions.
+
 ### Dynamic Variable & Parameter Binding
 Step parameters (coordinates, colors, thresholds) support either literal values or variable references (`automation_variables` / `automation_parameters`). Strict form-level and database `CHECK` constraints enforce that inputs contain *exactly one* literal value or variable binding. Output values from search steps (`find_pixel_rgb`, `find_bitmap`) populate variables for subsequent steps.
 
