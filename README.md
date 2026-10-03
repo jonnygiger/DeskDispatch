@@ -1,6 +1,6 @@
 # DeskDispatch
 
-DeskDispatch is a zero-JavaScript task server for GUI automations built with Rust, Axum, SQLx, Askama, PostgreSQL, and MinIO / S3.
+DeskDispatch is a zero-JavaScript task server for GUI automations built with Rust, Axum, SQLx, Askama, PostgreSQL, and RustFS / S3.
 
 ## Environment & Prerequisites
 
@@ -11,7 +11,7 @@ DeskDispatch is a zero-JavaScript task server for GUI automations built with Rus
 
 ### 1. Start Database and Storage Services
 
-Start PostgreSQL (port 5432) and MinIO (port 9000/9001):
+Start PostgreSQL (port 5432) and RustFS (port 9000/9001):
 
 ```bash
 docker compose up -d
@@ -19,8 +19,8 @@ docker compose up -d
 
 This starts:
 - PostgreSQL on `localhost:5432` (database: `deskdispatch`, user: `postgres`, password: `postgrespassword`)
-- MinIO S3 storage on `localhost:9000` (console on `http://localhost:9001`)
-- Automatic creation of the `deskdispatch-bucket` MinIO bucket via `minio-create-bucket` service.
+- RustFS S3 storage on `localhost:9000` (console on `http://localhost:9001`)
+- Automatic creation of the `deskdispatch-bucket` RustFS bucket via `rustfs-create-bucket` service.
 
 ### 2. Environment Variables
 
@@ -30,8 +30,8 @@ Create a `.env` file or export environment variables:
 DATABASE_URL=postgres://postgres:postgrespassword@localhost:5432/deskdispatch
 S3_ENDPOINT=http://localhost:9000
 S3_BUCKET=deskdispatch-bucket
-S3_ACCESS_KEY=minioadmin
-S3_SECRET_KEY=minioadminpassword
+S3_ACCESS_KEY=rustfsadmin
+S3_SECRET_KEY=rustfsadminpassword
 S3_REGION=us-east-1
 SESSION_SECRET=super-secret-key-change-me
 BIND_ADDRESS=0.0.0.0:3000
