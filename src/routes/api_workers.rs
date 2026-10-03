@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -179,6 +181,107 @@ pub async fn fetch_full_automation_json(
     .fetch_all(&mut *conn)
     .await?;
 
+    // Bolt Optimization: Batch fetch step subtype details to resolve N+1 query bottleneck.
+    // Bulk-fetch all step subtype details for this automation into HashMaps in fixed O(1) bulk queries
+    // instead of issuing O(N) database queries in a loop.
+
+    let mouse_clicks_rows = sqlx::query(
+        r#"
+        SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id, smc.button, smc.click_type
+        FROM step_mouse_clicks smc
+        JOIN automation_steps s ON smc.step_id = s.id
+        WHERE s.automation_id = $1
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut mouse_clicks_map = HashMap::new();
+    for r in mouse_clicks_rows {
+        let step_id: i64 = r.get("step_id");
+        mouse_clicks_map.insert(step_id, r);
+    }
+
+    let key_presses_rows = sqlx::query(
+        r#"
+        SELECT skp.step_id, skp.key_combo
+        FROM step_key_presses skp
+        JOIN automation_steps s ON skp.step_id = s.id
+        WHERE s.automation_id = $1
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut key_presses_map = HashMap::new();
+    for r in key_presses_rows {
+        let step_id: i64 = r.get("step_id");
+        key_presses_map.insert(step_id, r);
+    }
+
+    let find_pixel_rows = sqlx::query(
+        r#"
+        SELECT sfp.step_id, sfp.x, sfp.y, sfp.output_variable_id
+        FROM step_find_pixel_rgb sfp
+        JOIN automation_steps s ON sfp.step_id = s.id
+        WHERE s.automation_id = $1
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut find_pixel_map = HashMap::new();
+    for r in find_pixel_rows {
+        let step_id: i64 = r.get("step_id");
+        find_pixel_map.insert(step_id, r);
+    }
+
+    let find_bitmap_rows = sqlx::query(
+        r#"
+        SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.search_x, sfb.search_y, sfb.search_width, sfb.search_height,
+               sfb.match_threshold, sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id,
+               b.object_storage_key AS reference_bitmap_key
+        FROM step_find_bitmap sfb
+        JOIN automation_steps s ON sfb.step_id = s.id
+        LEFT JOIN bitmaps b ON sfb.reference_bitmap_id = b.id
+        WHERE s.automation_id = $1
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut find_bitmap_map = HashMap::new();
+    for r in find_bitmap_rows {
+        let step_id: i64 = r.get("step_id");
+        find_bitmap_map.insert(step_id, r);
+    }
+
+    let branch_rows = sqlx::query(
+        r#"
+        SELECT sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
+               sb.reference_bitmap_id, sb.search_x, sb.search_y, sb.search_width, sb.search_height, sb.match_threshold,
+               sb.on_match_step_id, sb.on_no_match_step_id,
+               b.object_storage_key AS reference_bitmap_key
+        FROM step_branches sb
+        JOIN automation_steps s ON sb.step_id = s.id
+        LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
+        WHERE s.automation_id = $1
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut branch_map = HashMap::new();
+    for r in branch_rows {
+        let step_id: i64 = r.get("step_id");
+        branch_map.insert(step_id, r);
+    }
+
     let mut steps_list = Vec::new();
     for step in step_rows {
         let step_id: i64 = step.get("id");
@@ -195,14 +298,7 @@ pub async fn fetch_full_automation_json(
 
         match step_type.as_str() {
             "mouse_click" => {
-                let mc_row = sqlx::query(
-                    "SELECT x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1",
-                )
-                .bind(step_id)
-                .fetch_optional(&mut *conn)
-                .await?;
-
-                if let Some(r) = mc_row {
+                if let Some(r) = mouse_clicks_map.get(&step_id) {
                     step_json["x"] = serde_json::json!(r.get::<Option<i32>, _>("x"));
                     step_json["y"] = serde_json::json!(r.get::<Option<i32>, _>("y"));
                     step_json["x_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("x_variable_id"));
@@ -212,47 +308,19 @@ pub async fn fetch_full_automation_json(
                 }
             }
             "key_press" => {
-                let kp_row = sqlx::query(
-                    "SELECT key_combo FROM step_key_presses WHERE step_id = $1",
-                )
-                .bind(step_id)
-                .fetch_optional(&mut *conn)
-                .await?;
-
-                if let Some(r) = kp_row {
+                if let Some(r) = key_presses_map.get(&step_id) {
                     step_json["key_combo"] = serde_json::json!(r.get::<String, _>("key_combo"));
                 }
             }
             "find_pixel_rgb" => {
-                let fp_row = sqlx::query(
-                    "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
-                )
-                .bind(step_id)
-                .fetch_optional(&mut *conn)
-                .await?;
-
-                if let Some(r) = fp_row {
+                if let Some(r) = find_pixel_map.get(&step_id) {
                     step_json["x"] = serde_json::json!(r.get::<i32, _>("x"));
                     step_json["y"] = serde_json::json!(r.get::<i32, _>("y"));
                     step_json["output_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_variable_id"));
                 }
             }
             "find_bitmap" => {
-                let fb_row = sqlx::query(
-                    r#"
-                    SELECT fb.reference_bitmap_id, fb.search_x, fb.search_y, fb.search_width, fb.search_height,
-                           fb.match_threshold, fb.output_found_variable_id, fb.output_x_variable_id, fb.output_y_variable_id,
-                           b.object_storage_key AS reference_bitmap_key
-                    FROM step_find_bitmap fb
-                    LEFT JOIN bitmaps b ON fb.reference_bitmap_id = b.id
-                    WHERE fb.step_id = $1
-                    "#,
-                )
-                .bind(step_id)
-                .fetch_optional(&mut *conn)
-                .await?;
-
-                if let Some(r) = fb_row {
+                if let Some(r) = find_bitmap_map.get(&step_id) {
                     step_json["reference_bitmap_id"] = serde_json::json!(r.get::<i64, _>("reference_bitmap_id"));
                     step_json["reference_bitmap_key"] = serde_json::json!(r.get::<Option<String>, _>("reference_bitmap_key"));
                     step_json["search_x"] = serde_json::json!(r.get::<Option<i32>, _>("search_x"));
@@ -266,22 +334,7 @@ pub async fn fetch_full_automation_json(
                 }
             }
             "branch" => {
-                let br_row = sqlx::query(
-                    r#"
-                    SELECT sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
-                           sb.reference_bitmap_id, sb.search_x, sb.search_y, sb.search_width, sb.search_height, sb.match_threshold,
-                           sb.on_match_step_id, sb.on_no_match_step_id,
-                           b.object_storage_key AS reference_bitmap_key
-                    FROM step_branches sb
-                    LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
-                    WHERE sb.step_id = $1
-                    "#,
-                )
-                .bind(step_id)
-                .fetch_optional(&mut *conn)
-                .await?;
-
-                if let Some(r) = br_row {
+                if let Some(r) = branch_map.get(&step_id) {
                     let cond_type: String = r.get("condition_type");
                     let condition_obj = if cond_type == "pixel_rgb" {
                         let exp_r: i16 = r.get::<Option<i16>, _>("expected_r").unwrap_or(0);
