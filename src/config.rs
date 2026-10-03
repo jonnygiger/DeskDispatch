@@ -28,10 +28,10 @@ impl Config {
             .unwrap_or_else(|_| "deskdispatch-bucket".to_string());
 
         let s3_access_key = env::var("S3_ACCESS_KEY")
-            .unwrap_or_else(|_| "minioadmin".to_string());
+            .unwrap_or_else(|_| "rustfsadmin".to_string());
 
         let s3_secret_key = env::var("S3_SECRET_KEY")
-            .unwrap_or_else(|_| "minioadminpassword".to_string());
+            .unwrap_or_else(|_| "rustfsadminpassword".to_string());
 
         let s3_region = env::var("S3_REGION")
             .unwrap_or_else(|_| "us-east-1".to_string());
