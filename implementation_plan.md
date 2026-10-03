@@ -7,7 +7,7 @@
 **5.** Add utility and security crates: `argon2`, `uuid`, `dotenvy`, and `croner`.
 **6.** Add observability and object storage crates: `tracing`, `tracing-subscriber`, and `aws-sdk-s3`.
 **7.** Create a `docker-compose.yml` file defining a `postgres:16` service for local development.
-**8.** Add a `minio/minio` service to `docker-compose.yml` configured with a one-shot bucket-creation script.
+**8.** Add a `RustFS` service to `docker-compose.yml` configured with a one-shot bucket-creation script.
 **9.** Create a `config.rs` module to parse environment variables for the database URL, S3 credentials, session keys, and bind address.
 **10.** Install and wire up `sqlx-cli`, creating the `migrations/` directory and an initial empty migration.
 **11.** Initialize `tracing_subscriber` to output pretty logs in development and JSON in production.
@@ -167,7 +167,7 @@
 **123.** Conduct an `EXPLAIN` query pass to verify that dispatch, scheduling, and positional queries correctly hit their intended indexes.
 **124.** Wrap all primary request handlers, database calls, and  interactions in structured `tracing` spans.
 **125.** Create a multi-stage `Dockerfile` optimizing the final binary size and layer caching for Rust.
-**126.** Create a production-ready `docker-compose.yml` integrating the application, Postgres, MinIO, and a migration startup container.
+**126.** Create a production-ready `docker-compose.yml` integrating the application, Postgres, RustFS, and a migration startup container.
 **127.** Implement `sqlx::test`-backed integration tests validating step positioning and compaction math.
 **128.** Implement `sqlx::test`-backed integration tests verifying concurrent dispatch claiming and stale-run eviction.
 **129.** Execute a final manual QA pass validating every UI route, form submission, and execution flow end-to-end.
