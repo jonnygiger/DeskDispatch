@@ -4629,4 +4629,65 @@ mod tests {
         assert!(rendered.contains("Run Now"));
         assert!(rendered.contains("test_csrf_token"));
     }
+
+    #[test]
+    fn test_automation_list_item_display_methods() {
+        use chrono::TimeZone;
+
+        let fixed_time = chrono::Utc.with_ymd_and_hms(2025, 3, 10, 14, 30, 0).unwrap();
+
+        let mut item = AutomationListItem {
+            id: 1,
+            name: "Workflow".to_string(),
+            description: "Desc".to_string(),
+            status: "active".to_string(),
+            step_count: 3,
+            updated_at: fixed_time,
+            last_run_id: Some(101),
+            last_run_status: Some("succeeded".to_string()),
+            last_run_at: Some(fixed_time),
+        };
+
+        // Status badge class tests
+        assert_eq!(item.status_badge_class(), "badge-success");
+
+        item.status = "archived".to_string();
+        assert_eq!(item.status_badge_class(), "badge-neutral");
+
+        item.status = "draft".to_string();
+        assert_eq!(item.status_badge_class(), "badge-warning");
+
+        item.status = "other".to_string();
+        assert_eq!(item.status_badge_class(), "badge-neutral");
+
+        // Restore active status
+        item.status = "active".to_string();
+
+        // Last run status badge class tests
+        assert_eq!(item.last_run_status_badge_class(), "badge-success");
+
+        item.last_run_status = Some("failed".to_string());
+        assert_eq!(item.last_run_status_badge_class(), "badge-danger");
+
+        item.last_run_status = Some("lost".to_string());
+        assert_eq!(item.last_run_status_badge_class(), "badge-danger");
+
+        item.last_run_status = Some("running".to_string());
+        assert_eq!(item.last_run_status_badge_class(), "badge-warning");
+
+        item.last_run_status = Some("unknown_status".to_string());
+        assert_eq!(item.last_run_status_badge_class(), "badge-neutral");
+
+        item.last_run_status = None;
+        assert_eq!(item.last_run_status_badge_class(), "badge-neutral");
+
+        // Formatted timestamp tests
+        assert_eq!(item.formatted_updated_at(), "2025-03-10 14:30:00");
+
+        item.last_run_at = Some(fixed_time);
+        assert_eq!(item.formatted_last_run_at(), "2025-03-10 14:30:00");
+
+        item.last_run_at = None;
+        assert_eq!(item.formatted_last_run_at(), "-");
+    }
 }
