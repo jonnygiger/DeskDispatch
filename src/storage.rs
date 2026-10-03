@@ -156,8 +156,8 @@ impl StorageService {
         expires_in: Duration,
         max_content_length: u64,
     ) -> Result<PresignedPost, StorageError> {
-        let access_key = self.access_key.as_deref().unwrap_or("minioadmin");
-        let secret_key = self.secret_key.as_deref().unwrap_or("minioadminpassword");
+        let access_key = self.access_key.as_deref().unwrap_or("rustfsadmin");
+        let secret_key = self.secret_key.as_deref().unwrap_or("rustfsadminpassword");
         let region = self.region.as_deref().unwrap_or("us-east-1");
         let endpoint_url = self.endpoint_url.as_deref().or(Some("http://localhost:9000"));
 
