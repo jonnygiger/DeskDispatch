@@ -23,8 +23,8 @@ services:
     container_name: deskdispatch-rustfs
     restart: unless-stopped
     environment:
-      RUSTFS_ROOT_USER: minioadmin
-      RUSTFS_ROOT_PASSWORD: minioadminpassword
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: rustfsadminpassword
     ports:
       - "9000:9000"
       - "9001:9001"
