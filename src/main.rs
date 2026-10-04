@@ -76,6 +76,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = sweep_stalled_task_runs(&db_pool).await {
                 tracing::error!("Error sweeping stalled task runs: {}", e);
             }
+            if let Err(e) = process_due_schedules(&db_pool).await {
+                tracing::error!("Error processing due schedules: {}", e);
+            }
         }
     });
 
@@ -125,6 +128,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/automations/{id}/bitmaps/pick-region/confirm", post(post_automation_pick_region_confirm_handler))
         .route("/media/screenshots/{id}", get(get_media_screenshot_handler))
         .route("/media/bitmaps/{id}", get(get_media_bitmap_handler))
+        .route("/schedules", get(get_schedules_handler).post(post_create_schedule_handler))
+        .route("/schedules/new", get(get_new_schedule_handler))
+        .route("/schedules/{id}/edit", get(get_edit_schedule_handler))
+        .route("/schedules/{id}", post(post_edit_schedule_handler))
+        .route("/schedules/{id}/toggle", post(post_toggle_schedule_handler))
+        .route("/schedules/{id}/delete", post(post_delete_schedule_handler))
         .route("/api/v1/workers/register", post(post_register_worker_handler))
         .route("/api/v1/workers/heartbeat", post(post_heartbeat_handler))
         .route("/api/v1/workers/next-assignment", get(get_next_assignment_handler))
