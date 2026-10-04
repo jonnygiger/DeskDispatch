@@ -9,6 +9,7 @@ use sqlx::{PgPool, Row};
 
 use super::auth::HtmlTemplate;
 use crate::auth::{log_audit, AuthUser};
+use crate::de::deserialize_option_number;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -327,6 +328,7 @@ pub struct StepKeyPressTemplate {
 #[derive(Deserialize)]
 pub struct KeyPressStepForm {
     pub label: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub post_delay_seconds: Option<f64>,
     pub key_combo: String,
 }
@@ -433,32 +435,53 @@ pub struct StepFindBitmapTemplate {
 pub struct MouseClickStepForm {
     pub step_type: Option<String>,
     pub label: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub post_delay_seconds: Option<f64>,
     pub x_mode: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub x: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub x_variable_id: Option<i64>,
     pub y_mode: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub y: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub y_variable_id: Option<i64>,
     pub button: Option<String>,
     pub click_type: Option<String>,
     pub key_combo: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub output_variable_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub reference_bitmap_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub search_x: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub search_y: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub search_width: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub search_height: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub match_threshold: Option<f32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub output_found_variable_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub output_x_variable_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub output_y_variable_id: Option<i64>,
     pub condition_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub expected_r: Option<i16>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub expected_g: Option<i16>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub expected_b: Option<i16>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub tolerance: Option<i16>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub on_match_step_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub on_no_match_step_id: Option<i64>,
 }
 

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use super::auth::HtmlTemplate;
 use crate::auth::{log_audit, AuthUser, UserRole};
+use crate::de::deserialize_option_number;
 use crate::magnifier::ImageMagnifier;
 use crate::picker::{map_coarse_click_to_native, map_grid_click_to_native};
 use crate::AppState;
@@ -46,13 +47,16 @@ pub struct PickRegionQuery {
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct PickRegionTopLeftForm {
     pub csrf_token: String,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub automation_id: Option<i64>,
     pub image_url: String,
     pub width: u32,
     pub height: u32,
     pub return_to: Option<String>,
     pub mode: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub step_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub reference_bitmap_id: Option<i64>,
     #[serde(alias = "click.x", default)]
     pub x: u32,
@@ -63,6 +67,7 @@ pub struct PickRegionTopLeftForm {
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct PickRegionBottomRightForm {
     pub csrf_token: String,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub automation_id: Option<i64>,
     pub image_url: String,
     pub width: u32,
@@ -71,21 +76,24 @@ pub struct PickRegionBottomRightForm {
     pub top_left_y: u32,
     pub return_to: Option<String>,
     pub mode: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub step_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub reference_bitmap_id: Option<i64>,
-    #[serde(alias = "grid_click.x", default)]
+    #[serde(alias = "grid_click.x", default, deserialize_with = "deserialize_option_number")]
     pub grid_x: Option<u32>,
-    #[serde(alias = "grid_click.y", default)]
+    #[serde(alias = "grid_click.y", default, deserialize_with = "deserialize_option_number")]
     pub grid_y: Option<u32>,
-    #[serde(alias = "coarse_click.x", default)]
+    #[serde(alias = "coarse_click.x", default, deserialize_with = "deserialize_option_number")]
     pub coarse_x: Option<u32>,
-    #[serde(alias = "coarse_click.y", default)]
+    #[serde(alias = "coarse_click.y", default, deserialize_with = "deserialize_option_number")]
     pub coarse_y: Option<u32>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct PickRegionConfirmForm {
     pub csrf_token: String,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub automation_id: Option<i64>,
     pub name: Option<String>,
     pub image_url: String,
@@ -97,7 +105,9 @@ pub struct PickRegionConfirmForm {
     pub bottom_right_y: u32,
     pub return_to: Option<String>,
     pub mode: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub step_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub reference_bitmap_id: Option<i64>,
 }
 
@@ -378,7 +388,12 @@ pub async fn post_bitmaps_handler(
 
     let storage = state.storage_service();
     let presigned_post = match storage
-        .generate_presigned_post(&object_key, Duration::from_secs(900), 10_485_760)
+        .generate_presigned_post(
+            &object_key,
+            Duration::from_secs(900),
+            10_485_760,
+            Some(&redirect_url),
+        )
         .await
     {
         Ok(post) => post,
@@ -388,9 +403,6 @@ pub async fn post_bitmaps_handler(
         }
     };
 
-    let mut presigned_fields: Vec<(String, String)> = presigned_post.fields.into_iter().collect();
-    presigned_fields.sort_by(|a, b| a.0.cmp(&b.0));
-
     HtmlTemplate(BitmapsUploadTemplate {
         user,
         csrf_token: form.csrf_token,
@@ -398,7 +410,7 @@ pub async fn post_bitmaps_handler(
         object_storage_key: object_key,
         automation_id: None,
         presigned_post_url: presigned_post.url,
-        presigned_fields,
+        presigned_fields: presigned_post.ordered_fields,
         redirect_url,
     })
     .into_response()
@@ -448,7 +460,12 @@ pub async fn post_automation_bitmaps_handler(
 
     let storage = state.storage_service();
     let presigned_post = match storage
-        .generate_presigned_post(&object_key, Duration::from_secs(900), 10_485_760)
+        .generate_presigned_post(
+            &object_key,
+            Duration::from_secs(900),
+            10_485_760,
+            Some(&redirect_url),
+        )
         .await
     {
         Ok(post) => post,
@@ -458,9 +475,6 @@ pub async fn post_automation_bitmaps_handler(
         }
     };
 
-    let mut presigned_fields: Vec<(String, String)> = presigned_post.fields.into_iter().collect();
-    presigned_fields.sort_by(|a, b| a.0.cmp(&b.0));
-
     HtmlTemplate(BitmapsUploadTemplate {
         user,
         csrf_token: form.csrf_token,
@@ -468,7 +482,7 @@ pub async fn post_automation_bitmaps_handler(
         object_storage_key: object_key,
         automation_id: Some(id),
         presigned_post_url: presigned_post.url,
-        presigned_fields,
+        presigned_fields: presigned_post.ordered_fields,
         redirect_url,
     })
     .into_response()

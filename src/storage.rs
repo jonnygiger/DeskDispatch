@@ -20,6 +20,7 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
 pub struct PresignedPost {
     pub url: String,
     pub fields: HashMap<String, String>,
+    pub ordered_fields: Vec<(String, String)>,
 }
 
 #[derive(Debug)]
@@ -155,6 +156,7 @@ impl StorageService {
         object_key: &str,
         expires_in: Duration,
         max_content_length: u64,
+        success_action_redirect: Option<&str>,
     ) -> Result<PresignedPost, StorageError> {
         let access_key = self.access_key.as_deref().unwrap_or("rustfsadmin");
         let secret_key = self.secret_key.as_deref().unwrap_or("rustfsadminpassword");
@@ -170,6 +172,7 @@ impl StorageService {
             secret_key,
             region,
             endpoint_url,
+            success_action_redirect,
         )
     }
 }
@@ -203,6 +206,7 @@ pub fn generate_presigned_post_policy(
     secret_key: &str,
     region: &str,
     endpoint_url: Option<&str>,
+    success_action_redirect: Option<&str>,
 ) -> Result<PresignedPost, StorageError> {
     let now = Utc::now();
     let duration = chrono::TimeDelta::from_std(expires_in)
@@ -216,17 +220,24 @@ pub fn generate_presigned_post_policy(
     let credential_scope = format!("{}/{}/s3/aws4_request", date_str, region);
     let credential = format!("{}/{}", access_key, credential_scope);
 
+    let mut conditions = vec![
+        serde_json::json!({ "bucket": bucket }),
+        serde_json::json!({ "key": object_key }),
+        serde_json::json!({ "x-amz-algorithm": "AWS4-HMAC-SHA256" }),
+        serde_json::json!({ "x-amz-credential": credential }),
+        serde_json::json!({ "x-amz-date": amz_date }),
+        serde_json::json!([ "content-length-range", 0, max_content_length ]),
+    ];
+
+    if let Some(redirect) = success_action_redirect {
+        conditions.push(serde_json::json!({ "success_action_redirect": redirect }));
+    } else {
+        conditions.push(serde_json::json!([ "starting-with", "$success_action_redirect", "" ]));
+    }
+
     let policy_json = serde_json::json!({
         "expiration": expiration_iso,
-        "conditions": [
-            { "bucket": bucket },
-            { "key": object_key },
-            { "x-amz-algorithm": "AWS4-HMAC-SHA256" },
-            { "x-amz-credential": credential },
-            { "x-amz-date": amz_date },
-            [ "starting-with", "$success_action_redirect", "" ],
-            [ "content-length-range", 0, max_content_length ]
-        ]
+        "conditions": conditions,
     });
 
     let policy_str = policy_json.to_string();
@@ -245,10 +256,25 @@ pub fn generate_presigned_post_policy(
     let mut fields = HashMap::new();
     fields.insert("key".to_string(), object_key.to_string());
     fields.insert("x-amz-algorithm".to_string(), "AWS4-HMAC-SHA256".to_string());
-    fields.insert("x-amz-credential".to_string(), credential);
-    fields.insert("x-amz-date".to_string(), amz_date);
-    fields.insert("policy".to_string(), policy_base64);
-    fields.insert("x-amz-signature".to_string(), signature_hex);
+    fields.insert("x-amz-credential".to_string(), credential.clone());
+    fields.insert("x-amz-date".to_string(), amz_date.clone());
+    if let Some(redirect) = success_action_redirect {
+        fields.insert("success_action_redirect".to_string(), redirect.to_string());
+    }
+    fields.insert("policy".to_string(), policy_base64.clone());
+    fields.insert("x-amz-signature".to_string(), signature_hex.clone());
+
+    let mut ordered_fields = vec![
+        ("key".to_string(), object_key.to_string()),
+        ("x-amz-algorithm".to_string(), "AWS4-HMAC-SHA256".to_string()),
+        ("x-amz-credential".to_string(), credential),
+        ("x-amz-date".to_string(), amz_date),
+    ];
+    if let Some(redirect) = success_action_redirect {
+        ordered_fields.push(("success_action_redirect".to_string(), redirect.to_string()));
+    }
+    ordered_fields.push(("policy".to_string(), policy_base64));
+    ordered_fields.push(("x-amz-signature".to_string(), signature_hex));
 
     let url = match endpoint_url {
         Some(endpoint) => {
@@ -258,7 +284,11 @@ pub fn generate_presigned_post_policy(
         None => format!("https://{}.s3.{}.amazonaws.com", bucket, region),
     };
 
-    Ok(PresignedPost { url, fields })
+    Ok(PresignedPost {
+        url,
+        fields,
+        ordered_fields,
+    })
 }
 
 /// Standalone helper function to generate a presigned PUT URL using an S3 Client, bucket, key, and expiration duration.
@@ -374,6 +404,7 @@ mod tests {
             secret_key,
             region,
             endpoint_url,
+            Some("http://localhost:3000/bitmaps/commit?key=bitmaps/button.png&name=button"),
         )
         .unwrap();
 
@@ -438,7 +469,12 @@ mod tests {
         );
 
         let post = storage
-            .generate_presigned_post("bitmaps/upload_1.png", Duration::from_secs(300), 5_000_000)
+            .generate_presigned_post(
+                "bitmaps/upload_1.png",
+                Duration::from_secs(300),
+                5_000_000,
+                Some("http://s3.local:9000/commit"),
+            )
             .await
             .unwrap();
 
