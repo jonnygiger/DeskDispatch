@@ -2,10 +2,7 @@ use app::auth::LoginRateLimiter;
 use app::config::Config;
 use app::routes::get_index_handler;
 use app::AppState;
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Argon2,
-};
+use argon2::{PasswordHasher, Argon2};
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -32,9 +29,8 @@ async fn test_dashboard_stats_tiles() {
 
     // Seed test user
     let username = format!("dashuser_{}", Uuid::new_v4().simple());
-    let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
-        .hash_password("Password123!".as_bytes(), &salt)
+        .hash_password("Password123!".as_bytes())
         .unwrap()
         .to_string();
 
