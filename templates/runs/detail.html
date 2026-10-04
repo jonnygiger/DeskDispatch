@@ -1,0 +1,162 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Task Run #{{ run.id }} - DeskDispatch{% endblock %}
+
+{% block head %}
+{% if auto_refresh %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "runs") %}
+{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 1rem;">
+    <a href="/runs" style="font-size: 0.875rem; color: var(--color-primary); text-decoration: none;">← Back to Task Runs</a>
+</div>
+
+<div class="dashboard-header">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <h1 class="dashboard-title">Task Run #{{ run.id }}</h1>
+        <span class="badge {{ run.status_badge_class() }}" style="font-size: 0.875rem; padding: 0.25rem 0.6rem;">
+            {{ run.status }}
+        </span>
+    </div>
+
+    {% if user.role.can_edit() %}
+        {% if run.status == "queued" || run.status == "running" %}
+        <form method="post" action="/runs/{{ run.id }}/cancel">
+            {% call macros::csrf_field(csrf_token) %}
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to cancel this task run?');">
+                Cancel Run
+            </button>
+        </form>
+        {% endif %}
+    {% endif %}
+</div>
+
+{% if let Some(err_msg) = run.error_message %}
+<div class="alert alert-danger" style="margin-bottom: 1.5rem;">
+    <strong>Run Error:</strong> {{ err_msg }}
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Run Overview</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; font-size: 0.875rem;">
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Automation</div>
+            <a href="/automations/{{ run.automation_id }}" style="font-weight: 600;">{{ run.automation_name }}</a>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Worker</div>
+            {% if let Some(wid) = run.worker_id %}
+                <a href="/workers/{{ wid }}" style="font-weight: 600;">{{ run.worker_name.as_deref().unwrap_or("Worker") }}</a>
+            {% else %}
+                <span style="color: var(--color-text-muted);">-</span>
+            {% endif %}
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Triggered By</div>
+            <div style="font-weight: 500;">{{ run.triggered_by }}</div>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Queued At</div>
+            <div>{{ run.formatted_queued_at() }}</div>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Started At</div>
+            <div>{{ run.formatted_started_at() }}</div>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Completed At</div>
+            <div>{{ run.formatted_completed_at() }}</div>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Duration</div>
+            <div>{{ run.duration_display() }}</div>
+        </div>
+    </div>
+</div>
+
+{% if !variable_values.is_empty() %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Captured Variable Values</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Variable Name</th>
+                <th>Type</th>
+                <th>Value</th>
+                <th>Set At</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for var in variable_values %}
+            <tr>
+                <td><strong>«{{ var.variable_name }}»</strong></td>
+                <td><code>{{ var.var_type }}</code></td>
+                <td><code style="background: rgba(0,0,0,0.05); padding: 0.2rem 0.4rem; border-radius: 4px;">{{ var.value }}</code></td>
+                <td>{{ var.formatted_set_at() }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Executed Steps Log</h2>
+    {% if steps.is_empty() %}
+        <p style="color: var(--color-text-muted); font-size: 0.875rem;">No steps executed yet for this task run.</p>
+    {% else %}
+        <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+            {% for step in steps %}
+            <div style="border: 1px solid var(--color-border); border-radius: 8px; padding: 1.25rem; background: var(--color-bg-card);">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+                    <div>
+                        <h3 style="font-size: 1rem; font-weight: 600; margin: 0 0 0.25rem 0;">
+                            Step {{ step.step_number }} — {{ step.step_type }}
+                            {% if let Some(lbl) = step.label %}
+                                <span style="font-weight: 400; color: var(--color-text-muted);">({{ lbl }})</span>
+                            {% endif %}
+                        </h3>
+                        <div style="font-size: 0.8125rem; color: var(--color-text-muted);">
+                            Started: {{ step.formatted_started_at() }} · Completed: {{ step.formatted_completed_at() }}
+                        </div>
+                    </div>
+                    {% if let Some(res) = step.result %}
+                        <span class="badge {{ step.result_badge_class() }}">{{ res }}</span>
+                    {% else %}
+                        <span class="badge badge-secondary">running</span>
+                    {% endif %}
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; font-size: 0.875rem;">
+                    {% if let Some(rgb) = step.captured_rgb_display() %}
+                    <div><strong>Captured RGB:</strong> <code>{{ rgb }}</code></div>
+                    {% endif %}
+
+                    {% if let Some(found) = step.captured_found %}
+                    <div><strong>Captured Found:</strong> <code>{{ found }}</code></div>
+                    {% endif %}
+
+                    {% if let Some(xy) = step.captured_xy_display() %}
+                    <div><strong>Captured Position:</strong> <code>{{ xy }}</code></div>
+                    {% endif %}
+                </div>
+
+                {% if let Some(mag) = step.magnifier %}
+                <div style="margin-top: 1rem;">
+                    {% call macros::image_magnifier(mag) %}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

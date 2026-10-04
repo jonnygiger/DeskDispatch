@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Run #4821 - DeskDispatch</title>
+    <link rel="stylesheet" href="/static/style.css">
+
+
+
+</head>
+<body>
+
+
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+    <ul class="top-nav-menu">
+        <li><a href="/" >Dashboard</a></li>
+        <li><a href="/automations" >Automations</a></li>
+        <li><a href="/schedules" >Schedules</a></li>
+        <li><a href="/runs" class="active">Runs</a></li>
+        <li><a href="/workers" >Workers</a></li>
+
+        <li><a href="/users" >Users</a></li>
+
+    </ul>
+    <div class="top-nav-user">
+        <a href="/account" >Admin User</a>
+        <form method="post" action="/logout" style="display:inline;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
+        </form>
+    </div>
+</header>
+
+
+
+    <div class="app-container">
+
+        <main class="main-content">
+
+<div style="margin-bottom: 1rem;">
+    <a href="/runs" style="font-size: 0.875rem; color: var(--color-primary); text-decoration: none;">← Back to Task Runs</a>
+</div>
+
+<div class="dashboard-header">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <h1 class="dashboard-title">Task Run #4821</h1>
+        <span class="badge badge-success" style="font-size: 0.875rem; padding: 0.25rem 0.6rem;">
+            succeeded
+        </span>
+    </div>
+
+
+
+
+</div>
+
+
+
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Run Overview</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; font-size: 0.875rem;">
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Automation</div>
+            <a href="/automations/12" style="font-weight: 600;">Daily Login Check</a>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Worker</div>
+
+                <a href="/workers/1" style="font-weight: 600;">Warehouse Worker PC</a>
+
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Triggered By</div>
+            <div style="font-weight: 500;">Morning Schedule</div>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Queued At</div>
+            <div>2026-10-04 12:13:38</div>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Started At</div>
+            <div>2026-10-04 12:13:38</div>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Completed At</div>
+            <div>2026-10-04 12:13:38</div>
+        </div>
+        <div>
+            <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Duration</div>
+            <div>0s</div>
+        </div>
+    </div>
+</div>
+
+
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Captured Variable Values</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Variable Name</th>
+                <th>Type</th>
+                <th>Value</th>
+                <th>Set At</th>
+            </tr>
+        </thead>
+        <tbody>
+
+            <tr>
+                <td><strong>«login_button_x»</strong></td>
+                <td><code>int</code></td>
+                <td><code style="background: rgba(0,0,0,0.05); padding: 0.2rem 0.4rem; border-radius: 4px;">824</code></td>
+                <td>2026-10-04 12:13:38</td>
+            </tr>
+
+        </tbody>
+    </table>
+</div>
+
+
+<div class="card">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Executed Steps Log</h2>
+
+        <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+
+            <div style="border: 1px solid var(--color-border); border-radius: 8px; padding: 1.25rem; background: var(--color-bg-card);">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+                    <div>
+                        <h3 style="font-size: 1rem; font-weight: 600; margin: 0 0 0.25rem 0;">
+                            Step 1 — mouse_click
+
+                                <span style="font-weight: 400; color: var(--color-text-muted);">(Click login button)</span>
+
+                        </h3>
+                        <div style="font-size: 0.8125rem; color: var(--color-text-muted);">
+                            Started: 2026-10-04 12:13:38 · Completed: 2026-10-04 12:13:38
+                        </div>
+                    </div>
+
+                        <span class="badge badge-success">success</span>
+
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; font-size: 0.875rem;">
+
+                    <div><strong>Captured RGB:</strong> <code>RGB(40, 180, 60)</code></div>
+
+
+
+                    <div><strong>Captured Found:</strong> <code>true</code></div>
+
+
+
+                    <div><strong>Captured Position:</strong> <code>(824, 391)</code></div>
+
+                </div>
+
+
+                <div style="margin-top: 1rem;">
+
+<div class="shot-container">
+    <div class="shot shot--normal" style="background-image: url(&#x27;https://via.placeholder.com/800x600.png&#x27;); background-size: contain; background-position: center;">
+
+        <span class="marker" style="left: 130.00px; top: 85.00px;"></span>
+
+    </div>
+    <div class="shot shot--zoom400" style="background-image: url(&#x27;https://via.placeholder.com/800x600.png&#x27;); background-size: 3200px 2400px; background-position: -240.00px -440.00px;">
+
+        <span class="marker" style="left: 160px; top: 160px;"></span>
+
+    </div>
+    <div class="shot shot--grid" style="background-image: repeating-linear-gradient(to right, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), repeating-linear-gradient(to bottom, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), url(&#x27;https://via.placeholder.com/800x600.png&#x27;); background-size: 20px 20px, 20px 20px, 16000px 12000px; background-position: 0 0, 0 0, -1850.00px -2850.00px;">
+
+        <span class="marker" style="left: 160px; top: 160px;"></span>
+
+    </div>
+</div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+</div>
+
+        </main>
+    </div>
+
+    <footer class="footer">
+
+        &copy; DeskDispatch — Task Server
+
+    </footer>
+</body>
+</html>

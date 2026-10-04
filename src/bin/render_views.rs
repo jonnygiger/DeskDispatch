@@ -5,6 +5,7 @@ use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate, BitmapsUploadTem
 use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
 use app::routes::home::{IndexTemplate, RecentRunItem};
 use app::routes::media::DevMagnifierTemplate;
+use app::routes::runs::*;
 use app::routes::workers::*;
 use askama::Template;
 use chrono::Utc;
@@ -107,7 +108,7 @@ fn main() {
     fs::write("rendered_templates/image_magnifier.html", mag_html).unwrap();
 
     let dev_mag_tmpl = DevMagnifierTemplate {
-        magnifier: mag,
+        magnifier: mag.clone(),
     };
     fs::write("rendered_templates/dev_magnifier.html", dev_mag_tmpl.render().unwrap()).unwrap();
 
@@ -304,6 +305,78 @@ fn main() {
         is_edit: true,
     };
     fs::write("rendered_templates/worker_group_form.html", group_form_tmpl.render().unwrap()).unwrap();
+
+    let sample_run_item = TaskRunListItem {
+        id: 4821,
+        automation_id: 12,
+        automation_name: "Daily Login Check".to_string(),
+        schedule_id: Some(1),
+        schedule_name: Some("Morning Schedule".to_string()),
+        worker_id: Some(1),
+        worker_name: Some("Warehouse Worker PC".to_string()),
+        status: "succeeded".to_string(),
+        triggered_by: "Morning Schedule".to_string(),
+        queued_at: Utc::now(),
+        started_at: Some(Utc::now()),
+        completed_at: Some(Utc::now()),
+        error_message: None,
+    };
+
+    let runs_list_tmpl = RunsListTemplate {
+        user: user.clone(),
+        csrf_token: "test_csrf_token_12345".to_string(),
+        runs: vec![sample_run_item.clone()],
+        automations: vec![AutomationOption {
+            id: 12,
+            name: "Daily Login Check".to_string(),
+        }],
+        workers: vec![WorkerOption {
+            id: 1,
+            display_name: "Warehouse Worker PC".to_string(),
+        }],
+        filter_automation_id: None,
+        filter_worker_id: None,
+        filter_status: None,
+    };
+    fs::write("rendered_templates/runs_list.html", runs_list_tmpl.render().unwrap()).unwrap();
+
+    let sample_exec_step = ExecutedStepItem {
+        id: 1,
+        step_id: 501,
+        step_number: 1,
+        step_type: "mouse_click".to_string(),
+        label: Some("Click login button".to_string()),
+        result: Some("success".to_string()),
+        started_at: Utc::now(),
+        completed_at: Some(Utc::now()),
+        captured_r: Some(40),
+        captured_g: Some(180),
+        captured_b: Some(60),
+        captured_found: Some(true),
+        captured_x: Some(824),
+        captured_y: Some(391),
+        screenshot_object_key: Some("runs/4821/step_501.png".to_string()),
+        magnifier: Some(mag),
+    };
+
+    let sample_var_val = RunVariableValueItem {
+        variable_id: 1,
+        variable_name: "login_button_x".to_string(),
+        var_type: "int".to_string(),
+        value: "824".to_string(),
+        set_at_step_id: Some(501),
+        set_at: Utc::now(),
+    };
+
+    let run_detail_tmpl = RunDetailTemplate {
+        user: user.clone(),
+        csrf_token: "test_csrf_token_12345".to_string(),
+        run: sample_run_item,
+        steps: vec![sample_exec_step],
+        variable_values: vec![sample_var_val],
+        auto_refresh: false,
+    };
+    fs::write("rendered_templates/runs_detail.html", run_detail_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }
