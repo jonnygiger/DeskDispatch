@@ -485,21 +485,30 @@ pub async fn get_workers_handler(
         }
     };
 
-    let mut workers = Vec::new();
+    // Optimization: Bulk-fetch worker group memberships in a single query to eliminate N+1 DB queries per worker
+    let mut worker_groups_map: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Ok(group_mappings) = sqlx::query(
+        r#"
+        SELECT m.worker_id, g.name
+        FROM worker_group_members m
+        JOIN worker_groups g ON g.id = m.group_id
+        ORDER BY g.name ASC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        for r in group_mappings {
+            let worker_id: i64 = r.get("worker_id");
+            let group_name: String = r.get("name");
+            worker_groups_map.entry(worker_id).or_default().push(group_name);
+        }
+    }
+
+    let mut workers = Vec::with_capacity(workers_rows.len());
     for row in workers_rows {
-        let groups_rows: Vec<String> = sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT g.name
-            FROM worker_groups g
-            JOIN worker_group_members m ON g.id = m.group_id
-            WHERE m.worker_id = $1
-            ORDER BY g.name ASC
-            "#,
-        )
-        .bind(row.id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+        let groups_rows = worker_groups_map.remove(&row.id).unwrap_or_default();
 
         workers.push(WorkerPcItem {
             id: row.id,
@@ -537,22 +546,30 @@ pub async fn get_workers_handler(
         }
     };
 
-    let mut worker_groups = Vec::new();
-    for row in groups_rows {
-        let members: Vec<String> = sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT w.display_name
-            FROM task_worker_pcs w
-            JOIN worker_group_members m ON w.id = m.worker_id
-            WHERE m.group_id = $1
-            ORDER BY w.display_name ASC
-            "#,
-        )
-        .bind(row.id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    // Optimization: Bulk-fetch group members in a single query to eliminate N+1 DB queries per group
+    let mut group_members_map: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Ok(member_mappings) = sqlx::query(
+        r#"
+        SELECT m.group_id, w.display_name
+        FROM worker_group_members m
+        JOIN task_worker_pcs w ON w.id = m.worker_id
+        ORDER BY w.display_name ASC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        for r in member_mappings {
+            let group_id: i64 = r.get("group_id");
+            let display_name: String = r.get("display_name");
+            group_members_map.entry(group_id).or_default().push(display_name);
+        }
+    }
 
+    let mut worker_groups = Vec::with_capacity(groups_rows.len());
+    for row in groups_rows {
+        let members = group_members_map.remove(&row.id).unwrap_or_default();
         let member_count = members.len() as i64;
 
         worker_groups.push(WorkerGroupItem {
