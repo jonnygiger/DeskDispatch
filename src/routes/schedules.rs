@@ -132,6 +132,7 @@ pub fn compute_next_run_at(
         .map_err(|e| format!("Failed to compute next run time: {}", e))
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_schedules_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -186,6 +187,7 @@ pub async fn get_schedules_handler(
     HtmlTemplate(SchedulesIndexTemplate { user, schedules }).into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_new_schedule_handler(
     State(state): State<AppState>,
     RequireEditor(user): RequireEditor,
@@ -221,6 +223,7 @@ pub async fn get_new_schedule_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_create_schedule_handler(
     State(state): State<AppState>,
     RequireEditor(user): RequireEditor,
@@ -355,6 +358,7 @@ pub async fn post_create_schedule_handler(
     Redirect::to("/schedules").into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_edit_schedule_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -410,6 +414,7 @@ pub async fn get_edit_schedule_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_edit_schedule_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -545,6 +550,7 @@ pub async fn post_edit_schedule_handler(
     Redirect::to("/schedules").into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn post_toggle_schedule_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -605,6 +611,7 @@ pub async fn post_toggle_schedule_handler(
     Redirect::to("/schedules").into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn post_delete_schedule_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -635,6 +642,7 @@ pub async fn post_delete_schedule_handler(
     }
 }
 
+#[tracing::instrument(skip(pool))]
 pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
 

@@ -1,5 +1,6 @@
 use sqlx::PgPool;
 
+#[tracing::instrument(skip(pool))]
 pub async fn log_audit(
     pool: &PgPool,
     user_id: Option<i64>,

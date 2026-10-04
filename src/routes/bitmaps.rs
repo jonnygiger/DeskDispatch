@@ -20,12 +20,12 @@ pub struct BitmapUploadForm {
     pub name: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct DeleteBitmapForm {
     pub csrf_token: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct BitmapCommitQuery {
     pub key: String,
     pub name: String,
@@ -180,6 +180,7 @@ pub struct BitmapsListTemplate {
 
 /// GET /bitmaps
 /// Renders the list page for all reference bitmaps in the system.
+#[tracing::instrument(skip(state, user))]
 pub async fn get_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -257,6 +258,7 @@ pub async fn get_bitmaps_handler(
 
 /// GET /automations/{id}/bitmaps
 /// Renders the reference bitmaps list page scoped to a specific automation.
+#[tracing::instrument(skip(state, user))]
 pub async fn get_automation_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -348,6 +350,7 @@ pub async fn get_automation_bitmaps_handler(
 
 /// POST /bitmaps
 /// Handles initial bitmap name submission, generating an S3 presigned POST policy form.
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -418,6 +421,7 @@ pub async fn post_bitmaps_handler(
 
 /// POST /automations/{id}/bitmaps
 /// Handles initial bitmap name submission scoped to an automation ID.
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_automation_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -490,6 +494,7 @@ pub async fn post_automation_bitmaps_handler(
 
 /// GET /bitmaps/commit
 /// S3 redirect callback following direct browser upload via presigned POST policy.
+#[tracing::instrument(skip(state, user))]
 pub async fn get_bitmap_commit_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -663,6 +668,7 @@ async fn delete_bitmap_logic(
 
 /// POST /bitmaps/{id}/delete
 /// Handles bitmap deletion from database and object storage.
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_delete_bitmap_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -674,6 +680,7 @@ pub async fn post_delete_bitmap_handler(
 
 /// POST /automations/{id}/bitmaps/{bid}/delete
 /// Handles bitmap deletion scoped to an automation ID.
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_automation_delete_bitmap_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -685,6 +692,7 @@ pub async fn post_automation_delete_bitmap_handler(
 
 /// GET /bitmaps/pick-region
 /// Renders initial Step 1 of two-click region picker to capture top-left corner.
+#[tracing::instrument(skip(user))]
 pub async fn get_pick_region_handler(
     user: AuthUser,
     Query(query): Query<PickRegionQuery>,
@@ -720,6 +728,7 @@ pub async fn get_pick_region_handler(
 
 /// GET /automations/{id}/bitmaps/pick-region
 /// Renders initial Step 1 of two-click region picker scoped to an automation ID.
+#[tracing::instrument(skip(user))]
 pub async fn get_automation_pick_region_handler(
     user: AuthUser,
     Path(id): Path<i64>,
@@ -756,6 +765,7 @@ pub async fn get_automation_pick_region_handler(
 
 /// POST /bitmaps/pick-region
 /// Processes coarse top-left image input click coordinates for region selection.
+#[tracing::instrument(skip(user, form))]
 pub async fn post_pick_region_top_left_handler(
     user: AuthUser,
     Form(form): Form<PickRegionTopLeftForm>,
@@ -806,6 +816,7 @@ pub async fn post_pick_region_top_left_handler(
 
 /// POST /automations/{id}/bitmaps/pick-region
 /// Processes coarse top-left image input click coordinates scoped to an automation ID.
+#[tracing::instrument(skip(user, form))]
 pub async fn post_automation_pick_region_top_left_handler(
     user: AuthUser,
     Path(id): Path<i64>,
@@ -857,6 +868,7 @@ pub async fn post_automation_pick_region_top_left_handler(
 
 /// POST /bitmaps/pick-region/bottom-right
 /// Processes grid view or coarse image click coordinates for bottom-right corner selection.
+#[tracing::instrument(skip(user, form))]
 pub async fn post_pick_region_bottom_right_handler(
     user: AuthUser,
     Form(form): Form<PickRegionBottomRightForm>,
@@ -925,6 +937,7 @@ pub async fn post_pick_region_bottom_right_handler(
 
 /// POST /automations/{id}/bitmaps/pick-region/bottom-right
 /// Processes grid view or coarse image click coordinates for bottom-right corner selection scoped to an automation ID.
+#[tracing::instrument(skip(user, form))]
 pub async fn post_automation_pick_region_bottom_right_handler(
     user: AuthUser,
     Path(id): Path<i64>,
@@ -1011,6 +1024,7 @@ async fn crop_image_region(
     buf.into_inner()
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn confirm_region_crop_logic(
     state: &AppState,
     user: &AuthUser,
@@ -1148,6 +1162,7 @@ pub async fn confirm_region_crop_logic(
 
 /// POST /bitmaps/pick-region/confirm
 /// Confirms and saves a selected region crop as a reference bitmap.
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_pick_region_confirm_handler(
     State(state): State<AppState>,
     user: AuthUser,

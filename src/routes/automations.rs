@@ -541,6 +541,7 @@ pub async fn fetch_available_bitmaps(db: &PgPool, automation_id: i64) -> Vec<Bit
 }
 
 /// GET /automations
+#[tracing::instrument(skip(state, user))]
 pub async fn get_automations_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -603,6 +604,7 @@ pub async fn get_automations_handler(
 }
 
 /// GET /automations/new
+#[tracing::instrument(skip(user))]
 pub async fn get_new_automation_handler(user: AuthUser) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
     HtmlTemplate(AutomationNewTemplate {
@@ -615,6 +617,7 @@ pub async fn get_new_automation_handler(user: AuthUser) -> impl IntoResponse {
 }
 
 /// POST /automations
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_automations_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -775,6 +778,7 @@ pub fn validate_literal_or_reference<T>(
 }
 
 /// GET /automations/{id}/variables
+#[tracing::instrument(skip(state, user))]
 pub async fn get_automation_variables_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -812,6 +816,7 @@ pub async fn get_automation_variables_handler(
 }
 
 /// POST /automations/{id}/variables
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_create_automation_variable_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -945,6 +950,7 @@ pub async fn post_create_automation_variable_handler(
 }
 
 /// POST /automations/{id}/variables/{vid}
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_update_automation_variable_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1076,6 +1082,7 @@ pub async fn post_update_automation_variable_handler(
 }
 
 /// POST /automations/{id}/variables/{vid}/delete
+#[tracing::instrument(skip(state, user))]
 pub async fn post_delete_automation_variable_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1155,6 +1162,7 @@ pub async fn post_delete_automation_variable_handler(
 }
 
 /// GET /automations/{id}/parameters
+#[tracing::instrument(skip(state, user))]
 pub async fn get_automation_parameters_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1192,6 +1200,7 @@ pub async fn get_automation_parameters_handler(
 }
 
 /// POST /automations/{id}/parameters
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_create_automation_parameter_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1330,6 +1339,7 @@ pub async fn post_create_automation_parameter_handler(
 }
 
 /// POST /automations/{id}/parameters/{pid}
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_update_automation_parameter_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1466,6 +1476,7 @@ pub async fn post_update_automation_parameter_handler(
 }
 
 /// POST /automations/{id}/parameters/{pid}/delete
+#[tracing::instrument(skip(state, user))]
 pub async fn post_delete_automation_parameter_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1520,6 +1531,7 @@ pub async fn post_delete_automation_parameter_handler(
 }
 
 /// GET /automations/{id}
+#[tracing::instrument(skip(state, user))]
 pub async fn get_automation_detail_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1862,6 +1874,7 @@ async fn get_step_target_label(
 }
 
 /// POST /automations/{id}
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_automation_edit_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1909,6 +1922,7 @@ pub async fn post_automation_edit_handler(
 }
 
 /// GET /automations/{id}/delete
+#[tracing::instrument(skip(state, user))]
 pub async fn get_automation_delete_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1936,6 +1950,7 @@ pub async fn get_automation_delete_handler(
 }
 
 /// POST /automations/{id}/delete
+#[tracing::instrument(skip(state, user))]
 pub async fn post_automation_delete_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1966,6 +1981,7 @@ pub async fn post_automation_delete_handler(
 }
 
 /// POST /automations/{id}/run-now
+#[tracing::instrument(skip(state, user))]
 pub async fn post_run_now_automation_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -2023,6 +2039,7 @@ pub async fn post_run_now_automation_handler(
 }
 
 /// GET /automations/{id}/steps/new
+#[tracing::instrument(skip(user))]
 pub async fn get_step_type_picker_handler(user: AuthUser, Path(id): Path<i64>) -> impl IntoResponse {
     HtmlTemplate(StepTypePickerTemplate {
         user,
@@ -2031,6 +2048,7 @@ pub async fn get_step_type_picker_handler(user: AuthUser, Path(id): Path<i64>) -
 }
 
 /// GET /automations/{id}/steps/new/key_press
+#[tracing::instrument(skip(user))]
 pub async fn get_new_key_press_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
@@ -2050,6 +2068,7 @@ pub async fn get_new_key_press_step_handler(
 }
 
 /// GET /automations/{id}/steps/new/branch
+#[tracing::instrument(skip(state, user))]
 pub async fn get_new_branch_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -2091,6 +2110,7 @@ pub async fn get_new_branch_step_handler(
 }
 
 /// GET /automations/{id}/steps/new/find_bitmap
+#[tracing::instrument(skip(state, user))]
 pub async fn get_new_find_bitmap_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -2125,6 +2145,7 @@ pub async fn get_new_find_bitmap_step_handler(
 }
 
 /// GET /automations/{id}/steps/new/find_pixel_rgb
+#[tracing::instrument(skip(state, user))]
 pub async fn get_new_find_pixel_rgb_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -2151,6 +2172,7 @@ pub async fn get_new_find_pixel_rgb_step_handler(
 }
 
 /// GET /automations/{id}/steps/new/mouse_click
+#[tracing::instrument(skip(state, user))]
 pub async fn get_new_mouse_click_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -2182,6 +2204,7 @@ pub async fn get_new_mouse_click_step_handler(
 }
 
 /// POST /automations/{id}/steps
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_create_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -2979,6 +3002,7 @@ pub async fn post_create_step_handler(
 }
 
 /// GET /automations/{id}/steps/{sid}/edit
+#[tracing::instrument(skip(state, user))]
 pub async fn get_edit_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -3289,6 +3313,7 @@ pub async fn get_edit_step_handler(
 }
 
 /// POST /automations/{id}/steps/{sid}
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_edit_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -3951,6 +3976,7 @@ pub async fn post_edit_step_handler(
 }
 
 /// POST /automations/{id}/steps/{sid}/move-up
+#[tracing::instrument(skip(state, user))]
 pub async fn post_move_step_up_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -3963,6 +3989,7 @@ pub async fn post_move_step_up_handler(
 }
 
 /// POST /automations/{id}/steps/{sid}/move-down
+#[tracing::instrument(skip(state, user))]
 pub async fn post_move_step_down_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -4034,6 +4061,7 @@ async fn reorder_step(db: &PgPool, automation_id: i64, step_id: i64, is_up: bool
 }
 
 /// POST /automations/{id}/steps/{sid}/delete
+#[tracing::instrument(skip(state, user))]
 pub async fn post_delete_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -4072,6 +4100,7 @@ pub async fn post_delete_step_handler(
 }
 
 /// Compact positions to 10.0, 20.0, 30.0... if gaps between adjacent steps are too narrow (< 0.0001)
+#[tracing::instrument(skip(db))]
 pub async fn check_and_compact_positions(db: &PgPool, automation_id: i64) {
     let steps = match sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
         .bind(automation_id)
@@ -4097,6 +4126,7 @@ pub async fn check_and_compact_positions(db: &PgPool, automation_id: i64) {
     }
 }
 
+#[tracing::instrument(skip(db))]
 pub async fn compact_positions(db: &PgPool, automation_id: i64) {
     let steps = match sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
         .bind(automation_id)

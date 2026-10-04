@@ -2,6 +2,7 @@ use sqlx::PgPool;
 use std::net::IpAddr;
 use uuid::Uuid;
 
+#[tracing::instrument(skip(pool))]
 pub async fn create_session(
     pool: &PgPool,
     user_id: i64,
@@ -27,6 +28,7 @@ pub async fn create_session(
     Ok(session_id)
 }
 
+#[tracing::instrument(skip(pool))]
 pub async fn delete_session(pool: &PgPool, session_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"

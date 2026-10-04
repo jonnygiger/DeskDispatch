@@ -220,6 +220,7 @@ pub struct RunDetailTemplate {
     pub auto_refresh: bool,
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_runs_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -323,6 +324,7 @@ pub async fn get_runs_handler(
     })
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_run_detail_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -518,6 +520,7 @@ pub async fn get_run_detail_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_cancel_run_handler(
     State(state): State<AppState>,
     user: AuthUser,

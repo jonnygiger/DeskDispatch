@@ -9,6 +9,7 @@ use rust_embed::RustEmbed;
 #[folder = "static/"]
 pub struct Assets;
 
+#[tracing::instrument]
 pub async fn static_asset_handler(Path(path): Path<String>) -> impl IntoResponse {
     let path = path.trim_start_matches('/');
     match Assets::get(path) {

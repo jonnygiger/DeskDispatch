@@ -30,6 +30,7 @@ pub type WorkerAuth = AuthWorker;
 impl FromRequestParts<AppState> for AuthWorker {
     type Rejection = Response;
 
+    #[tracing::instrument(skip(parts, state))]
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,

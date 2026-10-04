@@ -44,6 +44,7 @@ pub struct IndexTemplate {
     pub recent_runs: Vec<RecentRunItem>,
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_index_handler(
     State(state): State<AppState>,
     user: AuthUser,
