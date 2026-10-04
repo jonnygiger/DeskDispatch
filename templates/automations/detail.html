@@ -95,12 +95,12 @@
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/move-up" style="display: inline;">
                     {% call macros::csrf_field(csrf_token) %}
-                    <button type="submit" class="btn btn-sm btn-outline" title="Move Up">↑</button>
+                    <button type="submit" class="btn btn-sm btn-outline" title="Move Up" aria-label="Move step up">↑</button>
                 </form>
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/move-down" style="display: inline;">
                     {% call macros::csrf_field(csrf_token) %}
-                    <button type="submit" class="btn btn-sm btn-outline" title="Move Down">↓</button>
+                    <button type="submit" class="btn btn-sm btn-outline" title="Move Down" aria-label="Move step down">↓</button>
                 </form>
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this step?');">

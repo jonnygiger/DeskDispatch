@@ -4614,11 +4614,21 @@ mod tests {
             updated_at: chrono::Utc::now(),
         };
 
+        let steps = vec![StepViewItem {
+            id: 101,
+            step_number: 1,
+            step_type: "key_press".to_string(),
+            label: Some("Type Enter".to_string()),
+            post_delay_ms: 1000,
+            position: 10.0,
+            description: "Press Enter".to_string(),
+        }];
+
         let template = AutomationDetailTemplate {
             user: dummy_user,
             csrf_token: "test_csrf_token".to_string(),
             automation,
-            steps: vec![],
+            steps,
             active_tab: "steps".to_string(),
             error: None,
             success: None,
@@ -4628,6 +4638,8 @@ mod tests {
         assert!(rendered.contains("action=\"/automations/42/run-now\""));
         assert!(rendered.contains("Run Now"));
         assert!(rendered.contains("test_csrf_token"));
+        assert!(rendered.contains("aria-label=\"Move step up\""));
+        assert!(rendered.contains("aria-label=\"Move step down\""));
     }
 
     #[test]
