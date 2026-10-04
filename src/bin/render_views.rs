@@ -5,6 +5,7 @@ use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate, BitmapsUploadTem
 use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
 use app::routes::home::{IndexTemplate, RecentRunItem};
 use app::routes::media::DevMagnifierTemplate;
+use app::routes::recordings::*;
 use app::routes::runs::*;
 use app::routes::workers::*;
 use askama::Template;
@@ -280,7 +281,7 @@ fn main() {
 
     let worker_edit_tmpl = WorkerEditTemplate {
         user: user.clone(),
-        worker: worker_detail,
+        worker: worker_detail.clone(),
         all_groups: vec![WorkerGroupSimple {
             id: 1,
             name: "Warehouse Fleet".to_string(),
@@ -377,6 +378,43 @@ fn main() {
         auto_refresh: false,
     };
     fs::write("rendered_templates/runs_detail.html", run_detail_tmpl.render().unwrap()).unwrap();
+
+    let rec_session = RecordingSessionDetail {
+        id: 10,
+        worker_id: 1,
+        worker_display_name: "Warehouse Worker PC".to_string(),
+        worker_hostname: "pc-warehouse-01".to_string(),
+        started_by_user_id: 1,
+        started_by_display_name: "Admin User".to_string(),
+        status: "completed".to_string(),
+        resulting_automation_id: None,
+        started_at: Utc::now(),
+        ended_at: Some(Utc::now()),
+    };
+
+    let rec_start_tmpl = RecordingStartTemplate {
+        user: user.clone(),
+        worker: worker_detail.clone(),
+        error: None,
+    };
+    fs::write("rendered_templates/recordings_start.html", rec_start_tmpl.render().unwrap()).unwrap();
+
+    let rec_status_tmpl = RecordingStatusTemplate {
+        user: user.clone(),
+        session: rec_session.clone(),
+        event_count: 5,
+        error: None,
+    };
+    fs::write("rendered_templates/recordings_status.html", rec_status_tmpl.render().unwrap()).unwrap();
+
+    let rec_review_tmpl = RecordingReviewTemplate {
+        user: user.clone(),
+        session: rec_session,
+        events: vec![],
+        default_automation_name: "Recorded Automation - Warehouse Worker PC".to_string(),
+        error: None,
+    };
+    fs::write("rendered_templates/recordings_review.html", rec_review_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

@@ -1,0 +1,124 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Review Recording #{{ session.id }} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "workers") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <h1 class="dashboard-title" style="margin: 0;">Review Recording #{{ session.id }}</h1>
+                <span class="badge {{ session.status_badge_class() }}">{{ session.status }}</span>
+            </div>
+            <p style="color: var(--color-text-muted); margin-top: 0.25rem;">
+                Worker: <strong>{{ session.worker_display_name }}</strong> &middot; Captured {{ events.len() }} events
+            </p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+            <a href="/recordings/{{ session.id }}" class="btn btn-outline">&larr; Back to Status</a>
+        </div>
+    </div>
+</div>
+
+{% if let Some(err) = error %}
+<div class="alert alert-danger" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 4px;">
+    {{ err }}
+</div>
+{% endif %}
+
+<form method="post" action="/recordings/{{ session.id }}/convert" id="convert-form">
+    {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+
+    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start;">
+        <!-- Left Column: Captured Events Sequence -->
+        <div>
+            <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem;">
+                Captured Desktop Actions ({{ events.len() }})
+            </h2>
+
+            {% if events.is_empty() %}
+            <div class="card" style="text-align: center; color: var(--color-text-muted); padding: 2rem;">
+                No events were captured during this recording session.
+            </div>
+            {% else %}
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                {% for event in events %}
+                <div class="card" style="position: relative; border-left: 4px solid var(--color-primary);">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <span style="font-weight: 700; font-size: 1rem; color: var(--color-text);">#{{ event.sequence_number }}</span>
+                            <span class="badge badge-neutral" style="text-transform: uppercase;">{{ event.event_type }}</span>
+                            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">{{ event.formatted_time() }}</span>
+                        </div>
+                        <label style="display: flex; align-items: center; gap: 0.375rem; font-size: 0.875rem; color: var(--color-danger); cursor: pointer; user-select: none;">
+                            <input type="checkbox" name="exclude_event_ids" value="{{ event.id }}">
+                            <strong>Exclude</strong>
+                        </label>
+                    </div>
+
+                    <div style="font-size: 0.9375rem; color: var(--color-text); margin-bottom: 0.5rem;">
+                        <strong>{{ event.description() }}</strong>
+                    </div>
+
+                    {% if let Some(key) = event.screenshot_object_key.as_deref() %}
+                    <div style="margin-top: 0.75rem;">
+                        {% if let Some(magnifier) = event.magnifier %}
+                        {% call macros::image_magnifier(magnifier) %}{% endcall %}
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Right Column: Conversion Options -->
+        <div class="card" style="position: sticky; top: 1.5rem;">
+            <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">
+                Convert to Automation
+            </h2>
+
+            <div style="margin-bottom: 1rem;">
+                <label for="automation_name" style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.25rem;">
+                    Automation Name <span style="color: var(--color-danger);">*</span>
+                </label>
+                <input type="text" id="automation_name" name="automation_name" value="{{ default_automation_name }}" required class="form-control" style="width: 100%; box-sizing: border-box;">
+            </div>
+
+            <div style="margin-bottom: 1.5rem;">
+                <label for="automation_description" style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.25rem;">
+                    Description
+                </label>
+                <textarea id="automation_description" name="automation_description" rows="3" class="form-control" style="width: 100%; box-sizing: border-box; resize: vertical;">Imported from recording session #{{ session.id }} on worker {{ session.worker_display_name }}.</textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-bottom: 0.75rem;" {% if events.is_empty() %}disabled{% endif %}>
+                Convert to Draft Automation
+            </button>
+
+            <p style="font-size: 0.8125rem; color: var(--color-text-muted); margin-top: 0.5rem; margin-bottom: 1rem;">
+                Unchecked events will be converted into ordered automation steps.
+            </p>
+        </div>
+    </div>
+</form>
+
+<div class="card" style="margin-top: 1.5rem; max-width: 400px;">
+    <h3 style="font-size: 1rem; font-weight: 600; margin-top: 0; margin-bottom: 0.5rem; color: var(--color-danger);">
+        Discard Session
+    </h3>
+    <p style="font-size: 0.875rem; color: var(--color-text-muted); margin-bottom: 0.75rem;">
+        Permanently discard this recording session without creating an automation.
+    </p>
+    <form method="post" action="/recordings/{{ session.id }}/discard" onsubmit="return confirm('Are you sure you want to discard this recording session?');">
+        {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+        <button type="submit" class="btn btn-danger-outline">Discard Recording</button>
+    </form>
+</div>
+{% endblock %}

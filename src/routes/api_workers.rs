@@ -57,6 +57,9 @@ pub enum NextAssignmentResponse {
         task_run_id: i64,
         automation: serde_json::Value,
     },
+    StartRecording {
+        recording_session_id: i64,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -112,6 +115,35 @@ pub struct CompleteTaskRunResponse {
 pub struct ScreenshotUploadUrlResponse {
     pub upload_url: String,
     pub object_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RecordingEventItem {
+    pub sequence_number: i32,
+    pub event_type: String,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub button: Option<String>,
+    pub key_combo: Option<String>,
+    pub screenshot_object_key: Option<String>,
+    pub captured_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PostRecordingEventsRequest {
+    pub events: Vec<RecordingEventItem>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PostRecordingEventsResponse {
+    pub status: String,
+    pub count: usize,
+    pub stop_requested: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct WorkerStopRecordingResponse {
+    pub status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -422,6 +454,43 @@ pub async fn get_next_assignment_handler(
                 .into_response();
         }
     };
+
+    let active_recording: Option<i64> = match sqlx::query_scalar(
+        "SELECT id FROM recording_sessions WHERE worker_id = $1 AND status = 'recording' ORDER BY id ASC LIMIT 1",
+    )
+    .bind(worker.id)
+    .fetch_optional(&mut *tx)
+    .await
+    {
+        Ok(rec) => rec,
+        Err(e) => {
+            tracing::error!(worker_id = worker.id, "Error checking active recording sessions: {}", e);
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error checking recording sessions".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if let Some(recording_session_id) = active_recording {
+        let _ = tx.commit().await;
+        tracing::info!(
+            worker_id = worker.id,
+            recording_session_id = recording_session_id,
+            "Dispatched start_recording instruction to worker"
+        );
+        return (
+            StatusCode::OK,
+            Json(NextAssignmentResponse::StartRecording {
+                recording_session_id,
+            }),
+        )
+            .into_response();
+    }
 
     let select_res = sqlx::query(
         r#"
@@ -994,6 +1063,287 @@ pub async fn get_task_run_screenshot_upload_url_handler(
     }
 }
 
+pub async fn post_recording_events_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(session_id): Path<i64>,
+    Json(payload): Json<PostRecordingEventsRequest>,
+) -> impl IntoResponse {
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                session_id = session_id,
+                "Failed to begin transaction for recording events: {}",
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let session_row: Option<(String,)> = match sqlx::query_as(
+        "SELECT status FROM recording_sessions WHERE id = $1 AND worker_id = $2",
+    )
+    .bind(session_id)
+    .bind(worker.id)
+    .fetch_optional(&mut *tx)
+    .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                session_id = session_id,
+                "Error querying recording session: {}",
+                e
+            );
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error checking recording session".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let session_status = match session_row {
+        Some((status,)) => status,
+        None => {
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Recording session {} not found for this worker", session_id),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let count = payload.events.len();
+
+    for event in &payload.events {
+        let captured_at = event.captured_at.unwrap_or_else(chrono::Utc::now);
+        let event_type = event.event_type.trim();
+
+        if let Err(e) = sqlx::query(
+            r#"
+            INSERT INTO recording_events (
+                recording_session_id, sequence_number, event_type,
+                x, y, button, key_combo, screenshot_object_key, captured_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (recording_session_id, sequence_number) DO UPDATE
+            SET event_type = EXCLUDED.event_type,
+                x = EXCLUDED.x,
+                y = EXCLUDED.y,
+                button = EXCLUDED.button,
+                key_combo = EXCLUDED.key_combo,
+                screenshot_object_key = EXCLUDED.screenshot_object_key,
+                captured_at = EXCLUDED.captured_at
+            "#,
+        )
+        .bind(session_id)
+        .bind(event.sequence_number)
+        .bind(event_type)
+        .bind(event.x)
+        .bind(event.y)
+        .bind(event.button.as_deref())
+        .bind(event.key_combo.as_deref())
+        .bind(event.screenshot_object_key.as_deref())
+        .bind(captured_at)
+        .execute(&mut *tx)
+        .await
+        {
+            tracing::error!(
+                worker_id = worker.id,
+                session_id = session_id,
+                sequence_number = event.sequence_number,
+                "Failed to insert recording event: {}",
+                e
+            );
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to persist recording events".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    }
+
+    if let Err(e) = tx.commit().await {
+        tracing::error!(
+            worker_id = worker.id,
+            session_id = session_id,
+            "Failed to commit recording events: {}",
+            e
+        );
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to commit recording events".to_string(),
+            }),
+        )
+            .into_response();
+    }
+
+    let stop_requested = session_status != "recording";
+
+    (
+        StatusCode::OK,
+        Json(PostRecordingEventsResponse {
+            status: "success".to_string(),
+            count,
+            stop_requested,
+        }),
+    )
+        .into_response()
+}
+
+pub async fn get_recording_screenshot_upload_url_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(session_id): Path<i64>,
+) -> impl IntoResponse {
+    let session_exists: Option<i64> = match sqlx::query_scalar(
+        "SELECT id FROM recording_sessions WHERE id = $1 AND worker_id = $2",
+    )
+    .bind(session_id)
+    .bind(worker.id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                session_id = session_id,
+                "Error checking recording session for upload URL: {}",
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if session_exists.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Recording session {} not found for this worker", session_id),
+            }),
+        )
+            .into_response();
+    }
+
+    let object_key = format!("recordings/{}/event_{}.png", session_id, Uuid::new_v4());
+    let storage = state.storage_service();
+
+    match storage
+        .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
+        .await
+    {
+        Ok(upload_url) => (
+            StatusCode::OK,
+            Json(ScreenshotUploadUrlResponse {
+                upload_url,
+                object_key,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                session_id = session_id,
+                "Failed to generate presigned upload URL for recording: {}",
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to generate upload URL".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn post_worker_stop_recording_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(session_id): Path<i64>,
+) -> impl IntoResponse {
+    let update_res = sqlx::query(
+        r#"
+        UPDATE recording_sessions
+        SET status = 'completed',
+            ended_at = COALESCE(ended_at, now())
+        WHERE id = $1 AND worker_id = $2
+        RETURNING id
+        "#,
+    )
+    .bind(session_id)
+    .bind(worker.id)
+    .fetch_optional(&state.db)
+    .await;
+
+    match update_res {
+        Ok(Some(_)) => {
+            tracing::info!(
+                worker_id = worker.id,
+                session_id = session_id,
+                "Recording session finalized by worker"
+            );
+            (
+                StatusCode::OK,
+                Json(WorkerStopRecordingResponse {
+                    status: "success".to_string(),
+                }),
+            )
+                .into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Recording session {} not found for this worker", session_id),
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                session_id = session_id,
+                "Failed to update recording session status: {}",
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error stopping recording session".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
 pub async fn post_task_run_screenshot_commit_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1480,6 +1830,16 @@ mod tests {
         let json_str = serde_json::to_string(&resp).expect("Failed to serialize NextAssignmentResponse");
         assert_eq!(json_str, r#"{"type":"none"}"#);
 
+        let rec_resp = NextAssignmentResponse::StartRecording {
+            recording_session_id: 101,
+        };
+        let rec_json = serde_json::to_string(&rec_resp).expect("Failed to serialize StartRecording");
+        assert_eq!(rec_json, r#"{"type":"start_recording","recording_session_id":101}"#);
+
+        let rec_deserialized: NextAssignmentResponse = serde_json::from_str(&rec_json)
+            .expect("Failed to deserialize StartRecording");
+        assert_eq!(rec_deserialized, rec_resp);
+
         let deserialized: NextAssignmentResponse = serde_json::from_str(r#"{"type":"none"}"#)
             .expect("Failed to deserialize NextAssignmentResponse::None");
         assert_eq!(deserialized, NextAssignmentResponse::None);
@@ -1671,6 +2031,61 @@ mod tests {
         let resp_json = serde_json::to_string(&resp).expect("Serialization failed");
         assert!(resp_json.contains(r#""status":"success""#));
         assert!(resp_json.contains(r#""object_key":"runs/1/step_101.png""#));
+    }
+
+    #[test]
+    fn test_post_recording_events_request_and_response() {
+        let json_req = r#"{
+            "events": [
+                {
+                    "sequence_number": 1,
+                    "event_type": "mouse_click",
+                    "x": 824,
+                    "y": 391,
+                    "button": "left",
+                    "key_combo": null,
+                    "screenshot_object_key": "recordings/1/shot1.png"
+                },
+                {
+                    "sequence_number": 2,
+                    "event_type": "key_press",
+                    "x": null,
+                    "y": null,
+                    "button": null,
+                    "key_combo": "ctrl+v",
+                    "screenshot_object_key": null
+                }
+            ]
+        }"#;
+
+        let req: PostRecordingEventsRequest = serde_json::from_str(json_req).expect("Deserialization failed");
+        assert_eq!(req.events.len(), 2);
+        assert_eq!(req.events[0].sequence_number, 1);
+        assert_eq!(req.events[0].event_type, "mouse_click");
+        assert_eq!(req.events[0].x, Some(824));
+        assert_eq!(req.events[0].y, Some(391));
+        assert_eq!(req.events[0].button.as_deref(), Some("left"));
+
+        assert_eq!(req.events[1].sequence_number, 2);
+        assert_eq!(req.events[1].event_type, "key_press");
+        assert_eq!(req.events[1].key_combo.as_deref(), Some("ctrl+v"));
+
+        let resp = PostRecordingEventsResponse {
+            status: "success".to_string(),
+            count: 2,
+            stop_requested: false,
+        };
+
+        let json_resp = serde_json::to_string(&resp).expect("Serialization failed");
+        assert!(json_resp.contains(r#""status":"success""#));
+        assert!(json_resp.contains(r#""count":2"#));
+        assert!(json_resp.contains(r#""stop_requested":false"#));
+
+        let stop_resp = WorkerStopRecordingResponse {
+            status: "success".to_string(),
+        };
+        let json_stop = serde_json::to_string(&stop_resp).expect("Serialization failed");
+        assert_eq!(json_stop, r#"{"status":"success"}"#);
     }
 
     #[test]
