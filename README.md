@@ -367,6 +367,9 @@ Administrators manage worker fleets via the web UI:
 ### Execution & Concurrent Dispatch Engine
 Manual runs triggered via `POST /automations/{id}/run-now` queue a new entry in `task_runs`. Worker PCs polling `GET /api/v1/workers/next-assignment` execute an atomic transaction using `SELECT ... FOR UPDATE SKIP LOCKED` to claim queued runs matching their assigned worker group. The complete automation hierarchy (steps, details, variables, parameters) is serialized as JSON in the dispatch response.
 
+### Stalled Execution Sweeper & Timeout Recovery
+The server background scheduler runs a periodic task every 30 seconds (`sweep_stalled_task_runs`) that checks for active task runs assigned to disconnected worker machines. If a worker assigned to a `running` task run fails to submit a heartbeat within 90 seconds, the task server automatically transitions the task run to `lost` status with a recorded error message. This background recovery loop guarantees that task runs do not remain stuck in an active state indefinitely if a worker PC experiences a power failure, network crash, or agent process exit.
+
 ---
 
 ### [TODO] Feature Details & Unimplemented Components
