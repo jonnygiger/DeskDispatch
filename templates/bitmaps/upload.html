@@ -29,7 +29,6 @@ Upload Image - {{ bitmap_name }} - DeskDispatch
         {% for (key, val) in presigned_fields %}
         <input type="hidden" name="{{ key }}" value="{{ val }}">
         {% endfor %}
-        <input type="hidden" name="success_action_redirect" value="{{ redirect_url }}">
 
         <div class="form-group" style="display: flex; flex-direction: column; gap: 0.5rem;">
             <label for="file" style="font-weight: 600; font-size: 0.875rem;">Select Image File:</label>
