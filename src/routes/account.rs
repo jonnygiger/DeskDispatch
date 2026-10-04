@@ -1,6 +1,6 @@
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
+    password_hash::phc::PasswordHash,
+    Argon2, PasswordHasher, PasswordVerifier,
 };
 use askama::Template;
 use axum::{
@@ -133,8 +133,7 @@ pub async fn post_password_handler(
             .into_response();
     }
 
-    let salt = SaltString::generate(&mut OsRng);
-    let new_password_hash = match Argon2::default().hash_password(form.new_password.as_bytes(), &salt) {
+    let new_password_hash = match Argon2::default().hash_password(form.new_password.as_bytes()) {
         Ok(h) => h.to_string(),
         Err(e) => {
             tracing::error!("Password hashing error: {}", e);

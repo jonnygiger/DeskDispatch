@@ -10,7 +10,7 @@
 {% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "runs") %}
+{% call macros::top_nav(user, "runs") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -29,7 +29,7 @@
     {% if user.role.can_edit() %}
         {% if run.status == "queued" || run.status == "running" %}
         <form method="post" action="/runs/{{ run.id }}/cancel">
-            {% call macros::csrf_field(csrf_token) %}
+            {% call macros::csrf_field(csrf_token) %}{% endcall %}
             <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to cancel this task run?');">
                 Cancel Run
             </button>
@@ -151,7 +151,7 @@
 
                 {% if let Some(mag) = step.magnifier %}
                 <div style="margin-top: 1rem;">
-                    {% call macros::image_magnifier(mag) %}
+                    {% call macros::image_magnifier(mag) %}{% endcall %}
                 </div>
                 {% endif %}
             </div>

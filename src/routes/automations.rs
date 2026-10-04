@@ -566,7 +566,7 @@ pub async fn get_automations_handler(
 
     sql.push_str(" ORDER BY a.updated_at DESC, a.id DESC");
 
-    let automations: Vec<AutomationListItem> = sqlx::query_as(&sql)
+    let automations: Vec<AutomationListItem> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();

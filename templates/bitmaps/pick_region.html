@@ -6,7 +6,7 @@ Region Picker - DeskDispatch
 {% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "automations") %}
+{% call macros::top_nav(user, "automations") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -140,7 +140,7 @@ Region Picker - DeskDispatch
     </div>
 
     <div style="margin-bottom: 1.5rem;">
-        {% call macros::image_magnifier(magnifier) %}
+        {% call macros::image_magnifier(magnifier) %}{% endcall %}
     </div>
 
     {% if let Some(aid) = automation_id %}

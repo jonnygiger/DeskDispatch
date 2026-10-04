@@ -1,6 +1,6 @@
 use argon2::{
-    password_hash::{PasswordHash, PasswordVerifier},
-    Argon2,
+    password_hash::phc::PasswordHash,
+    Argon2, PasswordVerifier,
 };
 use askama::Template;
 use axum::{

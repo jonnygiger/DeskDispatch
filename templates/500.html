@@ -5,7 +5,7 @@
 
 {% block top_nav %}
 {% if let Some(u) = user %}
-{% call macros::top_nav(u, "") %}
+{% call macros::top_nav(u, "") %}{% endcall %}
 {% else %}
 <header class="top-nav">
     <a href="/" class="top-nav-brand">

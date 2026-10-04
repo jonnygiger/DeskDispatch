@@ -2,7 +2,7 @@ use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::Client;
 use base64::Engine;
 use chrono::Utc;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::fmt;
