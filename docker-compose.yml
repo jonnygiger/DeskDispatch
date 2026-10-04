@@ -1,4 +1,36 @@
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deskdispatch-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/deskdispatch
+      S3_ENDPOINT: http://rustfs:9000
+      S3_BUCKET: deskdispatch-bucket
+      S3_ACCESS_KEY: rustfsadmin
+      S3_SECRET_KEY: rustfsadminpassword
+      S3_REGION: us-east-1
+      SESSION_SECRET: super-secret-key-change-me
+      BIND_ADDRESS: 0.0.0.0:3000
+      APP_ENV: production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   postgres:
     image: postgres:16-alpine
     container_name: deskdispatch-postgres
@@ -37,12 +69,14 @@ services:
       retries: 5
       start_period: 10s
 
-  init-db:
+  migration:
     image: postgres:16-alpine
-    container_name: deskdispatch-init-db
+    container_name: deskdispatch-migration
     restart: "no"
     depends_on:
       postgres:
+        condition: service_healthy
+      rustfs:
         condition: service_healthy
     environment:
       PGHOST: postgres
@@ -53,11 +87,17 @@ services:
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: test
       ADMIN_DISPLAY_NAME: Admin
+      S3_ENDPOINT: http://rustfs:9000
+      S3_BUCKET: deskdispatch-bucket
     entrypoint:
       - /bin/sh
       - -c
       - |
         set -e
+        echo "Ensuring S3 bucket exists..."
+        apk add --no-cache curl || true
+        curl -s -X PUT http://rustfs:9000/deskdispatch-bucket || true
+
         echo "Ensuring users table exists..."
         psql -c '
         CREATE TABLE IF NOT EXISTS users (
@@ -71,6 +111,7 @@ services:
             last_login_at TIMESTAMPTZ
         );
         '
+
         echo "Creating default admin user if not present..."
         # Argon2id hash for password "test"
         HASH='$$argon2id$$v=19$$m=19456,t=2,p=1$$N0syeHh1R3Nsa3hNTDRyZw$$tTh0o4cO9c6d/I50k4p6sXkO04EwUfL4f9A42G4YnI0'
@@ -79,7 +120,7 @@ services:
         VALUES ('""$$ADMIN_USERNAME""', '""$$HASH""', '""$$ADMIN_DISPLAY_NAME""', 'admin', true)
         ON CONFLICT (username) DO NOTHING;
         "
-        echo "Default admin user initialization complete."
+        echo "Migration startup initialization complete."
 
 volumes:
   postgres_data:
