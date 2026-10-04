@@ -9,7 +9,7 @@ use app::routes::{
 };
 use app::AppState;
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
 use axum::{
@@ -28,11 +28,10 @@ use uuid::Uuid;
 #[test]
 fn test_argon2_password_hashing() {
     let password = "SuperSecretPassword123!";
-    let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
 
     let password_hash = argon2
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .unwrap()
         .to_string();
 
@@ -254,9 +253,8 @@ async fn test_full_auth_and_password_workflow() {
     // Seed test user
     let username = format!("testuser_{}", Uuid::new_v4().simple());
     let initial_password = "Password123!";
-    let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
-        .hash_password(initial_password.as_bytes(), &salt)
+        .hash_password(initial_password.as_bytes())
         .unwrap()
         .to_string();
 
