@@ -57,10 +57,12 @@ struct UserRow {
     is_active: bool,
 }
 
+#[tracing::instrument]
 pub async fn get_login_handler() -> impl IntoResponse {
     HtmlTemplate(LoginTemplate { error: None })
 }
 
+#[tracing::instrument(skip(headers, state, form))]
 pub async fn post_login_handler(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -206,6 +208,7 @@ pub async fn post_login_handler(
         .into_response()
 }
 
+#[tracing::instrument(skip(state, user, headers))]
 pub async fn post_logout_handler(
     State(state): State<AppState>,
     user: OptionalAuthUser,

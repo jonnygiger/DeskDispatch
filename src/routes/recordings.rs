@@ -131,6 +131,7 @@ pub struct ConvertRecordingForm {
 // Handlers
 
 /// GET /workers/{id}/record
+#[tracing::instrument(skip(state, user))]
 pub async fn get_worker_record_start_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -177,6 +178,7 @@ pub async fn get_worker_record_start_handler(
 }
 
 /// POST /workers/{id}/record/start
+#[tracing::instrument(skip(state, user))]
 pub async fn post_worker_record_start_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -229,6 +231,7 @@ pub async fn post_worker_record_start_handler(
 }
 
 /// Helper to load RecordingSessionDetail
+#[tracing::instrument(skip(db))]
 async fn fetch_recording_session_detail(
     db: &sqlx::PgPool,
     session_id: i64,
@@ -271,6 +274,7 @@ async fn fetch_recording_session_detail(
 }
 
 /// GET /recordings/{id}
+#[tracing::instrument(skip(state, user))]
 pub async fn get_recording_status_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -299,6 +303,7 @@ pub async fn get_recording_status_handler(
 }
 
 /// POST /recordings/{id}/stop
+#[tracing::instrument(skip(state, user))]
 pub async fn post_recording_stop_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -333,6 +338,7 @@ pub async fn post_recording_stop_handler(
 }
 
 /// GET /recordings/{id}/review
+#[tracing::instrument(skip(state, user))]
 pub async fn get_recording_review_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -423,6 +429,7 @@ pub async fn get_recording_review_handler(
 }
 
 /// POST /recordings/{id}/discard
+#[tracing::instrument(skip(state, user))]
 pub async fn post_recording_discard_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -451,6 +458,7 @@ pub async fn post_recording_discard_handler(
 }
 
 /// POST /recordings/{id}/convert
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_recording_convert_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,

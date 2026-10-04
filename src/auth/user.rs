@@ -94,6 +94,7 @@ struct SessionUserRow {
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = Response;
 
+    #[tracing::instrument(skip(parts, state))]
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,

@@ -133,6 +133,7 @@ impl StorageService {
     }
 
     /// Generates a presigned GET URL for an object key in S3 / RustFS with the given expiration duration.
+    #[tracing::instrument(skip(self))]
     pub async fn generate_presigned_get_url(
         &self,
         object_key: &str,
@@ -142,6 +143,7 @@ impl StorageService {
     }
 
     /// Generates a presigned PUT URL for worker node file uploads in S3 / RustFS with the given expiration duration.
+    #[tracing::instrument(skip(self))]
     pub async fn generate_presigned_put_url(
         &self,
         object_key: &str,
@@ -151,6 +153,7 @@ impl StorageService {
     }
 
     /// Generates a presigned POST policy for browser-direct file uploads in S3 / RustFS.
+    #[tracing::instrument(skip(self))]
     pub async fn generate_presigned_post(
         &self,
         object_key: &str,
@@ -178,6 +181,7 @@ impl StorageService {
 }
 
 /// Standalone helper function to generate a presigned GET URL using an S3 Client, bucket, key, and expiration duration.
+#[tracing::instrument(skip(s3_client))]
 pub async fn get_presigned_get_url(
     s3_client: &Client,
     bucket: &str,
@@ -197,6 +201,7 @@ pub async fn get_presigned_get_url(
 }
 
 /// Standalone helper function to generate a presigned POST policy and SigV4 form fields for browser-direct upload.
+#[tracing::instrument(skip(secret_key))]
 pub fn generate_presigned_post_policy(
     bucket: &str,
     object_key: &str,
@@ -292,6 +297,7 @@ pub fn generate_presigned_post_policy(
 }
 
 /// Standalone helper function to generate a presigned PUT URL using an S3 Client, bucket, key, and expiration duration.
+#[tracing::instrument(skip(s3_client))]
 pub async fn get_presigned_put_url(
     s3_client: &Client,
     bucket: &str,

@@ -30,6 +30,7 @@ pub struct PasswordForm {
     pub confirm_password: String,
 }
 
+#[tracing::instrument(skip(user))]
 pub async fn get_password_handler(user: AuthUser) -> impl IntoResponse {
     HtmlTemplate(AccountPasswordTemplate {
         csrf_token: user.csrf_token,
@@ -38,6 +39,7 @@ pub async fn get_password_handler(user: AuthUser) -> impl IntoResponse {
     })
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_password_handler(
     State(state): State<AppState>,
     user: AuthUser,

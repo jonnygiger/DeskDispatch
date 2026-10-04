@@ -160,6 +160,7 @@ pub struct CommitScreenshotResponse {
     pub object_key: String,
 }
 
+#[tracing::instrument(skip(conn))]
 pub async fn fetch_full_automation_json(
     conn: &mut sqlx::PgConnection,
     automation_id: i64,
@@ -437,6 +438,7 @@ pub async fn fetch_full_automation_json(
     }))
 }
 
+#[tracing::instrument(skip(worker, state))]
 pub async fn get_next_assignment_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -628,6 +630,7 @@ pub fn is_valid_step_result(result: &str) -> bool {
     )
 }
 
+#[tracing::instrument(skip(worker, state, payload))]
 pub async fn post_step_result_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -883,6 +886,7 @@ pub async fn post_step_result_handler(
         .into_response()
 }
 
+#[tracing::instrument(skip(worker, state, payload))]
 pub async fn post_complete_task_run_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -961,6 +965,7 @@ pub async fn post_complete_task_run_handler(
     }
 }
 
+#[tracing::instrument(skip(pool))]
 pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
         r#"
@@ -989,6 +994,7 @@ pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::E
     Ok(count)
 }
 
+#[tracing::instrument(skip(worker, state))]
 pub async fn get_task_run_screenshot_upload_url_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1063,6 +1069,7 @@ pub async fn get_task_run_screenshot_upload_url_handler(
     }
 }
 
+#[tracing::instrument(skip(worker, state, payload))]
 pub async fn post_recording_events_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1211,6 +1218,7 @@ pub async fn post_recording_events_handler(
         .into_response()
 }
 
+#[tracing::instrument(skip(worker, state))]
 pub async fn get_recording_screenshot_upload_url_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1285,6 +1293,7 @@ pub async fn get_recording_screenshot_upload_url_handler(
     }
 }
 
+#[tracing::instrument(skip(worker, state))]
 pub async fn post_worker_stop_recording_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1344,6 +1353,7 @@ pub async fn post_worker_stop_recording_handler(
     }
 }
 
+#[tracing::instrument(skip(worker, state, payload))]
 pub async fn post_task_run_screenshot_commit_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1457,6 +1467,7 @@ pub async fn post_task_run_screenshot_commit_handler(
         .into_response()
 }
 
+#[tracing::instrument(skip(worker, state))]
 pub async fn get_task_run_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1553,6 +1564,7 @@ pub fn is_valid_worker_status(status: &str) -> bool {
     matches!(status, "offline" | "online" | "busy" | "error")
 }
 
+#[tracing::instrument(skip(worker, state, payload))]
 pub async fn post_heartbeat_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1658,6 +1670,7 @@ pub async fn post_heartbeat_handler(
         .into_response()
 }
 
+#[tracing::instrument(skip(state, payload))]
 pub async fn post_register_worker_handler(
     State(state): State<AppState>,
     Json(payload): Json<RegisterWorkerRequest>,

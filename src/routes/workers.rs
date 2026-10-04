@@ -45,6 +45,7 @@ impl WorkerPcItem {
     }
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn post_deactivate_worker_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -86,6 +87,7 @@ pub async fn post_deactivate_worker_handler(
     }
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn post_rotate_worker_key_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -366,6 +368,7 @@ pub struct WorkerGroupForm {
 
 // Handlers
 
+#[tracing::instrument(skip(user))]
 pub async fn get_new_worker_handler(
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
@@ -378,6 +381,7 @@ pub async fn get_new_worker_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_create_worker_handler(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -444,6 +448,7 @@ pub async fn post_create_worker_handler(
     Redirect::to(&format!("/workers/{}", worker_id)).into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_workers_handler(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -567,6 +572,7 @@ pub async fn get_workers_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_worker_detail_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -633,6 +639,7 @@ pub async fn get_worker_detail_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_edit_worker_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -711,6 +718,7 @@ pub async fn get_edit_worker_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_edit_worker_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -803,6 +811,7 @@ pub async fn post_edit_worker_handler(
     Redirect::to(&format!("/workers/{}", id)).into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn post_delete_worker_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -833,6 +842,7 @@ pub async fn post_delete_worker_handler(
     }
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_new_worker_group_handler(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -861,6 +871,7 @@ pub async fn get_new_worker_group_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_create_worker_group_handler(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
@@ -947,6 +958,7 @@ pub async fn post_create_worker_group_handler(
     Redirect::to("/workers").into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn get_edit_worker_group_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1005,6 +1017,7 @@ pub async fn get_edit_worker_group_handler(
     .into_response()
 }
 
+#[tracing::instrument(skip(state, user, form))]
 pub async fn post_edit_worker_group_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1100,6 +1113,7 @@ pub async fn post_edit_worker_group_handler(
     Redirect::to("/workers").into_response()
 }
 
+#[tracing::instrument(skip(state, user))]
 pub async fn post_delete_worker_group_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,

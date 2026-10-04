@@ -17,6 +17,7 @@ pub struct InternalServerErrorTemplate {
     pub user: Option<AuthUser>,
 }
 
+#[tracing::instrument(skip(user))]
 pub async fn not_found_handler(OptionalAuthUser(user): OptionalAuthUser) -> impl IntoResponse {
     (
         StatusCode::NOT_FOUND,
@@ -24,6 +25,7 @@ pub async fn not_found_handler(OptionalAuthUser(user): OptionalAuthUser) -> impl
     )
 }
 
+#[tracing::instrument(skip(user))]
 pub async fn internal_error_handler(
     OptionalAuthUser(user): OptionalAuthUser,
     message: Option<String>,

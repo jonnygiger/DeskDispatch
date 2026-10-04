@@ -30,6 +30,7 @@ pub struct DevMagnifierTemplate {
 
 /// GET /dev/magnifier-verify
 /// Throwaway internal route to manually verify the CSS zoom and pan mathematics of the magnifier component.
+#[tracing::instrument]
 pub async fn dev_magnifier_verify_handler(
     Query(query): Query<DevMagnifierQuery>,
 ) -> impl IntoResponse {
@@ -50,6 +51,7 @@ pub async fn dev_magnifier_verify_handler(
 
 /// GET /media/screenshots/{id}
 /// Generates a presigned GET URL for a step screenshot and issues a 302 Found redirect.
+#[tracing::instrument(skip(state, _user))]
 pub async fn get_media_screenshot_handler(
     State(state): State<AppState>,
     _user: AuthUser,
@@ -89,6 +91,7 @@ pub async fn get_media_screenshot_handler(
 
 /// GET /media/bitmaps/{id}
 /// Generates a presigned GET URL for a bitmap reference image and issues a 302 Found redirect.
+#[tracing::instrument(skip(state, _user))]
 pub async fn get_media_bitmap_handler(
     State(state): State<AppState>,
     _user: AuthUser,
