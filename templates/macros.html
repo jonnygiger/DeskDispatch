@@ -20,7 +20,7 @@
     <div class="top-nav-user">
         <a href="/account" {% if active_page == "account" %}class="active"{% endif %}>{{ user.display_name }}</a>
         <form method="post" action="/logout" style="display:inline;">
-            {% call csrf_field(user.csrf_token) %}
+            {% call csrf_field(user.csrf_token) %}{% endcall %}
             <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
         </form>
     </div>

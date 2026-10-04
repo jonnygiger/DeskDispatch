@@ -4,7 +4,7 @@
 {% block title %}{{ automation.name }} - DeskDispatch{% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "automations") %}
+{% call macros::top_nav(user, "automations") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -17,7 +17,7 @@
         {% if user.role.can_edit() %}
         <div class="dashboard-actions" style="display: flex; gap: 0.5rem; align-items: center;">
             <form method="post" action="/automations/{{ automation.id }}/run-now" style="display: inline;">
-                {% call macros::csrf_field(csrf_token) %}
+                {% call macros::csrf_field(csrf_token) %}{% endcall %}
                 <button type="submit" class="btn btn-outline">Run Now</button>
             </form>
             <a href="/automations/{{ automation.id }}/steps/new" class="btn btn-primary">+ New Step</a>
@@ -42,7 +42,7 @@
 <div class="card" style="margin-bottom: 1.5rem;">
     <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem;">Edit Details</h3>
     <form method="post" action="/automations/{{ automation.id }}" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
-        {% call macros::csrf_field(csrf_token) %}
+        {% call macros::csrf_field(csrf_token) %}{% endcall %}
         <div style="flex: 2; min-width: 200px;">
             <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
             <input type="text" name="name" value="{{ automation.name }}" required class="form-control" style="width: 100%;">
@@ -94,17 +94,17 @@
                 <a href="/automations/{{ automation.id }}/steps/{{ step.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/move-up" style="display: inline;">
-                    {% call macros::csrf_field(csrf_token) %}
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <button type="submit" class="btn btn-sm btn-outline" title="Move Up" aria-label="Move step up">↑</button>
                 </form>
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/move-down" style="display: inline;">
-                    {% call macros::csrf_field(csrf_token) %}
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <button type="submit" class="btn btn-sm btn-outline" title="Move Down" aria-label="Move step down">↓</button>
                 </form>
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this step?');">
-                    {% call macros::csrf_field(csrf_token) %}
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
                 </form>
             </div>

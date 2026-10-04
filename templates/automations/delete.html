@@ -4,7 +4,7 @@
 {% block title %}Delete {{ automation.name }} - DeskDispatch{% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "automations") %}
+{% call macros::top_nav(user, "automations") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -20,7 +20,7 @@
     </p>
 
     <form method="post" action="/automations/{{ automation.id }}/delete" style="display: flex; gap: 1rem; justify-content: center;">
-        {% call macros::csrf_field(csrf_token) %}
+        {% call macros::csrf_field(csrf_token) %}{% endcall %}
         <a href="/automations/{{ automation.id }}" class="btn btn-outline">Cancel</a>
         <button type="submit" class="btn btn-primary" style="background-color: var(--color-danger); border-color: var(--color-danger);">Permanently Delete</button>
     </form>

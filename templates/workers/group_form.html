@@ -6,7 +6,7 @@
 {% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "workers") %}
+{% call macros::top_nav(user, "workers") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -38,7 +38,7 @@
             action="/worker-groups"
         {% endif %}
         style="display: flex; flex-direction: column; gap: 1.25rem;">
-        {% call macros::csrf_field(user.csrf_token) %}
+        {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
 
         <div>
             <label for="name" style="display: block; font-weight: 600; margin-bottom: 0.375rem;">Group Name</label>

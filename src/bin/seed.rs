@@ -1,7 +1,4 @@
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Argon2,
-};
+use argon2::{Argon2, PasswordHasher};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 
@@ -23,10 +20,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&database_url)
         .await?;
 
-    let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let password_hash = argon2
-        .hash_password(admin_password.as_bytes(), &salt)
+        .hash_password(admin_password.as_bytes())
         .map_err(|e| format!("Password hashing error: {}", e))?
         .to_string();
 

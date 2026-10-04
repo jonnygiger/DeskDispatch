@@ -4,7 +4,7 @@
 {% block title %}{% if is_edit %}Edit Key Press Step{% else %}New Key Press Step{% endif %} - DeskDispatch{% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "automations") %}
+{% call macros::top_nav(user, "automations") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -21,7 +21,7 @@
     {% endif %}
 
     <form method="post" action="{% if let Some(sid) = step_id %}/automations/{{ automation_id }}/steps/{{ sid }}{% else %}/automations/{{ automation_id }}/steps{% endif %}">
-        {% call macros::csrf_field(csrf_token) %}
+        {% call macros::csrf_field(csrf_token) %}{% endcall %}
 
         <div class="form-group" style="margin-bottom: 1.25rem;">
             <label for="label" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Step Label (Optional)</label>

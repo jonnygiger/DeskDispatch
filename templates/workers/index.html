@@ -4,7 +4,7 @@
 {% block title %}Workers & Groups - DeskDispatch{% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "workers") %}
+{% call macros::top_nav(user, "workers") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -70,7 +70,7 @@
                             {% if user.role.is_admin() %}
                             <a href="/workers/{{ w.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
                             <form method="post" action="/workers/{{ w.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker {{ w.display_name }}?');">
-                                {% call macros::csrf_field(user.csrf_token) %}
+                                {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
                                 <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
                             </form>
                             {% endif %}
@@ -134,7 +134,7 @@
                         <div style="display: inline-flex; gap: 0.5rem;">
                             <a href="/worker-groups/{{ g.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
                             <form method="post" action="/worker-groups/{{ g.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker group {{ g.name }}?');">
-                                {% call macros::csrf_field(user.csrf_token) %}
+                                {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
                                 <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
                             </form>
                         </div>

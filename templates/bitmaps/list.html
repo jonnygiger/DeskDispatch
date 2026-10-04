@@ -10,7 +10,7 @@ Bitmap Library - DeskDispatch
 {% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "automations") %}
+{% call macros::top_nav(user, "automations") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -85,7 +85,7 @@ Bitmap Library - DeskDispatch
 
             <!-- Thumbnail view with Magnifier component -->
             <div class="bitmap-magnifier-container" style="background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 6px; padding: 0.5rem; overflow-x: auto;">
-                {% call macros::image_magnifier(bitmap.magnifier) %}
+                {% call macros::image_magnifier(bitmap.magnifier) %}{% endcall %}
             </div>
 
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--color-text-muted); border-top: 1px solid var(--color-border); padding-top: 0.5rem; margin-top: 0.25rem;">

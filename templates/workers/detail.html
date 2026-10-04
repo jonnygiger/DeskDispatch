@@ -4,7 +4,7 @@
 {% block title %}Worker: {{ worker.display_name }} - DeskDispatch{% endblock %}
 
 {% block top_nav %}
-{% call macros::top_nav(user, "workers") %}
+{% call macros::top_nav(user, "workers") %}{% endcall %}
 {% endblock %}
 
 {% block content %}
@@ -21,15 +21,15 @@
         {% if user.role.is_admin() %}
         <a href="/workers/{{ worker.id }}/edit" class="btn btn-primary">Edit Worker</a>
         <form method="post" action="/workers/{{ worker.id }}/rotate-key" style="display: inline;" onsubmit="return confirm('Are you sure you want to rotate the API key for {{ worker.display_name }}? The current key will be invalidated immediately.');">
-            {% call macros::csrf_field(user.csrf_token) %}
+            {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
             <button type="submit" class="btn btn-outline">Rotate API Key</button>
         </form>
         <form method="post" action="/workers/{{ worker.id }}/deactivate" style="display: inline;" onsubmit="return confirm('Are you sure you want to deactivate {{ worker.display_name }}?');">
-            {% call macros::csrf_field(user.csrf_token) %}
+            {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
             <button type="submit" class="btn btn-outline">Deactivate</button>
         </form>
         <form method="post" action="/workers/{{ worker.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker {{ worker.display_name }}?');">
-            {% call macros::csrf_field(user.csrf_token) %}
+            {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
             <button type="submit" class="btn btn-danger-outline">Delete Worker</button>
         </form>
         {% endif %}
