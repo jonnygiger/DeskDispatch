@@ -1,0 +1,101 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Task Runs - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "runs") %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">Task Runs</h1>
+</div>
+
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" action="/runs" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+            <label for="automation_id" style="font-size: 0.8125rem; font-weight: 500;">Automation</label>
+            <select name="automation_id" id="automation_id" class="form-control" style="min-width: 180px;">
+                <option value="">All Automations</option>
+                {% for auto in automations %}
+                <option value="{{ auto.id }}" {% if auto.is_selected(filter_automation_id) %}selected{% endif %}>
+                    {{ auto.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+            <label for="worker_id" style="font-size: 0.8125rem; font-weight: 500;">Worker</label>
+            <select name="worker_id" id="worker_id" class="form-control" style="min-width: 180px;">
+                <option value="">All Workers</option>
+                {% for w in workers %}
+                <option value="{{ w.id }}" {% if w.is_selected(filter_worker_id) %}selected{% endif %}>
+                    {{ w.display_name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+            <label for="status" style="font-size: 0.8125rem; font-weight: 500;">Status</label>
+            <select name="status" id="status" class="form-control" style="min-width: 150px;">
+                <option value="all" {% if self.is_status_selected("all") %}selected{% endif %}>All Statuses</option>
+                <option value="queued" {% if self.is_status_selected("queued") %}selected{% endif %}>Queued</option>
+                <option value="running" {% if self.is_status_selected("running") %}selected{% endif %}>Running</option>
+                <option value="succeeded" {% if self.is_status_selected("succeeded") %}selected{% endif %}>Succeeded</option>
+                <option value="failed" {% if self.is_status_selected("failed") %}selected{% endif %}>Failed</option>
+                <option value="cancelled" {% if self.is_status_selected("cancelled") %}selected{% endif %}>Cancelled</option>
+                <option value="lost" {% if self.is_status_selected("lost") %}selected{% endif %}>Lost</option>
+            </select>
+        </div>
+
+        <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
+            <button type="submit" class="btn btn-primary">Filter</button>
+            <a href="/runs" class="btn btn-outline">Reset</a>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    {% if runs.is_empty() %}
+        <p style="color: var(--color-text-muted); font-size: 0.875rem;">No task runs found matching the filter criteria.</p>
+    {% else %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Run ID</th>
+                    <th>Automation</th>
+                    <th>Worker</th>
+                    <th>Status</th>
+                    <th>Triggered By</th>
+                    <th>Queued At</th>
+                    <th>Duration</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for run in runs %}
+                <tr>
+                    <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
+                    <td><a href="/automations/{{ run.automation_id }}">{{ run.automation_name }}</a></td>
+                    <td>
+                        {% if let Some(wid) = run.worker_id %}
+                            <a href="/workers/{{ wid }}">{{ run.worker_name.as_deref().unwrap_or("Worker") }}</a>
+                        {% else %}
+                            <span style="color: var(--color-text-muted);">-</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="badge {{ run.status_badge_class() }}">{{ run.status }}</span></td>
+                    <td>{{ run.triggered_by }}</td>
+                    <td>{{ run.formatted_queued_at() }}</td>
+                    <td>{{ run.duration_display() }}</td>
+                    <td><a href="/runs/{{ run.id }}" class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">View</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
+{% endblock %}

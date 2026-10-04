@@ -108,6 +108,26 @@ pub struct CompleteTaskRunResponse {
     pub status: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScreenshotUploadUrlResponse {
+    pub upload_url: String,
+    pub object_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommitScreenshotRequest {
+    pub step_id: Option<i64>,
+    pub object_key: Option<String>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct CommitScreenshotResponse {
+    pub status: String,
+    pub object_key: String,
+}
+
 pub async fn fetch_full_automation_json(
     conn: &mut sqlx::PgConnection,
     automation_id: i64,
@@ -872,6 +892,221 @@ pub async fn post_complete_task_run_handler(
     }
 }
 
+pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE task_runs
+        SET status = 'lost',
+            completed_at = now(),
+            error_message = COALESCE(error_message, 'Worker heartbeat lost (stalled execution)')
+        WHERE status = 'running'
+          AND (
+            worker_id IS NULL
+            OR EXISTS (
+              SELECT 1 FROM task_worker_pcs w
+              WHERE w.id = task_runs.worker_id
+                AND (w.last_heartbeat_at IS NULL OR w.last_heartbeat_at < now() - INTERVAL '90 seconds')
+            )
+          )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    let count = result.rows_affected();
+    if count > 0 {
+        tracing::info!(count = count, "Swept stalled task runs with silent heartbeats to lost status");
+    }
+    Ok(count)
+}
+
+pub async fn get_task_run_screenshot_upload_url_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(task_run_id): Path<i64>,
+) -> impl IntoResponse {
+    let run_exists: Option<i64> = match sqlx::query_scalar(
+        "SELECT id FROM task_runs WHERE id = $1 AND worker_id = $2",
+    )
+    .bind(task_run_id)
+    .bind(worker.id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Error checking task run for screenshot upload URL: {}",
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if run_exists.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Running task run {} not found for this worker", task_run_id),
+            }),
+        )
+            .into_response();
+    }
+
+    let object_key = format!("runs/{}/step_{}.png", task_run_id, Uuid::new_v4());
+    let storage = state.storage_service();
+
+    match storage
+        .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
+        .await
+    {
+        Ok(upload_url) => (
+            StatusCode::OK,
+            Json(ScreenshotUploadUrlResponse {
+                upload_url,
+                object_key,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Failed to generate presigned upload URL: {}",
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to generate upload URL".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn post_task_run_screenshot_commit_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(task_run_id): Path<i64>,
+    payload: Option<Json<CommitScreenshotRequest>>,
+) -> impl IntoResponse {
+    let req = payload.map(|Json(p)| p).unwrap_or(CommitScreenshotRequest {
+        step_id: None,
+        object_key: None,
+        width: None,
+        height: None,
+    });
+
+    let run_exists: Option<i64> = match sqlx::query_scalar(
+        "SELECT id FROM task_runs WHERE id = $1 AND worker_id = $2",
+    )
+    .bind(task_run_id)
+    .bind(worker.id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Error checking task run for screenshot commit: {}",
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if run_exists.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Task run {} not found for this worker", task_run_id),
+            }),
+        )
+            .into_response();
+    }
+
+    let object_key = req.object_key.unwrap_or_else(|| format!("runs/{}/step.png", task_run_id));
+
+    if let Some(step_id) = req.step_id {
+        let update_res = sqlx::query(
+            r#"
+            UPDATE task_run_steps
+            SET screenshot_object_key = $1
+            WHERE task_run_id = $2 AND step_id = $3
+            "#,
+        )
+        .bind(&object_key)
+        .bind(task_run_id)
+        .bind(step_id)
+        .execute(&state.db)
+        .await;
+
+        if let Err(e) = update_res {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                step_id = step_id,
+                "Failed to update task_run_steps screenshot_object_key: {}",
+                e
+            );
+        }
+    } else {
+        // Update the most recently recorded step for this task run if step_id not explicitly provided
+        let update_res = sqlx::query(
+            r#"
+            UPDATE task_run_steps
+            SET screenshot_object_key = $1
+            WHERE id = (
+                SELECT id FROM task_run_steps
+                WHERE task_run_id = $2
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            "#,
+        )
+        .bind(&object_key)
+        .bind(task_run_id)
+        .execute(&state.db)
+        .await;
+
+        if let Err(e) = update_res {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Failed to update latest task_run_steps screenshot_object_key: {}",
+                e
+            );
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(CommitScreenshotResponse {
+            status: "success".to_string(),
+            object_key,
+        }),
+    )
+        .into_response()
+}
+
 pub async fn get_task_run_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
@@ -1396,6 +1631,46 @@ mod tests {
         let updates = req.variable_updates.expect("Expected variable updates");
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].variable_id, 5);
+    }
+
+    #[test]
+    fn test_screenshot_upload_url_response_serialization() {
+        let resp = ScreenshotUploadUrlResponse {
+            upload_url: "http://localhost:9000/deskdispatch-bucket/runs/1/step_123.png?X-Amz-Signature=abc".to_string(),
+            object_key: "runs/1/step_123.png".to_string(),
+        };
+
+        let json_str = serde_json::to_string(&resp).expect("Serialization failed");
+        assert!(json_str.contains(r#""upload_url":"http://localhost:9000/deskdispatch-bucket/runs/1/step_123.png?X-Amz-Signature=abc""#));
+        assert!(json_str.contains(r#""object_key":"runs/1/step_123.png""#));
+
+        let deserialized: ScreenshotUploadUrlResponse = serde_json::from_str(&json_str).expect("Deserialization failed");
+        assert_eq!(deserialized, resp);
+    }
+
+    #[test]
+    fn test_commit_screenshot_request_deserialization() {
+        let json_data = r#"{
+            "step_id": 101,
+            "object_key": "runs/1/step_101.png",
+            "width": 1920,
+            "height": 1080
+        }"#;
+
+        let req: CommitScreenshotRequest = serde_json::from_str(json_data).expect("Deserialization failed");
+        assert_eq!(req.step_id, Some(101));
+        assert_eq!(req.object_key.as_deref(), Some("runs/1/step_101.png"));
+        assert_eq!(req.width, Some(1920));
+        assert_eq!(req.height, Some(1080));
+
+        let resp = CommitScreenshotResponse {
+            status: "success".to_string(),
+            object_key: "runs/1/step_101.png".to_string(),
+        };
+
+        let resp_json = serde_json::to_string(&resp).expect("Serialization failed");
+        assert!(resp_json.contains(r#""status":"success""#));
+        assert!(resp_json.contains(r#""object_key":"runs/1/step_101.png""#));
     }
 
     #[test]

@@ -68,6 +68,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rate_limiter: LoginRateLimiter::default(),
     };
 
+    let db_pool = state.db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            if let Err(e) = sweep_stalled_task_runs(&db_pool).await {
+                tracing::error!("Error sweeping stalled task runs: {}", e);
+            }
+        }
+    });
+
     let app = Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/static/{*path}", get(static_asset_handler))
@@ -120,6 +131,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/workers/task-runs/{id}", get(get_task_run_handler))
         .route("/api/v1/workers/task-runs/{id}/step-result", post(post_step_result_handler))
         .route("/api/v1/workers/task-runs/{id}/complete", post(post_complete_task_run_handler))
+        .route("/api/v1/workers/task-runs/{id}/screenshot-upload-url", get(get_task_run_screenshot_upload_url_handler))
+        .route("/api/v1/workers/task-runs/{id}/screenshots/commit", post(post_task_run_screenshot_commit_handler))
+        .route("/runs", get(get_runs_handler))
+        .route("/runs/{id}", get(get_run_detail_handler))
+        .route("/runs/{id}/cancel", post(post_cancel_run_handler))
         .route("/workers", get(get_workers_handler).post(post_create_worker_handler))
         .route("/workers/new", get(get_new_worker_handler))
         .route("/workers/{id}", get(get_worker_detail_handler))
