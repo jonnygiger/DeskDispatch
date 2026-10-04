@@ -7,6 +7,7 @@ use app::routes::home::{IndexTemplate, RecentRunItem};
 use app::routes::media::DevMagnifierTemplate;
 use app::routes::recordings::*;
 use app::routes::runs::*;
+use app::routes::schedules::*;
 use app::routes::workers::*;
 use askama::Template;
 use chrono::Utc;
@@ -415,6 +416,50 @@ fn main() {
         error: None,
     };
     fs::write("rendered_templates/recordings_review.html", rec_review_tmpl.render().unwrap()).unwrap();
+
+    let sample_schedule = ScheduleItem {
+        id: 1,
+        automation_id: 12,
+        automation_name: "Daily Login Check".to_string(),
+        name: "Morning Schedule".to_string(),
+        cron_expression: "0 9 * * MON-FRI".to_string(),
+        timezone: "UTC".to_string(),
+        worker_group_id: Some(1),
+        worker_group_name: Some("Warehouse Fleet".to_string()),
+        is_enabled: true,
+        next_run_at: Some(Utc::now()),
+        last_run_at: Some(Utc::now()),
+        created_by: 1,
+        created_at: Utc::now(),
+    };
+
+    let schedules_idx_tmpl = SchedulesIndexTemplate {
+        user: user.clone(),
+        schedules: vec![sample_schedule],
+    };
+    fs::write("rendered_templates/schedules_index.html", schedules_idx_tmpl.render().unwrap()).unwrap();
+
+    let schedule_form_tmpl = ScheduleFormTemplate {
+        user: user.clone(),
+        is_edit: false,
+        schedule_id: None,
+        automation_id: Some(12),
+        name: "Morning Schedule".to_string(),
+        cron_expression: "0 9 * * MON-FRI".to_string(),
+        timezone: "UTC".to_string(),
+        worker_group_id: Some(1),
+        is_enabled: true,
+        automations: vec![ScheduleAutomationOption {
+            id: 12,
+            name: "Daily Login Check".to_string(),
+        }],
+        worker_groups: vec![ScheduleWorkerGroupOption {
+            id: 1,
+            name: "Warehouse Fleet".to_string(),
+        }],
+        error: None,
+    };
+    fs::write("rendered_templates/schedules_form.html", schedule_form_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

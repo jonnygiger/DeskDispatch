@@ -1,0 +1,84 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}{% if is_edit %}Edit Schedule{% else %}New Schedule{% endif %} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "schedules") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">{% if is_edit %}Edit Schedule{% else %}New Schedule{% endif %}</h1>
+    <div class="dashboard-actions">
+        <a href="/schedules" class="btn btn-outline">Back to Schedules</a>
+    </div>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    {% if let Some(err) = error %}
+    <div class="alert alert-danger" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background-color: var(--color-danger-light, #fde8e8); color: var(--color-danger, #e0242c); border-radius: 4px;">
+        {{ err }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="{% if is_edit %}/schedules/{{ schedule_id.unwrap() }}{% else %}/schedules{% endif %}">
+        {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+
+        <div style="margin-bottom: 1.25rem;">
+            <label for="automation_id" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Automation *</label>
+            <select name="automation_id" id="automation_id" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" required>
+                <option value="">-- Select Automation --</option>
+                {% for auto in automations %}
+                <option value="{{ auto.id }}" {% if self.is_automation_selected(auto.id) %}selected{% endif %}>
+                    {{ auto.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div style="margin-bottom: 1.25rem;">
+            <label for="name" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Schedule Name *</label>
+            <input type="text" name="name" id="name" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" value="{{ name }}" placeholder="e.g. Weekday Morning Inventory Sync" required />
+        </div>
+
+        <div style="margin-bottom: 1.25rem;">
+            <label for="cron_expression" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Cron Expression *</label>
+            <input type="text" name="cron_expression" id="cron_expression" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; font-family: monospace;" value="{{ cron_expression }}" placeholder="0 9 * * MON-FRI" required />
+            <small style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
+                Standard 5-field cron syntax (min hour day month weekday). Examples:
+                <code>0 9 * * MON-FRI</code> = weekdays at 9am,
+                <code>0 0 * * *</code> = daily at midnight,
+                <code>*/15 * * * *</code> = every 15 minutes.
+            </small>
+        </div>
+
+        <div style="margin-bottom: 1.25rem;">
+            <label for="timezone" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Timezone</label>
+            <input type="text" name="timezone" id="timezone" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" value="{{ timezone }}" placeholder="UTC" />
+        </div>
+
+        <div style="margin-bottom: 1.25rem;">
+            <label for="worker_group_id" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Target Worker Group</label>
+            <select name="worker_group_id" id="worker_group_id" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+                <option value="">Any available worker</option>
+                {% for wg in worker_groups %}
+                <option value="{{ wg.id }}" {% if self.is_worker_group_selected(wg.id) %}selected{% endif %}>
+                    {{ wg.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" name="is_enabled" id="is_enabled" value="true" {% if is_enabled %}checked{% endif %} />
+            <label for="is_enabled" style="font-weight: 500; cursor: pointer;">Enable this schedule immediately</label>
+        </div>
+
+        <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+            <a href="/schedules" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">{% if is_edit %}Update Schedule{% else %}Create Schedule{% endif %}</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

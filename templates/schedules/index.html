@@ -1,0 +1,83 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Schedules - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "schedules") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">Schedules</h1>
+    {% if user.role.can_edit() %}
+    <div class="dashboard-actions">
+        <a href="/schedules/new" class="btn btn-primary">+ New Schedule</a>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    {% if schedules.is_empty() %}
+        <p style="color: var(--color-text-muted); font-size: 0.875rem;">
+            No schedules configured yet.
+            {% if user.role.can_edit() %}
+            Click <a href="/schedules/new"><strong>+ New Schedule</strong></a> to create one.
+            {% endif %}
+        </p>
+    {% else %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Schedule Name</th>
+                    <th>Automation</th>
+                    <th>Cron Expression</th>
+                    <th>Timezone</th>
+                    <th>Target Worker Group</th>
+                    <th>Next Run At</th>
+                    <th>Last Run At</th>
+                    <th>Status</th>
+                    {% if user.role.can_edit() %}
+                    <th>Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in schedules %}
+                <tr>
+                    <td><strong>{{ s.name }}</strong></td>
+                    <td><a href="/automations/{{ s.automation_id }}">{{ s.automation_name }}</a></td>
+                    <td><code>{{ s.cron_expression }}</code></td>
+                    <td>{{ s.timezone }}</td>
+                    <td>
+                        {% if let Some(wg_name) = s.worker_group_name %}
+                            {{ wg_name }}
+                        {% else %}
+                            <span style="color: var(--color-text-muted);">Any available worker</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ s.formatted_next_run() }}</td>
+                    <td>{{ s.formatted_last_run() }}</td>
+                    <td><span class="badge {{ s.status_badge_class() }}">{% if s.is_enabled %}Enabled{% else %}Disabled{% endif %}</span></td>
+                    {% if user.role.can_edit() %}
+                    <td style="white-space: nowrap;">
+                        <form method="post" action="/schedules/{{ s.id }}/toggle" style="display:inline;">
+                            {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+                            <button type="submit" class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
+                                {% if s.is_enabled %}Disable{% else %}Enable{% endif %}
+                            </button>
+                        </form>
+                        <a href="/schedules/{{ s.id }}/edit" class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">Edit</a>
+                        <form method="post" action="/schedules/{{ s.id }}/delete" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this schedule?');">
+                            {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+                            <button type="submit" class="btn btn-danger" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">Delete</button>
+                        </form>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
+{% endblock %}
