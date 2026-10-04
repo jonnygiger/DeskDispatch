@@ -6,6 +6,7 @@ pub mod bitmaps;
 pub mod errors;
 pub mod home;
 pub mod media;
+pub mod recordings;
 pub mod runs;
 pub mod static_assets;
 pub mod workers;
@@ -20,6 +21,7 @@ pub use errors::{
 };
 pub use home::get_index_handler;
 pub use media::*;
+pub use recordings::*;
 pub use runs::*;
 pub use static_assets::static_asset_handler;
 pub use workers::*;

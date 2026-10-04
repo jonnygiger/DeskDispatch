@@ -1,0 +1,137 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Recording Session #{{ session.id }} - DeskDispatch{% endblock %}
+
+{% block head %}
+{% if session.status == "recording" %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "workers") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <h1 class="dashboard-title" style="margin: 0;">Recording Session #{{ session.id }}</h1>
+                <span class="badge {{ session.status_badge_class() }}">{{ session.status }}</span>
+            </div>
+            <p style="color: var(--color-text-muted); margin-top: 0.25rem;">
+                Worker: <strong>{{ session.worker_display_name }}</strong> (<code>{{ session.worker_hostname }}</code>)
+            </p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+            <a href="/workers/{{ session.worker_id }}" class="btn btn-outline">&larr; Back to Worker</a>
+            {% if session.status == "completed" %}
+            <a href="/recordings/{{ session.id }}/review" class="btn btn-primary">Review Recording &rarr;</a>
+            {% else if session.status == "imported" %}
+            {% if let Some(auto_id) = session.resulting_automation_id %}
+            <a href="/automations/{{ auto_id }}" class="btn btn-primary">View Converted Automation &rarr;</a>
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if let Some(err) = error %}
+<div class="alert alert-danger" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 4px;">
+    {{ err }}
+</div>
+{% endif %}
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+    <!-- Live Progress Card -->
+    <div class="card">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">
+            Recording Status
+        </h2>
+
+        {% if session.status == "recording" %}
+        <div style="background: rgba(240, 173, 78, 0.1); border: 1px solid var(--color-warning); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <div style="font-size: 1.125rem; font-weight: 600; color: #8a6d3b;">Recording in progress...</div>
+                <div style="font-size: 0.875rem; color: var(--color-text-muted); margin-top: 0.25rem;">
+                    This page automatically reloads every 3 seconds to show captured desktop events.
+                </div>
+            </div>
+            <form method="post" action="/recordings/{{ session.id }}/stop">
+                {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+                <button type="submit" class="btn btn-danger">Stop Recording</button>
+            </form>
+        </div>
+        {% else if session.status == "completed" %}
+        <div style="background: rgba(92, 184, 92, 0.1); border: 1px solid var(--color-success); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <div style="font-size: 1.125rem; font-weight: 600; color: #3c763d;">Recording Completed</div>
+                <div style="font-size: 0.875rem; color: var(--color-text-muted); margin-top: 0.25rem;">
+                    All events captured. Ready to review and convert into a draft automation.
+                </div>
+            </div>
+            <a href="/recordings/{{ session.id }}/review" class="btn btn-primary">Review Recording &rarr;</a>
+        </div>
+        {% else if session.status == "imported" %}
+        <div style="background: rgba(91, 192, 222, 0.1); border: 1px solid var(--color-info); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem;">
+            <div style="font-size: 1.125rem; font-weight: 600; color: #31708f;">Recording Imported</div>
+            <div style="font-size: 0.875rem; color: var(--color-text-muted); margin-top: 0.25rem;">
+                This recording session has been converted into an automation.
+            </div>
+        </div>
+        {% else if session.status == "discarded" %}
+        <div style="background: rgba(217, 83, 79, 0.1); border: 1px solid var(--color-danger); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem;">
+            <div style="font-size: 1.125rem; font-weight: 600; color: #a94442;">Recording Discarded</div>
+            <div style="font-size: 0.875rem; color: var(--color-text-muted); margin-top: 0.25rem;">
+                This recording session was discarded.
+            </div>
+        </div>
+        {% endif %}
+
+        <dl style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.75rem 1rem; margin: 0; font-size: 0.9375rem;">
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Session ID:</dt>
+            <dd style="margin: 0;">#{{ session.id }}</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Events Captured:</dt>
+            <dd style="margin: 0;"><strong>{{ event_count }}</strong> events</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Started By:</dt>
+            <dd style="margin: 0;">{{ session.started_by_display_name }}</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Started At:</dt>
+            <dd style="margin: 0;">{{ session.formatted_started_at() }}</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Ended At:</dt>
+            <dd style="margin: 0;">{{ session.formatted_ended_at() }}</dd>
+        </dl>
+    </div>
+
+    <!-- Summary / Quick Actions -->
+    <div class="card">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">
+            Quick Actions
+        </h2>
+        {% if session.status == "recording" %}
+        <p style="font-size: 0.875rem; color: var(--color-text-muted);">
+            Clicking <strong>Stop Recording</strong> instructs the worker PC to stop capturing events.
+        </p>
+        <form method="post" action="/recordings/{{ session.id }}/stop" style="margin-top: 1rem;">
+            {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+            <button type="submit" class="btn btn-danger" style="width: 100%;">Stop Recording</button>
+        </form>
+        {% else if session.status == "completed" %}
+        <p style="font-size: 0.875rem; color: var(--color-text-muted);">
+            Review captured events, exclude unwanted actions, and convert into a new automation.
+        </p>
+        <a href="/recordings/{{ session.id }}/review" class="btn btn-primary" style="display: block; text-align: center; margin-top: 1rem;">Review &amp; Convert</a>
+        {% else %}
+        <p style="font-size: 0.875rem; color: var(--color-text-muted);">
+            Session is finalized.
+        </p>
+        <a href="/automations" class="btn btn-outline" style="display: block; text-align: center; margin-top: 1rem;">Go to Automations</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

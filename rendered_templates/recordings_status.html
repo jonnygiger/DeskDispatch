@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recording Session #10 - DeskDispatch</title>
+    <link rel="stylesheet" href="/static/style.css">
+
+
+
+</head>
+<body>
+
+
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+    <ul class="top-nav-menu">
+        <li><a href="/" >Dashboard</a></li>
+        <li><a href="/automations" >Automations</a></li>
+        <li><a href="/schedules" >Schedules</a></li>
+        <li><a href="/runs" >Runs</a></li>
+        <li><a href="/workers" class="active">Workers</a></li>
+
+        <li><a href="/users" >Users</a></li>
+
+    </ul>
+    <div class="top-nav-user">
+        <a href="/account" >Admin User</a>
+        <form method="post" action="/logout" style="display:inline;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
+        </form>
+    </div>
+</header>
+
+
+
+    <div class="app-container">
+
+        <main class="main-content">
+
+<div class="dashboard-header" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <h1 class="dashboard-title" style="margin: 0;">Recording Session #10</h1>
+                <span class="badge badge-success">completed</span>
+            </div>
+            <p style="color: var(--color-text-muted); margin-top: 0.25rem;">
+                Worker: <strong>Warehouse Worker PC</strong> (<code>pc-warehouse-01</code>)
+            </p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+            <a href="/workers/1" class="btn btn-outline">&larr; Back to Worker</a>
+
+            <a href="/recordings/10/review" class="btn btn-primary">Review Recording &rarr;</a>
+
+        </div>
+    </div>
+</div>
+
+
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+    <!-- Live Progress Card -->
+    <div class="card">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">
+            Recording Status
+        </h2>
+
+
+        <div style="background: rgba(92, 184, 92, 0.1); border: 1px solid var(--color-success); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <div style="font-size: 1.125rem; font-weight: 600; color: #3c763d;">Recording Completed</div>
+                <div style="font-size: 0.875rem; color: var(--color-text-muted); margin-top: 0.25rem;">
+                    All events captured. Ready to review and convert into a draft automation.
+                </div>
+            </div>
+            <a href="/recordings/10/review" class="btn btn-primary">Review Recording &rarr;</a>
+        </div>
+
+
+        <dl style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.75rem 1rem; margin: 0; font-size: 0.9375rem;">
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Session ID:</dt>
+            <dd style="margin: 0;">#10</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Events Captured:</dt>
+            <dd style="margin: 0;"><strong>5</strong> events</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Started By:</dt>
+            <dd style="margin: 0;">Admin User</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Started At:</dt>
+            <dd style="margin: 0;">2026-10-04 13:48:41 UTC</dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">Ended At:</dt>
+            <dd style="margin: 0;">2026-10-04 13:48:41 UTC</dd>
+        </dl>
+    </div>
+
+    <!-- Summary / Quick Actions -->
+    <div class="card">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">
+            Quick Actions
+        </h2>
+
+        <p style="font-size: 0.875rem; color: var(--color-text-muted);">
+            Review captured events, exclude unwanted actions, and convert into a new automation.
+        </p>
+        <a href="/recordings/10/review" class="btn btn-primary" style="display: block; text-align: center; margin-top: 1rem;">Review &amp; Convert</a>
+
+    </div>
+</div>
+
+        </main>
+    </div>
+
+    <footer class="footer">
+
+        &copy; DeskDispatch — Task Server
+
+    </footer>
+</body>
+</html>

@@ -18,6 +18,9 @@
     </div>
     <div style="display: flex; gap: 0.75rem;">
         <a href="/workers" class="btn btn-outline">&larr; Back to Workers</a>
+        {% if user.role.can_edit() %}
+        <a href="/workers/{{ worker.id }}/record" class="btn btn-primary">Record New Steps</a>
+        {% endif %}
         {% if user.role.is_admin() %}
         <a href="/workers/{{ worker.id }}/edit" class="btn btn-primary">Edit Worker</a>
         <form method="post" action="/workers/{{ worker.id }}/rotate-key" style="display: inline;" onsubmit="return confirm('Are you sure you want to rotate the API key for {{ worker.display_name }}? The current key will be invalidated immediately.');">

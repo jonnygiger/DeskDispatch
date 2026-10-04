@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review Recording #10 - DeskDispatch</title>
+    <link rel="stylesheet" href="/static/style.css">
+
+</head>
+<body>
+
+
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+    <ul class="top-nav-menu">
+        <li><a href="/" >Dashboard</a></li>
+        <li><a href="/automations" >Automations</a></li>
+        <li><a href="/schedules" >Schedules</a></li>
+        <li><a href="/runs" >Runs</a></li>
+        <li><a href="/workers" class="active">Workers</a></li>
+
+        <li><a href="/users" >Users</a></li>
+
+    </ul>
+    <div class="top-nav-user">
+        <a href="/account" >Admin User</a>
+        <form method="post" action="/logout" style="display:inline;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
+        </form>
+    </div>
+</header>
+
+
+
+    <div class="app-container">
+
+        <main class="main-content">
+
+<div class="dashboard-header" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <h1 class="dashboard-title" style="margin: 0;">Review Recording #10</h1>
+                <span class="badge badge-success">completed</span>
+            </div>
+            <p style="color: var(--color-text-muted); margin-top: 0.25rem;">
+                Worker: <strong>Warehouse Worker PC</strong> &middot; Captured 0 events
+            </p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+            <a href="/recordings/10" class="btn btn-outline">&larr; Back to Status</a>
+        </div>
+    </div>
+</div>
+
+
+
+<form method="post" action="/recordings/10/convert" id="convert-form">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+
+    <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start;">
+        <!-- Left Column: Captured Events Sequence -->
+        <div>
+            <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem;">
+                Captured Desktop Actions (0)
+            </h2>
+
+
+            <div class="card" style="text-align: center; color: var(--color-text-muted); padding: 2rem;">
+                No events were captured during this recording session.
+            </div>
+
+        </div>
+
+        <!-- Right Column: Conversion Options -->
+        <div class="card" style="position: sticky; top: 1.5rem;">
+            <h2 style="font-size: 1.125rem; font-weight: 600; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem;">
+                Convert to Automation
+            </h2>
+
+            <div style="margin-bottom: 1rem;">
+                <label for="automation_name" style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.25rem;">
+                    Automation Name <span style="color: var(--color-danger);">*</span>
+                </label>
+                <input type="text" id="automation_name" name="automation_name" value="Recorded Automation - Warehouse Worker PC" required class="form-control" style="width: 100%; box-sizing: border-box;">
+            </div>
+
+            <div style="margin-bottom: 1.5rem;">
+                <label for="automation_description" style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.25rem;">
+                    Description
+                </label>
+                <textarea id="automation_description" name="automation_description" rows="3" class="form-control" style="width: 100%; box-sizing: border-box; resize: vertical;">Imported from recording session #10 on worker Warehouse Worker PC.</textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-bottom: 0.75rem;" disabled>
+                Convert to Draft Automation
+            </button>
+
+            <p style="font-size: 0.8125rem; color: var(--color-text-muted); margin-top: 0.5rem; margin-bottom: 1rem;">
+                Unchecked events will be converted into ordered automation steps.
+            </p>
+        </div>
+    </div>
+</form>
+
+<div class="card" style="margin-top: 1.5rem; max-width: 400px;">
+    <h3 style="font-size: 1rem; font-weight: 600; margin-top: 0; margin-bottom: 0.5rem; color: var(--color-danger);">
+        Discard Session
+    </h3>
+    <p style="font-size: 0.875rem; color: var(--color-text-muted); margin-bottom: 0.75rem;">
+        Permanently discard this recording session without creating an automation.
+    </p>
+    <form method="post" action="/recordings/10/discard" onsubmit="return confirm('Are you sure you want to discard this recording session?');">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+        <button type="submit" class="btn btn-danger-outline">Discard Recording</button>
+    </form>
+</div>
+
+        </main>
+    </div>
+
+    <footer class="footer">
+
+        &copy; DeskDispatch — Task Server
+
+    </footer>
+</body>
+</html>
