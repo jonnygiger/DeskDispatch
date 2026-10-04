@@ -244,3 +244,59 @@ fn extract_client_ip(headers: &HeaderMap) -> IpAddr {
 
     "127.0.0.1".parse().unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+    use std::net::IpAddr;
+
+    #[test]
+    fn test_extract_client_ip_headers() {
+        // 1. Single IPv4 address in X-Forwarded-For
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-For", HeaderValue::from_static("203.0.113.195"));
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "203.0.113.195".parse::<IpAddr>().unwrap());
+
+        // 2. Multiple comma-separated IPs in X-Forwarded-For (client IP is first)
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "X-Forwarded-For",
+            HeaderValue::from_static("198.51.100.1, 203.0.113.195, 70.41.3.18"),
+        );
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "198.51.100.1".parse::<IpAddr>().unwrap());
+
+        // 3. X-Forwarded-For takes precedence over X-Real-IP
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-For", HeaderValue::from_static("203.0.113.195"));
+        headers.insert("X-Real-IP", HeaderValue::from_static("198.51.100.22"));
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "203.0.113.195".parse::<IpAddr>().unwrap());
+
+        // 4. X-Real-IP fallback when X-Forwarded-For is missing
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Real-IP", HeaderValue::from_static("198.51.100.22"));
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "198.51.100.22".parse::<IpAddr>().unwrap());
+
+        // 5. IPv6 address parsing in X-Forwarded-For
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-For", HeaderValue::from_static("2001:db8::1"));
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "2001:db8::1".parse::<IpAddr>().unwrap());
+
+        // 6. Invalid IP format in X-Forwarded-For falls back to valid X-Real-IP
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-For", HeaderValue::from_static("invalid_ip"));
+        headers.insert("X-Real-IP", HeaderValue::from_static("198.51.100.22"));
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "198.51.100.22".parse::<IpAddr>().unwrap());
+
+        // 7. No headers present falls back to 127.0.0.1
+        let headers = HeaderMap::new();
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+}
