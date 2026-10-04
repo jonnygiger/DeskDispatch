@@ -14,7 +14,7 @@ use std::net::IpAddr;
 
 use crate::auth::{
     clear_session_cookie, create_session, create_session_cookie, delete_session, log_audit,
-    session::extract_session_id,
+    session::extract_session_id, OptionalAuthUser,
 };
 use crate::AppState;
 
@@ -208,8 +208,13 @@ pub async fn post_login_handler(
 
 pub async fn post_logout_handler(
     State(state): State<AppState>,
+    user: OptionalAuthUser,
     headers: HeaderMap,
 ) -> Response {
+    if let Some(u) = &user.0 {
+        let _ = log_audit(&state.db, Some(u.id), "logout", "user", Some(u.id), None).await;
+    }
+
     if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|h| h.to_str().ok()) {
         if let Some(session_id) = extract_session_id(cookie_header) {
             let _ = delete_session(&state.db, session_id).await;
