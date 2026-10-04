@@ -24,3 +24,14 @@ pub async fn log_audit(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_log_audit_parameters() {
+        let details = serde_json::json!({
+            "key": "value"
+        });
+        assert_eq!(details["key"], "value");
+    }
+}

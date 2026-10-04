@@ -560,16 +560,14 @@ pub async fn get_bitmap_commit_handler(
         "height": height
     });
 
-    let _ = sqlx::query(
-        r#"
-        INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
-        VALUES ($1, 'create', 'bitmap', $2, $3)
-        "#,
+    let _ = log_audit(
+        &state.db,
+        Some(user.id),
+        "create",
+        "bitmap",
+        Some(bitmap_id),
+        Some(details),
     )
-    .bind(user.id)
-    .bind(bitmap_id)
-    .bind(details)
-    .execute(&state.db)
     .await;
 
     if let Some(aid) = query.automation_id {
