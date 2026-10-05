@@ -1,4 +1,4 @@
-use app::routes::automations::{check_and_compact_positions, compact_positions};
+use app::routes::automations::{check_and_compact_positions, compact_positions, reorder_step};
 use sqlx::PgPool;
 
 async fn get_test_pool() -> Option<PgPool> {
@@ -169,7 +169,7 @@ async fn test_gap_precision_threshold_and_compaction_trigger() {
     assert!((pos_before[1] - pos_before[0]) < 0.0001);
 
     // Call check_and_compact_positions - should trigger compaction
-    check_and_compact_positions(&pool, auto_id).await;
+    check_and_compact_positions(&pool, auto_id).await.unwrap();
 
     // Verify positions have been compacted to 10.0, 20.0, 30.0
     let pos_after: Vec<f64> = sqlx::query_scalar(
@@ -181,4 +181,45 @@ async fn test_gap_precision_threshold_and_compaction_trigger() {
     .unwrap();
 
     assert_eq!(pos_after, vec![10.0, 20.0, 30.0]);
+}
+
+#[tokio::test]
+async fn test_reorder_step_swaps_positions_without_unique_constraint_error() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_reorder_step_swaps_positions_without_unique_constraint_error");
+        return;
+    };
+
+    let (_user_id, auto_id) = create_test_user_and_automation(&pool).await;
+
+    // Insert 2 adjacent steps
+    let step1_id: i64 = sqlx::query_scalar(
+        "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, 10.0, 'key_press', 'Step 1', 0) RETURNING id",
+    )
+    .bind(auto_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let step2_id: i64 = sqlx::query_scalar(
+        "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, 20.0, 'key_press', 'Step 2', 0) RETURNING id",
+    )
+    .bind(auto_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Move step 2 UP (should swap position with step 1)
+    let reorder_res = reorder_step(&pool, auto_id, step2_id, true).await;
+    assert!(reorder_res.is_ok(), "reorder_step failed: {:?}", reorder_res.err());
+
+    let ordered_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
+    )
+    .bind(auto_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(ordered_ids, vec![step2_id, step1_id]);
 }
