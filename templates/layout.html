@@ -8,6 +8,7 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
     {% block top_nav %}
     <header class="top-nav">
         <a href="/" class="top-nav-brand">
@@ -18,7 +19,7 @@
 
     <div class="app-container">
         {% block subnav %}{% endblock %}
-        <main class="main-content">
+        <main id="main-content" class="main-content">
             {% block content %}{% endblock %}
         </main>
     </div>
