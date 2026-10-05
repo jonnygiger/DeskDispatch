@@ -83,6 +83,7 @@ impl TaskRunListItem {
         match self.status.as_str() {
             "queued" => "badge-warning",
             "running" => "badge-info",
+            "cancelling" => "badge-warning",
             "succeeded" => "badge-success",
             "failed" => "badge-danger",
             "cancelled" => "badge-secondary",
@@ -391,7 +392,7 @@ pub async fn get_run_detail_handler(
         error_message: run_row.get("error_message"),
     };
 
-    let auto_refresh = run_item.status == "queued" || run_item.status == "running";
+    let auto_refresh = run_item.status == "queued" || run_item.status == "running" || run_item.status == "cancelling";
 
     let step_rows = sqlx::query(
         r#"
@@ -537,8 +538,9 @@ pub async fn post_cancel_run_handler(
     let update_res = sqlx::query(
         r#"
         UPDATE task_runs
-        SET status = 'cancelled',
-            completed_at = now()
+        SET status = CASE WHEN status = 'running' THEN 'cancelling' ELSE 'cancelled' END,
+            cancel_requested_at = CASE WHEN status = 'running' THEN now() ELSE cancel_requested_at END,
+            completed_at = CASE WHEN status = 'queued' THEN now() ELSE completed_at END
         WHERE id = $1 AND status IN ('queued', 'running')
         RETURNING automation_id, worker_id
         "#,
@@ -580,7 +582,7 @@ mod tests {
     #[test]
     fn test_task_run_list_item_methods() {
         let now = chrono::Utc::now();
-        let item = TaskRunListItem {
+        let mut item = TaskRunListItem {
             id: 4821,
             automation_id: 12,
             automation_name: "Test Automation".to_string(),
@@ -599,6 +601,9 @@ mod tests {
         assert_eq!(item.status_badge_class(), "badge-success");
         assert_eq!(item.duration_display(), "45s");
         assert!(!item.formatted_queued_at().is_empty());
+
+        item.status = "cancelling".to_string();
+        assert_eq!(item.status_badge_class(), "badge-warning");
     }
 
     #[test]

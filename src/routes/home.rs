@@ -23,7 +23,7 @@ impl RecentRunItem {
         match self.status.as_str() {
             "succeeded" => "badge-success",
             "failed" | "lost" => "badge-danger",
-            "running" => "badge-warning",
+            "running" | "cancelling" => "badge-warning",
             _ => "badge-neutral",
         }
     }
