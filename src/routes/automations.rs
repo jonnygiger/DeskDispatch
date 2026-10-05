@@ -501,7 +501,7 @@ pub async fn fetch_automation_step_options(
     exclude_step_id: Option<i64>,
 ) -> Vec<StepOption> {
     let raw_steps = sqlx::query(
-        "SELECT id, step_type, label, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
+        "SELECT id, step_type, label, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(db)
@@ -1555,7 +1555,7 @@ pub async fn get_automation_detail_handler(
     };
 
     let raw_steps = match sqlx::query(
-        "SELECT id, step_type, label, post_delay_ms, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
+            "SELECT id, step_type, label, post_delay_ms, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(id)
     .fetch_all(&state.db)
@@ -1960,21 +1960,50 @@ pub async fn post_automation_delete_handler(
         return Redirect::to("/automations").into_response();
     }
 
-    let res = sqlx::query("DELETE FROM automations WHERE id = $1")
-        .bind(id)
-        .execute(&state.db)
-        .await;
+    // Check if automation has execution history in task_runs
+    let has_history: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM task_runs WHERE automation_id = $1)",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
 
-    if res.is_ok() {
-        let _ = log_audit(
-            &state.db,
-            Some(user.id),
-            "delete_automation",
-            "automation",
-            Some(id),
-            None,
-        )
-        .await;
+    if has_history {
+        // Archive the automation to preserve execution history
+        let res = sqlx::query("UPDATE automations SET status = 'archived', updated_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await;
+
+        if res.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "archive_automation",
+                "automation",
+                Some(id),
+                Some(serde_json::json!({ "reason": "has_task_runs" })),
+            )
+            .await;
+        }
+    } else {
+        let res = sqlx::query("DELETE FROM automations WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await;
+
+        if res.is_ok() {
+            let _ = log_audit(
+                &state.db,
+                Some(user.id),
+                "delete_automation",
+                "automation",
+                Some(id),
+                None,
+            )
+            .await;
+        }
     }
 
     Redirect::to("/automations").into_response()
@@ -4075,11 +4104,45 @@ pub async fn post_delete_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let res = sqlx::query("DELETE FROM automation_steps WHERE id = $1 AND automation_id = $2")
-        .bind(sid)
-        .bind(id)
-        .execute(&state.db)
-        .await;
+    // Clear branch step targets that point to this step
+    let _ = sqlx::query(
+        "UPDATE step_branches SET on_match_step_id = NULL WHERE on_match_step_id = $1",
+    )
+    .bind(sid)
+    .execute(&state.db)
+    .await;
+
+    let _ = sqlx::query(
+        "UPDATE step_branches SET on_no_match_step_id = NULL WHERE on_no_match_step_id = $1",
+    )
+    .bind(sid)
+    .execute(&state.db)
+    .await;
+
+    // Check if step is referenced in task_run_steps execution history
+    let has_history: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM task_run_steps WHERE step_id = $1)",
+    )
+    .bind(sid)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+
+    let res = if has_history {
+        // Soft delete step to preserve run history
+        sqlx::query("UPDATE automation_steps SET deleted_at = now() WHERE id = $1 AND automation_id = $2")
+            .bind(sid)
+            .bind(id)
+            .execute(&state.db)
+            .await
+    } else {
+        // Hard delete step
+        sqlx::query("DELETE FROM automation_steps WHERE id = $1 AND automation_id = $2")
+            .bind(sid)
+            .bind(id)
+            .execute(&state.db)
+            .await
+    };
 
     if let Err(e) = &res {
         tracing::error!("Failed to delete step {} from automation {}: {}", sid, id, e);
@@ -4092,10 +4155,10 @@ pub async fn post_delete_step_handler(
         let _ = log_audit(
             &state.db,
             Some(user.id),
-            "delete_step",
+            if has_history { "soft_delete_step" } else { "delete_step" },
             "automation_step",
             Some(sid),
-            Some(serde_json::json!({ "automation_id": id })),
+            Some(serde_json::json!({ "automation_id": id, "soft_deleted": has_history })),
         )
         .await;
 
@@ -4110,7 +4173,7 @@ pub async fn post_delete_step_handler(
 /// Compact positions to 10.0, 20.0, 30.0... if gaps between adjacent steps are too narrow (< 0.0001)
 #[tracing::instrument(skip(db))]
 pub async fn check_and_compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sqlx::Error> {
-    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
+    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC")
         .bind(automation_id)
         .fetch_all(db)
         .await?;
@@ -4142,7 +4205,7 @@ pub async fn compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sq
         .fetch_optional(&mut *tx)
         .await?;
 
-    let steps = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
+    let steps = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC")
         .bind(automation_id)
         .fetch_all(&mut *tx)
         .await?;
