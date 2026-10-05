@@ -44,6 +44,7 @@
                 <option value="all" {% if self.is_status_selected("all") %}selected{% endif %}>All Statuses</option>
                 <option value="queued" {% if self.is_status_selected("queued") %}selected{% endif %}>Queued</option>
                 <option value="running" {% if self.is_status_selected("running") %}selected{% endif %}>Running</option>
+                <option value="cancelling" {% if self.is_status_selected("cancelling") %}selected{% endif %}>Cancelling</option>
                 <option value="succeeded" {% if self.is_status_selected("succeeded") %}selected{% endif %}>Succeeded</option>
                 <option value="failed" {% if self.is_status_selected("failed") %}selected{% endif %}>Failed</option>
                 <option value="cancelled" {% if self.is_status_selected("cancelled") %}selected{% endif %}>Cancelled</option>

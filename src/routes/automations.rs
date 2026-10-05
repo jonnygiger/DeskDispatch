@@ -45,7 +45,7 @@ impl AutomationListItem {
         match self.last_run_status.as_deref() {
             Some("succeeded") => "badge-success",
             Some("failed") | Some("lost") => "badge-danger",
-            Some("running") => "badge-warning",
+            Some("running") | Some("cancelling") => "badge-warning",
             _ => "badge-neutral",
         }
     }

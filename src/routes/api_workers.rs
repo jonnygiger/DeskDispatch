@@ -671,7 +671,7 @@ pub async fn post_step_result_handler(
     };
 
     let run_exists: Option<(i64, String)> = match sqlx::query_as(
-        "SELECT id, status FROM task_runs WHERE id = $1 AND worker_id = $2",
+        "SELECT id, status FROM task_runs WHERE id = $1 AND worker_id = $2 AND status IN ('running', 'cancelling')",
     )
     .bind(task_run_id)
     .bind(worker.id)
@@ -910,10 +910,10 @@ pub async fn post_complete_task_run_handler(
     let update_res = sqlx::query(
         r#"
         UPDATE task_runs
-        SET status = $1,
+        SET status = CASE WHEN status = 'cancelling' THEN 'cancelled' ELSE $1 END,
             completed_at = now(),
             error_message = COALESCE($2, error_message)
-        WHERE id = $3 AND worker_id = $4
+        WHERE id = $3 AND worker_id = $4 AND status IN ('running', 'cancelling')
         RETURNING id
         "#,
     )
@@ -973,7 +973,7 @@ pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::E
         SET status = 'lost',
             completed_at = now(),
             error_message = COALESCE(error_message, 'Worker heartbeat lost (stalled execution)')
-        WHERE status = 'running'
+        WHERE status IN ('running', 'cancelling')
           AND (
             worker_id IS NULL
             OR EXISTS (
@@ -1641,7 +1641,7 @@ pub async fn post_heartbeat_handler(
 
         match run_status_res {
             Ok(Some(status)) => {
-                if status == "cancelled" {
+                if status == "cancelling" || status == "cancelled" {
                     cancel_requested = true;
                 }
             }
