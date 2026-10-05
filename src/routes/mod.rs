@@ -10,6 +10,7 @@ pub mod recordings;
 pub mod runs;
 pub mod schedules;
 pub mod static_assets;
+pub mod deletion_tests;
 pub mod workers;
 
 pub use account::{get_password_handler, post_password_handler};

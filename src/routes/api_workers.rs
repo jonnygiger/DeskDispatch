@@ -228,7 +228,7 @@ pub async fn fetch_full_automation_json(
     }
 
     let step_rows = sqlx::query(
-        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
+        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(&mut *conn)
