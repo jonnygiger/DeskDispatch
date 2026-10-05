@@ -3983,7 +3983,9 @@ pub async fn post_move_step_up_handler(
     Path((id, sid)): Path<(i64, i64)>,
 ) -> impl IntoResponse {
     if user.role.can_edit() {
-        reorder_step(&state.db, id, sid, true).await;
+        if let Err(e) = reorder_step(&state.db, id, sid, true).await {
+            tracing::error!("Failed to move step {} up in automation {}: {}", sid, id, e);
+        }
     }
     Redirect::to(&format!("/automations/{}", id))
 }
@@ -3996,33 +3998,39 @@ pub async fn post_move_step_down_handler(
     Path((id, sid)): Path<(i64, i64)>,
 ) -> impl IntoResponse {
     if user.role.can_edit() {
-        reorder_step(&state.db, id, sid, false).await;
+        if let Err(e) = reorder_step(&state.db, id, sid, false).await {
+            tracing::error!("Failed to move step {} down in automation {}: {}", sid, id, e);
+        }
     }
     Redirect::to(&format!("/automations/{}", id))
 }
 
 /// Helper function to reorder step up or down
-async fn reorder_step(db: &PgPool, automation_id: i64, step_id: i64, is_up: bool) {
-    let steps = match sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
+pub async fn reorder_step(db: &PgPool, automation_id: i64, step_id: i64, is_up: bool) -> Result<(), sqlx::Error> {
+    let mut tx = db.begin().await?;
+
+    // Lock the automation row to serialize concurrent step reordering / mutations
+    sqlx::query("SELECT id FROM automations WHERE id = $1 FOR UPDATE")
         .bind(automation_id)
-        .fetch_all(db)
-        .await
-    {
-        Ok(s) => s,
-        Err(_) => return,
-    };
+        .fetch_optional(&mut *tx)
+        .await?;
+
+    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
+        .bind(automation_id)
+        .fetch_all(&mut *tx)
+        .await?;
 
     let current_idx = steps.iter().position(|r| r.get::<i64, _>("id") == step_id);
     let idx = match current_idx {
         Some(i) => i,
-        None => return,
+        None => return Ok(()),
     };
 
     if is_up && idx == 0 {
-        return; // Already at top
+        return Ok(()); // Already at top
     }
     if !is_up && idx == steps.len() - 1 {
-        return; // Already at bottom
+        return Ok(()); // Already at bottom
     }
 
     let target_idx = if is_up { idx - 1 } else { idx + 1 };
@@ -4031,33 +4039,29 @@ async fn reorder_step(db: &PgPool, automation_id: i64, step_id: i64, is_up: bool
     let pos_target: f64 = steps[target_idx].get("position");
     let target_id: i64 = steps[target_idx].get("id");
 
-    // Swap positions
-    let mut tx = match db.begin().await {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-
-    let _ = sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
+    // Swap positions within the transaction
+    sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
         .bind(pos_target)
         .bind(step_id)
         .execute(&mut *tx)
-        .await;
+        .await?;
 
-    let _ = sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
+    sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
         .bind(pos_curr)
         .bind(target_id)
         .execute(&mut *tx)
-        .await;
+        .await?;
 
-    let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+    sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
         .bind(automation_id)
         .execute(&mut *tx)
-        .await;
+        .await?;
 
-    let _ = tx.commit().await;
+    tx.commit().await?;
 
     // Check gap precision & compact if gaps < 0.0001
-    check_and_compact_positions(db, automation_id).await;
+    check_and_compact_positions(db, automation_id).await?;
+    Ok(())
 }
 
 /// POST /automations/{id}/steps/{sid}/delete
@@ -4077,7 +4081,9 @@ pub async fn post_delete_step_handler(
         .execute(&state.db)
         .await;
 
-    if res.is_ok() {
+    if let Err(e) = &res {
+        tracing::error!("Failed to delete step {} from automation {}: {}", sid, id, e);
+    } else {
         let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
             .bind(id)
             .execute(&state.db)
@@ -4093,7 +4099,9 @@ pub async fn post_delete_step_handler(
         )
         .await;
 
-        check_and_compact_positions(&state.db, id).await;
+        if let Err(e) = check_and_compact_positions(&state.db, id).await {
+            tracing::error!("Failed to compact positions after deleting step {}: {}", sid, e);
+        }
     }
 
     Redirect::to(&format!("/automations/{}", id)).into_response()
@@ -4101,15 +4109,11 @@ pub async fn post_delete_step_handler(
 
 /// Compact positions to 10.0, 20.0, 30.0... if gaps between adjacent steps are too narrow (< 0.0001)
 #[tracing::instrument(skip(db))]
-pub async fn check_and_compact_positions(db: &PgPool, automation_id: i64) {
-    let steps = match sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
+pub async fn check_and_compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sqlx::Error> {
+    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
         .bind(automation_id)
         .fetch_all(db)
-        .await
-    {
-        Ok(s) => s,
-        Err(_) => return,
-    };
+        .await?;
 
     let mut needs_compaction = false;
     for i in 0..steps.len().saturating_sub(1) {
@@ -4122,37 +4126,39 @@ pub async fn check_and_compact_positions(db: &PgPool, automation_id: i64) {
     }
 
     if needs_compaction {
-        compact_positions(db, automation_id).await;
+        compact_positions(db, automation_id).await?;
     }
+
+    Ok(())
 }
 
 #[tracing::instrument(skip(db))]
-pub async fn compact_positions(db: &PgPool, automation_id: i64) {
-    let steps = match sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
-        .bind(automation_id)
-        .fetch_all(db)
-        .await
-    {
-        Ok(s) => s,
-        Err(_) => return,
-    };
+pub async fn compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sqlx::Error> {
+    let mut tx = db.begin().await?;
 
-    let mut tx = match db.begin().await {
-        Ok(t) => t,
-        Err(_) => return,
-    };
+    // Lock the automation row to serialize concurrent step operations
+    sqlx::query("SELECT id FROM automations WHERE id = $1 FOR UPDATE")
+        .bind(automation_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+    let steps = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
+        .bind(automation_id)
+        .fetch_all(&mut *tx)
+        .await?;
 
     for (i, row) in steps.iter().enumerate() {
         let step_id: i64 = row.get("id");
         let new_pos = (i as f64 + 1.0) * 10.0;
-        let _ = sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
+        sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
             .bind(new_pos)
             .bind(step_id)
             .execute(&mut *tx)
-            .await;
+            .await?;
     }
 
-    let _ = tx.commit().await;
+    tx.commit().await?;
+    Ok(())
 }
 
 #[cfg(test)]
