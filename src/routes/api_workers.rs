@@ -501,11 +501,10 @@ pub async fn get_next_assignment_handler(
         LEFT JOIN schedules s ON tr.schedule_id = s.id
         WHERE tr.status = 'queued'
           AND (
-            tr.schedule_id IS NULL
-            OR s.worker_group_id IS NULL
+            COALESCE(tr.target_worker_group_id, s.worker_group_id) IS NULL
             OR EXISTS (
               SELECT 1 FROM worker_group_members wgm
-              WHERE wgm.worker_id = $1 AND wgm.group_id = s.worker_group_id
+              WHERE wgm.worker_id = $1 AND wgm.group_id = COALESCE(tr.target_worker_group_id, s.worker_group_id)
             )
           )
         ORDER BY tr.queued_at ASC, tr.id ASC
@@ -521,37 +520,6 @@ pub async fn get_next_assignment_handler(
         Ok(Some(row)) => {
             let task_run_id: i64 = row.get("task_run_id");
             let automation_id: i64 = row.get("automation_id");
-
-            let update_res = sqlx::query(
-                r#"
-                UPDATE task_runs
-                SET status = 'running',
-                    worker_id = $1,
-                    started_at = now()
-                WHERE id = $2
-                "#,
-            )
-            .bind(worker.id)
-            .bind(task_run_id)
-            .execute(&mut *tx)
-            .await;
-
-            if let Err(e) = update_res {
-                tracing::error!(
-                    worker_id = worker.id,
-                    task_run_id = task_run_id,
-                    "Failed to update task run status to running: {}",
-                    e
-                );
-                let _ = tx.rollback().await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to claim task run".to_string(),
-                    }),
-                )
-                    .into_response();
-            }
 
             let automation_json = match fetch_full_automation_json(&mut *tx, automation_id).await {
                 Ok(json) => json,
@@ -572,6 +540,39 @@ pub async fn get_next_assignment_handler(
                         .into_response();
                 }
             };
+
+            let update_res = sqlx::query(
+                r#"
+                UPDATE task_runs
+                SET status = 'running',
+                    worker_id = $1,
+                    started_at = now(),
+                    dispatched_automation_json = $2
+                WHERE id = $3
+                "#,
+            )
+            .bind(worker.id)
+            .bind(&automation_json)
+            .bind(task_run_id)
+            .execute(&mut *tx)
+            .await;
+
+            if let Err(e) = update_res {
+                tracing::error!(
+                    worker_id = worker.id,
+                    task_run_id = task_run_id,
+                    "Failed to update task run status to running: {}",
+                    e
+                );
+                let _ = tx.rollback().await;
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to claim task run".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
 
             if let Err(e) = tx.commit().await {
                 tracing::error!(
@@ -1493,7 +1494,7 @@ pub async fn get_task_run_handler(
     };
 
     let row = sqlx::query(
-        "SELECT id, automation_id, status FROM task_runs WHERE id = $1",
+        "SELECT id, automation_id, status, dispatched_automation_json FROM task_runs WHERE id = $1",
     )
     .bind(task_run_id)
     .fetch_optional(&mut *conn)
@@ -1504,25 +1505,29 @@ pub async fn get_task_run_handler(
             let id: i64 = row.get("id");
             let automation_id: i64 = row.get("automation_id");
             let status: String = row.get("status");
+            let dispatched_json: Option<serde_json::Value> = row.get("dispatched_automation_json");
 
-            let automation_json = match fetch_full_automation_json(&mut *conn, automation_id).await {
-                Ok(json) => json,
-                Err(e) => {
-                    tracing::error!(
-                        worker_id = worker.id,
-                        automation_id = automation_id,
-                        task_run_id = task_run_id,
-                        "Failed to fetch automation json payload for task run: {}",
-                        e
-                    );
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: "Failed to load automation details".to_string(),
-                        }),
-                    )
-                        .into_response();
-                }
+            let automation_json = match dispatched_json {
+                Some(json) => json,
+                None => match fetch_full_automation_json(&mut *conn, automation_id).await {
+                    Ok(json) => json,
+                    Err(e) => {
+                        tracing::error!(
+                            worker_id = worker.id,
+                            automation_id = automation_id,
+                            task_run_id = task_run_id,
+                            "Failed to fetch automation json payload for task run: {}",
+                            e
+                        );
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse {
+                                error: "Failed to load automation details".to_string(),
+                            }),
+                        )
+                            .into_response();
+                    }
+                },
             };
 
             (

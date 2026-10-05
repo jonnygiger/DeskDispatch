@@ -648,7 +648,7 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
 
     let due_schedules = sqlx::query(
         r#"
-        SELECT id, automation_id, cron_expression, timezone
+        SELECT id, automation_id, cron_expression, timezone, worker_group_id
         FROM schedules
         WHERE is_enabled = true
           AND next_run_at IS NOT NULL
@@ -665,15 +665,17 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
         let schedule_id: i64 = sched.get("id");
         let automation_id: i64 = sched.get("automation_id");
         let cron_expr: String = sched.get("cron_expression");
+        let worker_group_id: Option<i64> = sched.get("worker_group_id");
 
         sqlx::query(
             r#"
-            INSERT INTO task_runs (automation_id, schedule_id, status, queued_at)
-            VALUES ($1, $2, 'queued', now())
+            INSERT INTO task_runs (automation_id, schedule_id, target_worker_group_id, status, queued_at)
+            VALUES ($1, $2, $3, 'queued', now())
             "#,
         )
         .bind(automation_id)
         .bind(schedule_id)
+        .bind(worker_group_id)
         .execute(&mut *tx)
         .await?;
 
