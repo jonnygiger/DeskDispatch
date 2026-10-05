@@ -1,7 +1,7 @@
 use app::auth::UserRole;
 use app::routes::account::AccountPasswordTemplate;
 use app::routes::auth::LoginTemplate;
-use app::routes::bitmaps::{BitmapListItem, BitmapsListTemplate, BitmapsUploadTemplate, RegionPickerTopLeftTemplate};
+use app::routes::bitmaps::{BitmapListItem, BitmapsConfirmTemplate, BitmapsListTemplate, BitmapsUploadTemplate, RegionPickerTopLeftTemplate};
 use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
 use app::routes::home::{IndexTemplate, RecentRunItem};
 use app::routes::media::DevMagnifierTemplate;
@@ -157,6 +157,17 @@ fn main() {
         redirect_url: "http://localhost:3000/bitmaps/commit?key=bitmaps/sample.png&name=Login%20Button".to_string(),
     };
     fs::write("rendered_templates/bitmaps_upload.html", upload_tmpl.render().unwrap()).unwrap();
+
+    let confirm_tmpl = BitmapsConfirmTemplate {
+        user: user.clone(),
+        csrf_token: "test_csrf_token_12345".to_string(),
+        bitmap_name: "Login Button".to_string(),
+        object_storage_key: "bitmaps/sample.png".to_string(),
+        width: 120,
+        height: 40,
+        automation_id: None,
+    };
+    fs::write("rendered_templates/bitmaps_confirm.html", confirm_tmpl.render().unwrap()).unwrap();
 
     let pick_region_tmpl = RegionPickerTopLeftTemplate {
         user: user.clone(),

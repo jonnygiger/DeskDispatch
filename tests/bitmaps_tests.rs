@@ -62,7 +62,7 @@ async fn test_bitmaps_list_routes() {
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        s3_client: s3_client.clone(),
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
     };
@@ -195,7 +195,7 @@ async fn test_bitmap_upload_flow() {
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        s3_client: s3_client.clone(),
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
     };
@@ -203,7 +203,7 @@ async fn test_bitmap_upload_flow() {
     let app = Router::new()
         .route("/bitmaps", axum::routing::get(get_bitmaps_handler).post(post_bitmaps_handler))
         .route("/automations/{id}/bitmaps", axum::routing::get(get_automation_bitmaps_handler).post(post_automation_bitmaps_handler))
-        .route("/bitmaps/commit", axum::routing::get(get_bitmap_commit_handler))
+        .route("/bitmaps/commit", axum::routing::get(get_bitmap_commit_handler).post(post_bitmap_commit_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             app::auth::csrf_middleware,
@@ -211,7 +211,7 @@ async fn test_bitmap_upload_flow() {
         .with_state(state);
 
     let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_upload_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
-    let (_admin_id, admin_session) = create_test_user(&pool, &format!("admin_upload_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (admin_id, admin_session) = create_test_user(&pool, &format!("admin_upload_{}", uuid::Uuid::new_v4().simple()), "admin").await;
 
     // Extract CSRF token for admin session
     let session_uuid = uuid::Uuid::parse_str(&admin_session).unwrap();
@@ -253,22 +253,56 @@ async fn test_bitmap_upload_flow() {
     assert!(body_str.contains("success_action_redirect"));
     assert!(body_str.contains("/bitmaps/commit?key="));
 
-    // 3. Admin GET /bitmaps/commit callback
-    let test_key = format!("bitmaps/commit_test_{}.png", uuid::Uuid::new_v4().simple());
-    let req_commit = Request::builder()
+    // Upload a valid 10x10 PNG object to S3 for commit testing
+    let test_key = format!("bitmaps/user_{}_{}.png", admin_id, uuid::Uuid::new_v4().simple());
+    let img_buf = image::RgbImage::from_fn(10, 10, |_, _| image::Rgb([255, 0, 0]));
+    let mut png_bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img_buf).write_to(&mut png_bytes, image::ImageFormat::Png).unwrap();
+
+    let _ = s3_client
+        .put_object()
+        .bucket(&config.s3_bucket)
+        .key(&test_key)
+        .content_type("image/png")
+        .body(png_bytes.into_inner().into())
+        .send()
+        .await;
+
+    // 3. Admin GET /bitmaps/commit callback -> 200 OK rendering confirmation page (BitmapsConfirmTemplate)
+    let req_commit_get = Request::builder()
         .method("GET")
         .uri(format!("/bitmaps/commit?key={}&name=Committed%20Bitmap", test_key))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
         .unwrap();
 
-    let res_commit = app.clone().oneshot(req_commit).await.unwrap();
-    assert_eq!(res_commit.status(), StatusCode::SEE_OTHER);
-    let location = res_commit.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let res_commit_get = app.clone().oneshot(req_commit_get).await.unwrap();
+    assert_eq!(res_commit_get.status(), StatusCode::OK);
+    let get_body_bytes = axum::body::to_bytes(res_commit_get.into_body(), usize::MAX).await.unwrap();
+    let get_body_str = String::from_utf8(get_body_bytes.to_vec()).unwrap();
+    assert!(get_body_str.contains("Step 3: Confirm Reference Bitmap Registration"));
+    assert!(get_body_str.contains("10 × 10 px"));
+    assert!(get_body_str.contains("/bitmaps/commit"));
+
+    // 4. Admin POST /bitmaps/commit with CSRF token -> 303 Redirect to /bitmaps
+    let req_commit_post = Request::builder()
+        .method("POST")
+        .uri("/bitmaps/commit")
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!(
+            "csrf_token={}&key={}&name=Committed%20Bitmap",
+            admin_csrf, test_key
+        )))
+        .unwrap();
+
+    let res_commit_post = app.clone().oneshot(req_commit_post).await.unwrap();
+    assert_eq!(res_commit_post.status(), StatusCode::SEE_OTHER);
+    let location = res_commit_post.headers().get(header::LOCATION).unwrap().to_str().unwrap();
     assert_eq!(location, "/bitmaps");
 
-    // Verify row inserted in database
-    let inserted_row = sqlx::query("SELECT id, name, object_storage_key FROM bitmaps WHERE object_storage_key = $1")
+    // Verify row inserted in database with correct dimensions (10x10)
+    let inserted_row = sqlx::query("SELECT id, name, object_storage_key, width, height FROM bitmaps WHERE object_storage_key = $1")
         .bind(&test_key)
         .fetch_optional(&pool)
         .await
@@ -276,7 +310,26 @@ async fn test_bitmap_upload_flow() {
     assert!(inserted_row.is_some());
     let row = inserted_row.unwrap();
     let db_name: String = sqlx::Row::get(&row, "name");
+    let db_width: i32 = sqlx::Row::get(&row, "width");
+    let db_height: i32 = sqlx::Row::get(&row, "height");
     assert_eq!(db_name, "Committed Bitmap");
+    assert_eq!(db_width, 10);
+    assert_eq!(db_height, 10);
+
+    // 5. Idempotency test: Re-submitting POST /bitmaps/commit returns redirect without inserting duplicate
+    let req_commit_post_dup = Request::builder()
+        .method("POST")
+        .uri("/bitmaps/commit")
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!(
+            "csrf_token={}&key={}&name=Committed%20Bitmap",
+            admin_csrf, test_key
+        )))
+        .unwrap();
+
+    let res_commit_post_dup = app.clone().oneshot(req_commit_post_dup).await.unwrap();
+    assert_eq!(res_commit_post_dup.status(), StatusCode::SEE_OTHER);
 }
 
 #[tokio::test]
