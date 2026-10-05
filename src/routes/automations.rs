@@ -149,6 +149,12 @@ pub struct EditAutomationForm {
     pub status: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RunNowForm {
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub worker_group_id: Option<i64>,
+}
+
 #[derive(Template)]
 #[template(path = "automations/delete.html")]
 pub struct AutomationDeleteTemplate {
@@ -2015,32 +2021,67 @@ pub async fn post_run_now_automation_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
+    Form(form): Form<RunNowForm>,
 ) -> impl IntoResponse {
     if !user.role.can_edit() {
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let automation_exists = match sqlx::query("SELECT id FROM automations WHERE id = $1")
+    let auto_row = match sqlx::query("SELECT status FROM automations WHERE id = $1")
         .bind(id)
         .fetch_optional(&state.db)
         .await
     {
-        Ok(Some(_)) => true,
-        _ => false,
+        Ok(Some(row)) => row,
+        _ => return Redirect::to("/automations").into_response(),
     };
 
-    if !automation_exists {
-        return Redirect::to("/automations").into_response();
+    let status: String = auto_row.get("status");
+
+    // Refuse draft or archived automations
+    if status != "active" {
+        tracing::warn!(
+            automation_id = id,
+            status = %status,
+            "Refusing Run Now trigger for non-active automation"
+        );
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
+
+    // Refuse empty automations (automations without any active steps)
+    let step_count: i64 = match sqlx::query_scalar(
+        "SELECT COUNT(*) FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(cnt) => cnt,
+        Err(e) => {
+            tracing::error!(automation_id = id, "Error checking step count: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
+    };
+
+    if step_count == 0 {
+        tracing::warn!(
+            automation_id = id,
+            "Refusing Run Now trigger for automation with no active steps"
+        );
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
+
+    let target_worker_group_id = form.worker_group_id;
 
     let run_res = sqlx::query(
         r#"
-        INSERT INTO task_runs (automation_id, schedule_id, worker_id, status, triggered_by_user_id, queued_at)
-        VALUES ($1, NULL, NULL, 'queued', $2, now())
+        INSERT INTO task_runs (automation_id, schedule_id, worker_id, target_worker_group_id, status, triggered_by_user_id, queued_at)
+        VALUES ($1, NULL, NULL, $2, 'queued', $3, now())
         RETURNING id
         "#,
     )
     .bind(id)
+    .bind(target_worker_group_id)
     .bind(user.id)
     .fetch_one(&state.db)
     .await;
@@ -2048,14 +2089,22 @@ pub async fn post_run_now_automation_handler(
     match run_res {
         Ok(row) => {
             let task_run_id: i64 = row.get("id");
-            tracing::info!("Manually queued task run {} for automation {}", task_run_id, id);
+            tracing::info!(
+                task_run_id = task_run_id,
+                automation_id = id,
+                target_worker_group_id = ?target_worker_group_id,
+                "Manually queued task run for automation"
+            );
             let _ = log_audit(
                 &state.db,
                 Some(user.id),
                 "trigger_run_now",
                 "task_run",
                 Some(task_run_id),
-                Some(serde_json::json!({ "automation_id": id })),
+                Some(serde_json::json!({
+                    "automation_id": id,
+                    "target_worker_group_id": target_worker_group_id,
+                })),
             )
             .await;
         }
