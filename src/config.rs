@@ -11,6 +11,9 @@ pub struct Config {
     pub session_secret: String,
     pub bind_address: String,
     pub environment: String,
+    pub min_agent_version: Option<String>,
+    pub worker_poll_interval_secs: u64,
+    pub worker_heartbeat_interval_secs: u64,
 }
 
 impl Config {
@@ -45,6 +48,18 @@ impl Config {
         let environment = env::var("APP_ENV")
             .unwrap_or_else(|_| "development".to_string());
 
+        let min_agent_version = env::var("MIN_AGENT_VERSION").ok().filter(|v| !v.trim().is_empty());
+
+        let worker_poll_interval_secs = env::var("WORKER_POLL_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+
+        let worker_heartbeat_interval_secs = env::var("WORKER_HEARTBEAT_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(15);
+
         Ok(Self {
             database_url,
             s3_endpoint,
@@ -55,6 +70,9 @@ impl Config {
             session_secret,
             bind_address,
             environment,
+            min_agent_version,
+            worker_poll_interval_secs,
+            worker_heartbeat_interval_secs,
         })
     }
 

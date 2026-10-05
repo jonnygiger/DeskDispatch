@@ -47,6 +47,8 @@ pub struct HeartbeatRequest {
 pub struct HeartbeatResponse {
     pub status: String,
     pub cancel_requested: bool,
+    pub poll_interval_secs: u64,
+    pub heartbeat_interval_secs: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,6 +79,7 @@ pub struct VariableUpdateItem {
 
 #[derive(Debug, Deserialize)]
 pub struct StepResultRequest {
+    pub seq: Option<i32>,
     pub step_id: i64,
     pub result: String,
     pub captured_r: Option<i16>,
@@ -671,8 +674,8 @@ pub async fn post_step_result_handler(
         }
     };
 
-    let run_exists: Option<(i64, String)> = match sqlx::query_as(
-        "SELECT id, status FROM task_runs WHERE id = $1 AND worker_id = $2 AND status IN ('running', 'cancelling')",
+    let run_info: Option<(i64, String, i64)> = match sqlx::query_as(
+        "SELECT id, status, automation_id FROM task_runs WHERE id = $1 AND worker_id = $2 AND status IN ('running', 'cancelling')",
     )
     .bind(task_run_id)
     .bind(worker.id)
@@ -698,15 +701,108 @@ pub async fn post_step_result_handler(
         }
     };
 
-    if run_exists.is_none() {
+    let (_run_id, _status, automation_id) = match run_info {
+        Some(info) => info,
+        None => {
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Running task run {} not found for this worker", task_run_id),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // Validate step_id belongs to this task run's automation
+    let step_valid: Option<i64> = match sqlx::query_scalar(
+        "SELECT id FROM automation_steps WHERE id = $1 AND automation_id = $2",
+    )
+    .bind(payload.step_id)
+    .bind(automation_id)
+    .fetch_optional(&mut *tx)
+    .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                step_id = payload.step_id,
+                "Error validating step_id: {}",
+                e
+            );
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error validating step".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if step_valid.is_none() {
         let _ = tx.rollback().await;
         return (
-            StatusCode::NOT_FOUND,
+            StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
-                error: format!("Running task run {} not found for this worker", task_run_id),
+                error: format!(
+                    "Step {} does not belong to automation {}",
+                    payload.step_id, automation_id
+                ),
             }),
         )
             .into_response();
+    }
+
+    // Validate variable_updates variable_ids belong to this task run's automation
+    if let Some(ref updates) = payload.variable_updates {
+        for item in updates {
+            let var_valid: Option<i64> = match sqlx::query_scalar(
+                "SELECT id FROM automation_variables WHERE id = $1 AND automation_id = $2",
+            )
+            .bind(item.variable_id)
+            .bind(automation_id)
+            .fetch_optional(&mut *tx)
+            .await
+            {
+                Ok(res) => res,
+                Err(e) => {
+                    tracing::error!(
+                        worker_id = worker.id,
+                        task_run_id = task_run_id,
+                        variable_id = item.variable_id,
+                        "Error validating variable_id: {}",
+                        e
+                    );
+                    let _ = tx.rollback().await;
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "Database error validating variable".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
+            };
+
+            if var_valid.is_none() {
+                let _ = tx.rollback().await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "Variable {} does not belong to automation {}",
+                            item.variable_id, automation_id
+                        ),
+                    }),
+                )
+                    .into_response();
+            }
+        }
     }
 
     let captured_r = payload.captured_r.or_else(|| {
@@ -747,18 +843,20 @@ pub async fn post_step_result_handler(
         .unwrap_or_else(chrono::Utc::now);
     let started_at = payload.started_at.unwrap_or(completed_at);
 
-    let step_result_id: i64 = match sqlx::query_scalar(
+    let step_result_opt: Option<i64> = match sqlx::query_scalar(
         r#"
         INSERT INTO task_run_steps (
-            task_run_id, step_id, started_at, completed_at, result,
+            task_run_id, seq, step_id, started_at, completed_at, result,
             captured_r, captured_g, captured_b, captured_found, captured_x, captured_y,
             screenshot_object_key
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (task_run_id, seq) DO NOTHING
         RETURNING id
         "#,
     )
     .bind(task_run_id)
+    .bind(payload.seq)
     .bind(payload.step_id)
     .bind(started_at)
     .bind(completed_at)
@@ -770,10 +868,10 @@ pub async fn post_step_result_handler(
     .bind(captured_x)
     .bind(captured_y)
     .bind(payload.screenshot_object_key.as_deref())
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await
     {
-        Ok(id) => id,
+        Ok(opt_id) => opt_id,
         Err(e) => {
             tracing::error!(
                 worker_id = worker.id,
@@ -782,6 +880,63 @@ pub async fn post_step_result_handler(
                 "Failed to insert task_run_steps: {}",
                 e
             );
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to record step result".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let step_result_id = match step_result_opt {
+        Some(id) => id,
+        None => {
+            // Conflict occurred due to duplicate seq for this task run. Retrieve existing step_result_id.
+            if let Some(seq_num) = payload.seq {
+                let existing_id: Option<i64> = match sqlx::query_scalar(
+                    "SELECT id FROM task_run_steps WHERE task_run_id = $1 AND seq = $2",
+                )
+                .bind(task_run_id)
+                .bind(seq_num)
+                .fetch_optional(&mut *tx)
+                .await
+                {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::error!(
+                            worker_id = worker.id,
+                            task_run_id = task_run_id,
+                            seq = seq_num,
+                            "Error querying existing step_result_id for duplicate seq: {}",
+                            e
+                        );
+                        let _ = tx.rollback().await;
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse {
+                                error: "Database error handling duplicate step result".to_string(),
+                            }),
+                        )
+                            .into_response();
+                    }
+                };
+
+                if let Some(id) = existing_id {
+                    let _ = tx.commit().await;
+                    return (
+                        StatusCode::OK,
+                        Json(StepResultResponse {
+                            status: "success".to_string(),
+                            step_result_id: id,
+                        }),
+                    )
+                        .into_response();
+                }
+            }
+
             let _ = tx.rollback().await;
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -819,16 +974,21 @@ pub async fn post_step_result_handler(
     }
 
     if let Some(updates) = payload.variable_updates {
-        for item in updates {
-            let val_str = match &item.value {
-                serde_json::Value::String(s) => s.clone(),
-                v => v.to_string(),
-            };
+        if !updates.is_empty() {
+            let var_ids: Vec<i64> = updates.iter().map(|u| u.variable_id).collect();
+            let var_vals: Vec<String> = updates
+                .iter()
+                .map(|u| match &u.value {
+                    serde_json::Value::String(s) => s.clone(),
+                    v => v.to_string(),
+                })
+                .collect();
 
             if let Err(e) = sqlx::query(
                 r#"
                 INSERT INTO task_run_variable_values (task_run_id, variable_id, value, set_at_step_id, set_at)
-                VALUES ($1, $2, $3, $4, now())
+                SELECT $1, u.variable_id, u.value, $2, now()
+                FROM UNNEST($3::int8[], $4::text[]) AS u(variable_id, value)
                 ON CONFLICT (task_run_id, variable_id) DO UPDATE
                 SET value = EXCLUDED.value,
                     set_at_step_id = EXCLUDED.set_at_step_id,
@@ -836,17 +996,16 @@ pub async fn post_step_result_handler(
                 "#,
             )
             .bind(task_run_id)
-            .bind(item.variable_id)
-            .bind(val_str)
             .bind(payload.step_id)
+            .bind(&var_ids)
+            .bind(&var_vals)
             .execute(&mut *tx)
             .await
             {
                 tracing::error!(
                     worker_id = worker.id,
                     task_run_id = task_run_id,
-                    variable_id = item.variable_id,
-                    "Failed to upsert variable value: {}",
+                    "Failed to batch upsert variable values: {}",
                     e
                 );
                 let _ = tx.rollback().await;
@@ -1569,12 +1728,54 @@ pub fn is_valid_worker_status(status: &str) -> bool {
     matches!(status, "offline" | "online" | "busy" | "error")
 }
 
+pub fn is_agent_version_outdated(agent_version: Option<&str>, min_version: Option<&str>) -> bool {
+    let min_ver = match min_version {
+        Some(v) if !v.trim().is_empty() => v.trim(),
+        _ => return false,
+    };
+
+    let agent_ver = match agent_version {
+        Some(v) if !v.trim().is_empty() => v.trim(),
+        _ => return true, // Outdated if minimum version is required but agent provides no version
+    };
+
+    let parse_version = |v: &str| -> Vec<u64> {
+        v.split('.')
+            .map(|part| part.chars().take_while(|c| c.is_ascii_digit()).collect::<String>())
+            .map(|s| s.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+
+    let agent_parts = parse_version(agent_ver);
+    let min_parts = parse_version(min_ver);
+
+    agent_parts < min_parts
+}
+
 #[tracing::instrument(skip(worker, state, payload))]
 pub async fn post_heartbeat_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
     Json(payload): Json<HeartbeatRequest>,
 ) -> impl IntoResponse {
+    if is_agent_version_outdated(
+        payload.agent_version.as_deref(),
+        state.config.min_agent_version.as_deref(),
+    ) {
+        let min_ver = state.config.min_agent_version.as_deref().unwrap_or("1.0.0");
+        let provided = payload.agent_version.as_deref().unwrap_or("none");
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            Json(ErrorResponse {
+                error: format!(
+                    "Outdated agent version '{}'. Minimum required agent version is '{}'",
+                    provided, min_ver
+                ),
+            }),
+        )
+            .into_response();
+    }
+
     let new_status = if let Some(ref status_str) = payload.status {
         let trimmed = status_str.trim();
         if !is_valid_worker_status(trimmed) {
@@ -1588,9 +1789,6 @@ pub async fn post_heartbeat_handler(
         }
         trimmed.to_string()
     } else {
-        // Default to 'online' if worker is sending a heartbeat without explicit status change, or keep current status if busy?
-        // Spec: "Body: {status, current_task_run_id?}"
-        // If status is omitted, we keep worker's existing status unless it was offline/error where online is default, or just fallback to current status/online.
         if is_valid_worker_status(&worker.status) {
             worker.status.clone()
         } else {
@@ -1670,6 +1868,8 @@ pub async fn post_heartbeat_handler(
         Json(HeartbeatResponse {
             status: "success".to_string(),
             cancel_requested,
+            poll_interval_secs: state.config.worker_poll_interval_secs,
+            heartbeat_interval_secs: state.config.worker_heartbeat_interval_secs,
         }),
     )
         .into_response()
@@ -1831,15 +2031,34 @@ mod tests {
     }
 
     #[test]
+    fn test_is_agent_version_outdated() {
+        assert!(!is_agent_version_outdated(Some("1.0.0"), Some("1.0.0")));
+        assert!(!is_agent_version_outdated(Some("1.1.0"), Some("1.0.0")));
+        assert!(!is_agent_version_outdated(Some("2.0.0"), Some("1.2.3")));
+
+        assert!(is_agent_version_outdated(Some("0.9.9"), Some("1.0.0")));
+        assert!(is_agent_version_outdated(Some("1.0.0"), Some("1.0.1")));
+        assert!(is_agent_version_outdated(None, Some("1.0.0")));
+        assert!(is_agent_version_outdated(Some(""), Some("1.0.0")));
+
+        assert!(!is_agent_version_outdated(Some("0.1.0"), None));
+        assert!(!is_agent_version_outdated(None, None));
+    }
+
+    #[test]
     fn test_heartbeat_response_serialization() {
         let resp = HeartbeatResponse {
             status: "success".to_string(),
             cancel_requested: true,
+            poll_interval_secs: 5,
+            heartbeat_interval_secs: 15,
         };
 
         let json_str = serde_json::to_string(&resp).expect("Failed to serialize HeartbeatResponse");
         assert!(json_str.contains(r#""status":"success""#));
         assert!(json_str.contains(r#""cancel_requested":true"#));
+        assert!(json_str.contains(r#""poll_interval_secs":5"#));
+        assert!(json_str.contains(r#""heartbeat_interval_secs":15"#));
     }
 
     #[test]
