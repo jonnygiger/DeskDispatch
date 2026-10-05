@@ -32,6 +32,14 @@ pub struct BitmapCommitQuery {
     pub automation_id: Option<i64>,
 }
 
+#[derive(serde::Deserialize, Debug)]
+pub struct BitmapCommitForm {
+    pub csrf_token: String,
+    pub key: String,
+    pub name: String,
+    pub automation_id: Option<i64>,
+}
+
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct PickRegionQuery {
     pub automation_id: Option<i64>,
@@ -122,6 +130,18 @@ pub struct BitmapsUploadTemplate {
     pub presigned_post_url: String,
     pub presigned_fields: Vec<(String, String)>,
     pub redirect_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "bitmaps/confirm.html")]
+pub struct BitmapsConfirmTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub bitmap_name: String,
+    pub object_storage_key: String,
+    pub width: i32,
+    pub height: i32,
+    pub automation_id: Option<i64>,
 }
 
 #[derive(Template)]
@@ -369,7 +389,7 @@ pub async fn post_bitmaps_handler(
         return Redirect::to("/bitmaps").into_response();
     }
 
-    let object_key = format!("bitmaps/{}.png", uuid::Uuid::new_v4());
+    let object_key = format!("bitmaps/user_{}_{}.png", user.id, uuid::Uuid::new_v4());
 
     let host = headers
         .get(header::HOST)
@@ -492,44 +512,143 @@ pub async fn post_automation_bitmaps_handler(
     .into_response()
 }
 
+/// Validates bitmap key prefix, extension, path safety, and user binding.
+pub fn validate_bitmap_key(key: &str, user_id: i64) -> bool {
+    if !key.starts_with("bitmaps/") || !key.ends_with(".png") || key.contains("..") {
+        return false;
+    }
+    if key.starts_with("bitmaps/user_") {
+        if !key.starts_with(&format!("bitmaps/user_{}_", user_id)) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Probes bitmap dimensions from S3 using a ranged GET request with `image::Limits`.
+/// Enforces PNG format only and fails on probe or retrieval errors.
+pub async fn probe_s3_bitmap_dimensions(
+    state: &AppState,
+    key: &str,
+) -> Result<(i32, i32), (StatusCode, &'static str)> {
+    let res = state
+        .s3_client
+        .get_object()
+        .bucket(&state.config.s3_bucket)
+        .key(key)
+        .range("bytes=0-65535")
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to fetch S3 object key {} for dimension probe: {}", key, e);
+            (StatusCode::BAD_REQUEST, "Invalid or missing image in storage")
+        })?;
+
+    let aggregated = res.body.collect().await.map_err(|e| {
+        tracing::error!("Failed to read S3 object body for key {}: {}", key, e);
+        (StatusCode::BAD_REQUEST, "Failed to read image data from storage")
+    })?;
+
+    let bytes = aggregated.into_bytes();
+
+    let format = image::guess_format(&bytes).map_err(|_| {
+        (StatusCode::BAD_REQUEST, "Failed to determine image format")
+    })?;
+
+    if format != image::ImageFormat::Png {
+        return Err((StatusCode::BAD_REQUEST, "Only PNG images are supported for reference bitmaps"));
+    }
+
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(10000);
+    limits.max_image_height = Some(10000);
+
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Png);
+    reader.limits(limits);
+
+    let (w, h) = reader.into_dimensions().map_err(|e| {
+        tracing::error!("Failed to parse PNG dimensions for key {}: {}", key, e);
+        (StatusCode::BAD_REQUEST, "Failed to parse PNG image dimensions")
+    })?;
+
+    Ok((w as i32, h as i32))
+}
+
 /// GET /bitmaps/commit
-/// S3 redirect callback following direct browser upload via presigned POST policy.
+/// Render confirmation page following S3 browser upload via presigned POST policy.
 #[tracing::instrument(skip(state, user))]
 pub async fn get_bitmap_commit_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Query(query): Query<BitmapCommitQuery>,
 ) -> Response {
-    if user.role == UserRole::Viewer {
+    if !user.role.can_edit() {
         return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
     }
 
-    let (width, height) = match state
-        .s3_client
-        .get_object()
-        .bucket(&state.config.s3_bucket)
-        .key(&query.key)
-        .send()
+    if !validate_bitmap_key(&query.key, user.id) {
+        return (StatusCode::BAD_REQUEST, "Invalid storage key").into_response();
+    }
+
+    let (width, height) = match probe_s3_bitmap_dimensions(&state, &query.key).await {
+        Ok(dims) => dims,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+
+    HtmlTemplate(BitmapsConfirmTemplate {
+        user: user.clone(),
+        csrf_token: user.csrf_token,
+        bitmap_name: query.name,
+        object_storage_key: query.key,
+        width,
+        height,
+        automation_id: query.automation_id,
+    })
+    .into_response()
+}
+
+/// POST /bitmaps/commit
+/// Confirms registration and creates the database record for an uploaded reference bitmap.
+#[tracing::instrument(skip(state, user, form))]
+pub async fn post_bitmap_commit_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Form(form): Form<BitmapCommitForm>,
+) -> Response {
+    if !user.role.can_edit() {
+        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
+    }
+
+    if form.csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+
+    if !validate_bitmap_key(&form.key, user.id) {
+        return (StatusCode::BAD_REQUEST, "Invalid storage key").into_response();
+    }
+
+    let bitmap_name = form.name.trim().to_string();
+    if bitmap_name.is_empty() {
+        return (StatusCode::BAD_REQUEST, "Bitmap name cannot be empty").into_response();
+    }
+
+    // Idempotency check: if bitmap with this key already exists, return redirect without error
+    if let Ok(Some(existing)) = sqlx::query("SELECT id, automation_id FROM bitmaps WHERE object_storage_key = $1")
+        .bind(&form.key)
+        .fetch_optional(&state.db)
         .await
     {
-        Ok(res) => match res.body.collect().await {
-            Ok(aggregated) => {
-                let bytes = aggregated.into_bytes();
-                let cursor = std::io::Cursor::new(&bytes);
-                match image::ImageReader::new(cursor).with_guessed_format() {
-                    Ok(reader) => match reader.into_dimensions() {
-                        Ok((w, h)) => (w as i32, h as i32),
-                        Err(_) => (100, 100),
-                    },
-                    Err(_) => (100, 100),
-                }
-            }
-            Err(_) => (100, 100),
-        },
-        Err(e) => {
-            tracing::warn!("Could not fetch uploaded object {} for dimension probing: {}", query.key, e);
-            (100, 100)
-        }
+        let aid: Option<i64> = existing.get("automation_id");
+        let redirect_path = match aid.or(form.automation_id) {
+            Some(a) => format!("/automations/{}/bitmaps", a),
+            None => "/bitmaps".to_string(),
+        };
+        return Redirect::to(&redirect_path).into_response();
+    }
+
+    let (width, height) = match probe_s3_bitmap_dimensions(&state, &form.key).await {
+        Ok(dims) => dims,
+        Err((status, msg)) => return (status, msg).into_response(),
     };
 
     let row = match sqlx::query(
@@ -539,9 +658,9 @@ pub async fn get_bitmap_commit_handler(
         RETURNING id
         "#,
     )
-    .bind(query.automation_id)
-    .bind(&query.name)
-    .bind(&query.key)
+    .bind(form.automation_id)
+    .bind(&bitmap_name)
+    .bind(&form.key)
     .bind(width)
     .bind(height)
     .bind(user.id)
@@ -558,9 +677,9 @@ pub async fn get_bitmap_commit_handler(
     let bitmap_id: i64 = row.get("id");
 
     let details = serde_json::json!({
-        "name": query.name,
-        "object_storage_key": query.key,
-        "automation_id": query.automation_id,
+        "name": bitmap_name,
+        "object_storage_key": form.key,
+        "automation_id": form.automation_id,
         "width": width,
         "height": height
     });
@@ -575,7 +694,7 @@ pub async fn get_bitmap_commit_handler(
     )
     .await;
 
-    if let Some(aid) = query.automation_id {
+    if let Some(aid) = form.automation_id {
         Redirect::to(&format!("/automations/{}/bitmaps", aid)).into_response()
     } else {
         Redirect::to("/bitmaps").into_response()
@@ -1248,6 +1367,16 @@ mod tests {
         // Boundary clamping near native max
         let (nx_max, ny_max) = map_grid_click_to_native(319, 319, 1918, 1078, 1920, 1080);
         assert_eq!((nx_max, ny_max), (1919, 1079));
+    }
+
+    #[test]
+    fn test_validate_bitmap_key() {
+        assert!(validate_bitmap_key("bitmaps/button.png", 1));
+        assert!(validate_bitmap_key("bitmaps/user_1_abcd.png", 1));
+        assert!(!validate_bitmap_key("bitmaps/user_2_abcd.png", 1));
+        assert!(!validate_bitmap_key("other/button.png", 1));
+        assert!(!validate_bitmap_key("bitmaps/button.jpeg", 1));
+        assert!(!validate_bitmap_key("bitmaps/../etc/passwd.png", 1));
     }
 
     #[test]

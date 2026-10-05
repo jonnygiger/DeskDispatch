@@ -132,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/bitmaps/{id}/delete", post(post_delete_bitmap_handler))
         .route("/automations/{id}/bitmaps", get(get_automation_bitmaps_handler).post(post_automation_bitmaps_handler))
         .route("/automations/{id}/bitmaps/{bid}/delete", post(post_automation_delete_bitmap_handler))
-        .route("/bitmaps/commit", get(get_bitmap_commit_handler))
+        .route("/bitmaps/commit", get(get_bitmap_commit_handler).post(post_bitmap_commit_handler))
         .route("/bitmaps/pick-region", get(get_pick_region_handler).post(post_pick_region_top_left_handler))
         .route("/bitmaps/pick-region/bottom-right", post(post_pick_region_bottom_right_handler))
         .route("/bitmaps/pick-region/confirm", post(post_pick_region_confirm_handler))
