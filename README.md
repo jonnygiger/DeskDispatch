@@ -27,11 +27,12 @@ DeskDispatch is a high-performance, zero-JavaScript task server for managing and
   - [Three-Panel CSS Screenshot Magnifier](#three-panel-css-screenshot-magnifier)
   - [Worker PC & Group Management](#worker-pc--group-management)
   - [Execution & Concurrent Dispatch Engine](#execution--concurrent-dispatch-engine)
-  - [User Management & RBAC](#user-management--rbac)
-  - [[TODO] Runs & Execution History UI](#todo-runs--execution-history-ui)
-  - [[TODO] Worker Screenshots & Lost-Run Sweeper](#todo-worker-screenshots--lost-run-sweeper)
-  - [[TODO] Recording Session Capture & Conversion Engine](#todo-recording-session-capture--conversion-engine)
-  - [[TODO] Scheduling & Cron Engine](#todo-scheduling--cron-engine)
+  - [Stalled Execution Sweeper & Timeout Recovery](#stalled-execution-sweeper--timeout-recovery)
+  - [Runs & Execution History UI](#runs--execution-history-ui)
+  - [Worker Screenshots & Execution Capture](#worker-screenshots--execution-capture)
+  - [Recording Session Capture & Conversion Engine](#recording-session-capture--conversion-engine)
+  - [Scheduling & Cron Engine](#scheduling--cron-engine)
+  - [User Management & Access Control](#user-management--access-control)
 - [Security & Access Control](#security--access-control)
 - [Implementation Roadmap & Plan Status](#implementation-roadmap--plan-status)
 
@@ -238,24 +239,20 @@ All GET routes render Askama HTML templates; all POST routes mutate state and is
 | | `/worker-groups/new` | GET | Admin | Implemented | New worker group form |
 | | `/worker-groups/{id}/edit` | GET, POST | Admin | Implemented | Edit worker group |
 | | `/worker-groups/{id}/delete` | POST | Admin | Implemented | Delete worker group |
-| **Users** | `/users` | GET, POST | Admin | `[TODO]` | Administrative user management |
-| | `/users/new` | GET | Admin | `[TODO]` | Create user form |
-| | `/users/{id}/edit` | GET, POST | Admin | `[TODO]` | Edit user roles & credentials |
-| | `/users/{id}/delete` | POST | Admin | `[TODO]` | Deactivate or remove user |
-| **Schedules** | `/schedules` | GET, POST | Authenticated (POST: Editor) | `[TODO]` | List & create schedules |
-| | `/schedules/new` | GET | Editor | `[TODO]` | Schedule creation form |
-| | `/schedules/{id}/edit` | GET, POST | Editor | `[TODO]` | Edit schedule & cron syntax |
-| | `/schedules/{id}/delete` | POST | Editor | `[TODO]` | Delete schedule |
-| | `/schedules/{id}/toggle` | POST | Editor | `[TODO]` | Enable/disable schedule |
-| **Runs** | `/runs` | GET | Authenticated | `[TODO]` | Filterable task run history |
-| | `/runs/{id}` | GET | Authenticated | `[TODO]` | Execution log & step screenshot detail |
-| | `/runs/{id}/cancel` | POST | Editor | `[TODO]` | Request cancellation of active run |
-| **Recording** | `/workers/{id}/record` | GET | Editor | `[TODO]` | Recording session worker selection |
-| | `/workers/{id}/record/start` | POST | Editor | `[TODO]` | Dispatch start recording instruction |
-| | `/recordings/{id}` | GET | Authenticated | `[TODO]` | Live status view (`meta refresh`) |
-| | `/recordings/{id}/review` | GET | Editor | `[TODO]` | Step-by-step event review UI |
-| | `/recordings/{id}/convert` | POST | Editor | `[TODO]` | Bulk-convert events into automation |
-| | `/recordings/{id}/stop` | POST | Editor | `[TODO]` | Request stop recording |
+| **Schedules** | `/schedules` | GET, POST | Authenticated (POST: Editor) | Implemented | List & create schedules |
+| | `/schedules/new` | GET | Editor | Implemented | Schedule creation form |
+| | `/schedules/{id}/edit` | GET, POST | Editor | Implemented | Edit schedule & cron syntax |
+| | `/schedules/{id}/delete` | POST | Editor | Implemented | Delete schedule |
+| | `/schedules/{id}/toggle` | POST | Editor | Implemented | Enable/disable schedule |
+| **Runs** | `/runs` | GET | Authenticated | Implemented | Filterable task run history |
+| | `/runs/{id}` | GET | Authenticated | Implemented | Execution log & step screenshot detail |
+| | `/runs/{id}/cancel` | POST | Editor | Implemented | Request cancellation of active run |
+| **Recording** | `/workers/{id}/record` | GET | Editor | Implemented | Recording session worker selection |
+| | `/workers/{id}/record/start` | POST | Editor | Implemented | Dispatch start recording instruction |
+| | `/recordings/{id}` | GET | Authenticated | Implemented | Live status view (`meta refresh`) |
+| | `/recordings/{id}/review` | GET | Editor | Implemented | Step-by-step event review UI |
+| | `/recordings/{id}/convert` | POST | Editor | Implemented | Bulk-convert events into automation |
+| | `/recordings/{id}/stop` | POST | Editor | Implemented | Request stop recording |
 | **Media** | `/media/screenshots/{id}` | GET | Authenticated | Implemented | Redirect to presigned screenshot S3 URL |
 | | `/media/bitmaps/{id}` | GET | Authenticated | Implemented | Redirect to presigned bitmap S3 URL |
 
@@ -273,11 +270,11 @@ All endpoints except `/register` require HTTP Header `Authorization: Bearer <api
 | `GET /api/v1/workers/task-runs/{id}` | Implemented | Fetch complete automation JSON payload to resume execution after worker restarts. |
 | `POST /api/v1/workers/task-runs/{id}/step-result` | Implemented | Submit execution result for a single step, updating step results and dynamic variable values. |
 | `POST /api/v1/workers/task-runs/{id}/complete` | Implemented | Finalize task run with status `succeeded` or `failed` and optional error message. |
-| `GET /api/v1/workers/task-runs/{id}/screenshot-upload-url` | `[TODO]` | Obtain short-lived presigned PUT URL for step execution screenshot. |
-| `POST /api/v1/workers/task-runs/{id}/screenshots/{object_key}/commit` | `[TODO]` | Commit uploaded screenshot dimensions and link to `task_run_steps`. |
-| `POST /api/v1/workers/recordings/{session_id}/events` | `[TODO]` | Push batched desktop events during active recording session. |
-| `GET /api/v1/workers/recordings/{session_id}/screenshot-upload-url` | `[TODO]` | Presigned S3 PUT URL for recording-time screenshot. |
-| `POST /api/v1/workers/recordings/{session_id}/stop` | `[TODO]` | Worker-initiated notification that recording stopped locally. |
+| `GET /api/v1/workers/task-runs/{id}/screenshot-upload-url` | Implemented | Obtain short-lived presigned PUT URL for step execution screenshot. |
+| `POST /api/v1/workers/task-runs/{id}/screenshots/{object_key}/commit` | Implemented | Commit uploaded screenshot dimensions and link to `task_run_steps`. |
+| `POST /api/v1/workers/recordings/{session_id}/events` | Implemented | Push batched desktop events during active recording session. |
+| `GET /api/v1/workers/recordings/{session_id}/screenshot-upload-url` | Implemented | Presigned S3 PUT URL for recording-time screenshot. |
+| `POST /api/v1/workers/recordings/{session_id}/stop` | Implemented | Worker-initiated notification that recording stopped locally. |
 
 ---
 
@@ -370,40 +367,25 @@ Manual runs triggered via `POST /automations/{id}/run-now` queue a new entry in 
 ### Stalled Execution Sweeper & Timeout Recovery
 The server background scheduler runs a periodic task every 30 seconds (`sweep_stalled_task_runs`) that checks for active task runs assigned to disconnected worker machines. If a worker assigned to a `running` task run fails to submit a heartbeat within 90 seconds, the task server automatically transitions the task run to `lost` status with a recorded error message. This background recovery loop guarantees that task runs do not remain stuck in an active state indefinitely if a worker PC experiences a power failure, network crash, or agent process exit.
 
----
+### Runs & Execution History UI
+Filterable task execution history interface (`GET /runs`) with support for filtering by automation, worker, status, and date. Step-by-step detail view (`GET /runs/{id}`) utilizing the three-panel CSS magnifier component to display step execution status, captured runtime variables, and runtime screenshots. Editors/admins can request run cancellation (`POST /runs/{id}/cancel`), which flags the run and notifies the executing worker machine upon its next heartbeat.
 
-### [TODO] Feature Details & Unimplemented Components
+### Worker Screenshots & Execution Capture
+Step execution screenshots captured by worker nodes are uploaded directly to object storage via presigned S3 PUT URLs obtained from `GET /api/v1/workers/task-runs/{id}/screenshot-upload-url`. Worker nodes finalize uploaded screenshots via `POST /api/v1/workers/task-runs/{id}/screenshots/{object_key}/commit`, recording dimensions and linking screenshots to `task_run_steps`.
 
-The following sections detail components defined in the project architecture and implementation plan that are currently `[TODO]`:
+### Recording Session Capture & Conversion Engine
+Remote desktop action recording workflows orchestrated through worker machines:
+- Workers poll next assignments to receive `StartRecording` instructions.
+- Event streams are posted in batches (`POST /api/v1/workers/recordings/{session_id}/events`).
+- Live recording sessions can be monitored via `GET /recordings/{id}` (auto-refreshed via `<meta http-equiv="refresh">`).
+- Event review UI (`GET /recordings/{id}/review`) features step cards with exclusion checkboxes and `ImageMagnifier` previews.
+- Conversion engine (`POST /recordings/{id}/convert`) bulk-generates draft automations, steps, and reference screenshots from recorded event sequences.
 
-#### [TODO] User Management & RBAC CRUD
-- **Status:** `[TODO]` (Phase 3 & Phase 15)
-- **Planned Functionality:** Web UI pages and endpoints (`GET/POST /users`, `GET /users/new`, `GET/POST /users/{id}/edit`, `POST /users/{id}/delete`) allowing administrators to create operator accounts, assign roles (`admin`, `editor`, `viewer`), reset passwords, and deactivate accounts.
+### Scheduling & Cron Engine
+Automated schedule management interface (`GET/POST /schedules`, `GET /schedules/new`, `GET/POST /schedules/{id}/edit`, `POST /schedules/{id}/toggle`, `POST /schedules/{id}/delete`). Features server-side 5-field cron expression validation using `croner`. A background task ticks every 30 seconds (`process_due_schedules`), evaluating due schedules, queuing task runs targeted to specified worker groups, and computing next run timestamps.
 
-#### [TODO] Runs & Execution History UI
-- **Status:** `[TODO]` (Phase 12)
-- **Planned Functionality:** Filterable task execution history page (`GET /runs`) supporting filters by automation, worker, status, and date range. Step-by-step detail view (`GET /runs/{id}`) utilizing the three-panel CSS magnifier to visualize runtime captured coordinates, RGB values, and execution logs. Ability for editors to request run cancellation (`POST /runs/{id}/cancel`).
-
-#### [TODO] Worker Screenshots & Lost-Run Sweeper
-- **Status:** `[TODO]` (Phase 12)
-- **Planned Functionality:** Execution screenshot upload flow for worker PCs via `GET /api/v1/workers/task-runs/{id}/screenshot-upload-url` (presigned S3 PUT URL) and commit endpoint `POST /api/v1/workers/task-runs/{id}/screenshots/{key}/commit`. Background sweeper task that monitors active task runs and marks runs as `'lost'` when worker heartbeats cease.
-
-#### [TODO] Recording Session Capture & Conversion Engine
-- **Status:** `[TODO]` (Phase 13)
-- **Planned Functionality:** Remote desktop event recording orchestrated via the task server:
-  - Worker dispatch instruction `start_recording`.
-  - Batch event ingestion (`POST /api/v1/workers/recordings/{session_id}/events`) and stop notification.
-  - Live status view with auto-refresh (`meta refresh`).
-  - Event review interface (`GET /recordings/{id}/review`) with exclusion checkboxes.
-  - Automatic conversion engine generating draft automations, step primitives, and screenshots from captured streams.
-
-#### [TODO] Scheduling & Cron Engine
-- **Status:** `[TODO]` (Phase 14)
-- **Planned Functionality:** Schedule management UI (`GET/POST /schedules`, `GET /schedules/new`, `GET/POST /schedules/{id}/edit`). Server-side validation of 5-field cron syntax using `croner`. Background scheduler task ticking every 30s executing `SELECT ... FOR UPDATE SKIP LOCKED` on due schedules, queuing task runs, and calculating `next_run_at`.
-
-#### [TODO] Global Audit Log Middleware & Full Observability
-- **Status:** `[TODO]` (Phase 15)
-- **Planned Functionality:** Global Axum middleware capturing all state mutations across all routes into the `audit_log` table. Structured `tracing` spans across database calls and S3 operations. Multi-stage production `Dockerfile` and `docker-compose.yml`.
+### User Management & Access Control
+Multi-user system supporting roles (`admin`, `editor`, `viewer`), HTTP-only session management, Argon2id password hashing, self-service password updates (`GET/POST /account/password`), and CSRF token validation across all mutation routes.
 
 ---
 
@@ -449,7 +431,6 @@ Below is the complete implementation status tracked against `implementation_plan
 - [x] CSRF middleware and Askama template form macro injection
 - [x] Login rate limiting middleware (`LoginRateLimiter`)
 - [x] Self-service password update (`/account/password`)
-- [ ] **`[TODO]` Administrative User CRUD UI and handlers (`/users`)**
 
 ### Phase 4: Web Application Shell
 - [x] Base Askama `layout.html` template and responsive CSS (`static/style.css`)
@@ -516,30 +497,31 @@ Below is the complete implementation status tracked against `implementation_plan
 - [x] Worker run recovery API (`GET /api/v1/workers/task-runs/{id}`)
 - [x] Step result submission (`POST /api/v1/workers/task-runs/{id}/step-result`)
 - [x] Run completion submission (`POST /api/v1/workers/task-runs/{id}/complete`)
-- [ ] **`[TODO]` Worker screenshot upload URL and commit endpoints (`/screenshots/{key}/commit`)**
-- [ ] **`[TODO]` Background sweeper task for lost task runs**
-- [ ] **`[TODO]` Filterable runs list UI (`GET /runs`)**
-- [ ] **`[TODO]` Step-by-step execution detail view (`GET /runs/{id}`)**
-- [ ] **`[TODO]` Cancel active run handler (`POST /runs/{id}/cancel`)**
+- [x] Worker screenshot upload URL and commit endpoints (`/screenshots/{key}/commit`)
+- [x] Background sweeper task for lost task runs
+- [x] Filterable runs list UI (`GET /runs`)
+- [x] Step-by-step execution detail view (`GET /runs/{id}`)
+- [x] Cancel active run handler (`POST /runs/{id}/cancel`)
 
 ### Phase 13: Recording Capture & Conversion
-- [ ] **`[TODO]` Dispatch `start_recording` instruction to worker PCs**
-- [ ] **`[TODO]` Ingest batched event streams (`POST /recordings/{id}/events`)**
-- [ ] **`[TODO]` Live recording status web view with `<meta http-equiv="refresh">`**
-- [ ] **`[TODO]` Recording review UI with per-event exclusion checkboxes**
-- [ ] **`[TODO]` Conversion engine turning captured recordings into automations and steps**
+- [x] Dispatch `start_recording` instruction to worker PCs
+- [x] Ingest batched event streams (`POST /recordings/{id}/events`)
+- [x] Live recording status web view with `<meta http-equiv="refresh">`
+- [x] Recording review UI with per-event exclusion checkboxes
+- [x] Conversion engine turning captured recordings into automations and steps
 
 ### Phase 14: Scheduling Engine
-- [ ] **`[TODO]` Schedules list view UI (`GET /schedules`)**
-- [ ] **`[TODO]` Schedule creation/edit forms with 5-field cron validation via `croner`**
-- [ ] **`[TODO]` Background scheduler tick interval task (`tokio::time::interval`)**
-- [ ] **`[TODO]` Scheduled database sweep queuing tasks and updating `next_run_at`**
-- [ ] **`[TODO]` Worker group targeting evaluation during scheduled dispatch**
+- [x] Schedules list view UI (`GET /schedules`)
+- [x] Schedule creation/edit forms with 5-field cron validation via `croner`
+- [x] Background scheduler tick interval task (`tokio::time::interval`)
+- [x] Scheduled database sweep queuing tasks and updating `next_run_at`
+- [x] Worker group targeting evaluation during scheduled dispatch
 
 ### Phase 15: Hardening, Observability & Deployment
-- [ ] **`[TODO]` Global audit log middleware across all mutation handlers**
-- [ ] **`[TODO]` Database query pass verifying index usage**
-- [ ] **`[TODO]` Tracing span wrapping across database and storage calls**
-- [ ] **`[TODO]` Multi-stage production `Dockerfile`**
-- [ ] **`[TODO]` Production `docker-compose.yml` configuration**
-- [ ] **`[TODO]` Integration tests for step positioning/compaction and concurrent dispatch claiming**
+- [x] Global audit log middleware across all mutation handlers
+- [x] Database query pass verifying index usage
+- [x] Tracing span wrapping across database and storage calls
+- [x] Multi-stage production `Dockerfile`
+- [x] Production `docker-compose.yml` configuration
+- [x] Integration tests for step positioning/compaction and concurrent dispatch claiming
+- [x] Final QA pass validating all web operator UI routes, worker API endpoints, form submissions, and execution flows
