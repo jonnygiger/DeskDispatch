@@ -49,54 +49,54 @@ pub async fn get_index_handler(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> impl IntoResponse {
-    let active_automations_count: i64 =
+    // Optimization: Run all 5 independent dashboard queries concurrently over the database pool
+    // using `tokio::join!`. This reduces overall dashboard HTTP request latency from the sum of 5
+    // sequential query round-trips to the duration of the single longest query.
+    let (
+        active_automations_res,
+        workers_online_res,
+        runs_today_res,
+        failed_lost_runs_today_res,
+        recent_runs_res,
+    ) = tokio::join!(
         sqlx::query_scalar("SELECT COUNT(*) FROM automations WHERE status = 'active'")
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(0);
-
-    let workers_online_count: i64 =
+            .fetch_one(&state.db),
         sqlx::query_scalar("SELECT COUNT(*) FROM task_worker_pcs WHERE status = 'online'")
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(0);
-
-    let runs_today_count: i64 =
+            .fetch_one(&state.db),
         sqlx::query_scalar("SELECT COUNT(*) FROM task_runs WHERE queued_at >= CURRENT_DATE")
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(0);
+            .fetch_one(&state.db),
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_runs WHERE status IN ('failed', 'lost') AND queued_at >= CURRENT_DATE",
+        )
+        .fetch_one(&state.db),
+        sqlx::query_as::<_, RecentRunItem>(
+            r#"
+            SELECT
+                tr.id,
+                tr.automation_id,
+                a.name AS automation_name,
+                tr.worker_id,
+                w.display_name AS worker_name,
+                tr.status,
+                COALESCE(u.display_name, u.username, s.name, 'Manual') AS triggered_by,
+                tr.queued_at
+            FROM task_runs tr
+            JOIN automations a ON tr.automation_id = a.id
+            LEFT JOIN task_worker_pcs w ON tr.worker_id = w.id
+            LEFT JOIN users u ON tr.triggered_by_user_id = u.id
+            LEFT JOIN schedules s ON tr.schedule_id = s.id
+            ORDER BY tr.queued_at DESC, tr.id DESC
+            LIMIT 10
+            "#,
+        )
+        .fetch_all(&state.db)
+    );
 
-    let failed_lost_runs_today_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM task_runs WHERE status IN ('failed', 'lost') AND queued_at >= CURRENT_DATE",
-    )
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
-
-    let recent_runs: Vec<RecentRunItem> = sqlx::query_as(
-        r#"
-        SELECT
-            tr.id,
-            tr.automation_id,
-            a.name AS automation_name,
-            tr.worker_id,
-            w.display_name AS worker_name,
-            tr.status,
-            COALESCE(u.display_name, u.username, s.name, 'Manual') AS triggered_by,
-            tr.queued_at
-        FROM task_runs tr
-        JOIN automations a ON tr.automation_id = a.id
-        LEFT JOIN task_worker_pcs w ON tr.worker_id = w.id
-        LEFT JOIN users u ON tr.triggered_by_user_id = u.id
-        LEFT JOIN schedules s ON tr.schedule_id = s.id
-        ORDER BY tr.queued_at DESC, tr.id DESC
-        LIMIT 10
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let active_automations_count = active_automations_res.unwrap_or(0);
+    let workers_online_count = workers_online_res.unwrap_or(0);
+    let runs_today_count = runs_today_res.unwrap_or(0);
+    let failed_lost_runs_today_count = failed_lost_runs_today_res.unwrap_or(0);
+    let recent_runs = recent_runs_res.unwrap_or_default();
 
     HtmlTemplate(IndexTemplate {
         user,
