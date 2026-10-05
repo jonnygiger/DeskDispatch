@@ -24,6 +24,8 @@ pub struct ScheduleItem {
     pub timezone: String,
     pub worker_group_id: Option<i64>,
     pub worker_group_name: Option<String>,
+    pub overlap_policy: String,
+    pub max_queue_age_secs: Option<i32>,
     pub is_enabled: bool,
     pub next_run_at: Option<DateTime<Utc>>,
     pub last_run_at: Option<DateTime<Utc>>,
@@ -89,6 +91,8 @@ pub struct ScheduleFormTemplate {
     pub cron_expression: String,
     pub timezone: String,
     pub worker_group_id: Option<i64>,
+    pub overlap_policy: String,
+    pub max_queue_age_secs: Option<i32>,
     pub is_enabled: bool,
     pub automations: Vec<ScheduleAutomationOption>,
     pub worker_groups: Vec<ScheduleWorkerGroupOption>,
@@ -113,8 +117,15 @@ pub struct ScheduleForm {
     #[serde(default = "default_timezone")]
     pub timezone: String,
     pub worker_group_id: Option<i64>,
+    #[serde(default = "default_overlap_policy")]
+    pub overlap_policy: String,
+    pub max_queue_age_secs: Option<i32>,
     #[serde(default)]
     pub is_enabled: bool,
+}
+
+fn default_overlap_policy() -> String {
+    "allow".to_string()
 }
 
 fn default_timezone() -> String {
@@ -123,13 +134,27 @@ fn default_timezone() -> String {
 
 pub fn compute_next_run_at(
     cron_expr: &str,
+    tz_str: &str,
     from_dt: &DateTime<Utc>,
 ) -> Result<DateTime<Utc>, String> {
+    let tz_name = if tz_str.trim().is_empty() {
+        "UTC"
+    } else {
+        tz_str.trim()
+    };
+
+    let tz: chrono_tz::Tz = tz_name
+        .parse()
+        .map_err(|_| format!("Invalid timezone: '{}'", tz_name))?;
+
     let cron = Cron::from_str(cron_expr)
         .map_err(|e| format!("Invalid cron expression: {}", e))?;
 
-    cron.find_next_occurrence(from_dt, false)
+    let local_from = from_dt.with_timezone(&tz);
+
+    cron.find_next_occurrence(&local_from, false)
         .map_err(|e| format!("Failed to compute next run time: {}", e))
+        .map(|dt| dt.with_timezone(&Utc))
 }
 
 #[tracing::instrument(skip(state, user))]
@@ -143,6 +168,7 @@ pub async fn get_schedules_handler(
             s.id, s.automation_id, a.name AS automation_name,
             s.name, s.cron_expression, s.timezone,
             s.worker_group_id, wg.name AS worker_group_name,
+            s.overlap_policy, s.max_queue_age_secs,
             s.is_enabled, s.next_run_at, s.last_run_at,
             s.created_by, s.created_at
         FROM schedules s
@@ -176,6 +202,8 @@ pub async fn get_schedules_handler(
             timezone: r.get("timezone"),
             worker_group_id: r.get("worker_group_id"),
             worker_group_name: r.get("worker_group_name"),
+            overlap_policy: r.get("overlap_policy"),
+            max_queue_age_secs: r.get("max_queue_age_secs"),
             is_enabled: r.get("is_enabled"),
             next_run_at: r.get("next_run_at"),
             last_run_at: r.get("last_run_at"),
@@ -215,6 +243,8 @@ pub async fn get_new_schedule_handler(
         cron_expression: String::new(),
         timezone: "UTC".to_string(),
         worker_group_id: None,
+        overlap_policy: "allow".to_string(),
+        max_queue_age_secs: None,
         is_enabled: true,
         automations,
         worker_groups,
@@ -261,6 +291,8 @@ pub async fn post_create_schedule_handler(
             cron_expression: cron_expression.to_string(),
             timezone: timezone.to_string(),
             worker_group_id: form.worker_group_id,
+            overlap_policy: form.overlap_policy.clone(),
+            max_queue_age_secs: form.max_queue_age_secs,
             is_enabled: form.is_enabled,
             automations,
             worker_groups,
@@ -271,7 +303,7 @@ pub async fn post_create_schedule_handler(
 
     let now = Utc::now();
     let next_run_at = if form.is_enabled {
-        match compute_next_run_at(cron_expression, &now) {
+        match compute_next_run_at(cron_expression, timezone, &now) {
             Ok(next_dt) => Some(next_dt),
             Err(err_msg) => {
                 return HtmlTemplate(ScheduleFormTemplate {
@@ -283,6 +315,8 @@ pub async fn post_create_schedule_handler(
                     cron_expression: cron_expression.to_string(),
                     timezone: timezone.to_string(),
                     worker_group_id: form.worker_group_id,
+                    overlap_policy: form.overlap_policy.clone(),
+                    max_queue_age_secs: form.max_queue_age_secs,
                     is_enabled: form.is_enabled,
                     automations,
                     worker_groups,
@@ -299,9 +333,10 @@ pub async fn post_create_schedule_handler(
         r#"
         INSERT INTO schedules (
             automation_id, name, cron_expression, timezone,
-            worker_group_id, is_enabled, next_run_at, created_by
+            worker_group_id, overlap_policy, max_queue_age_secs,
+            is_enabled, next_run_at, created_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id
         "#,
     )
@@ -310,6 +345,8 @@ pub async fn post_create_schedule_handler(
     .bind(cron_expression)
     .bind(timezone)
     .bind(form.worker_group_id)
+    .bind(&form.overlap_policy)
+    .bind(form.max_queue_age_secs)
     .bind(form.is_enabled)
     .bind(next_run_at)
     .bind(user.id)
@@ -329,6 +366,8 @@ pub async fn post_create_schedule_handler(
                 cron_expression: cron_expression.to_string(),
                 timezone: timezone.to_string(),
                 worker_group_id: form.worker_group_id,
+                overlap_policy: form.overlap_policy.clone(),
+                max_queue_age_secs: form.max_queue_age_secs,
                 is_enabled: form.is_enabled,
                 automations,
                 worker_groups,
@@ -366,7 +405,8 @@ pub async fn get_edit_schedule_handler(
 ) -> impl IntoResponse {
     let row = match sqlx::query(
         r#"
-        SELECT id, automation_id, name, cron_expression, timezone, worker_group_id, is_enabled
+        SELECT id, automation_id, name, cron_expression, timezone, worker_group_id,
+               overlap_policy, max_queue_age_secs, is_enabled
         FROM schedules
         WHERE id = $1
         "#,
@@ -406,6 +446,8 @@ pub async fn get_edit_schedule_handler(
         cron_expression: row.get("cron_expression"),
         timezone: row.get("timezone"),
         worker_group_id: row.get("worker_group_id"),
+        overlap_policy: row.get("overlap_policy"),
+        max_queue_age_secs: row.get("max_queue_age_secs"),
         is_enabled: row.get("is_enabled"),
         automations,
         worker_groups,
@@ -453,6 +495,8 @@ pub async fn post_edit_schedule_handler(
             cron_expression: cron_expression.to_string(),
             timezone: timezone.to_string(),
             worker_group_id: form.worker_group_id,
+            overlap_policy: form.overlap_policy.clone(),
+            max_queue_age_secs: form.max_queue_age_secs,
             is_enabled: form.is_enabled,
             automations,
             worker_groups,
@@ -463,7 +507,7 @@ pub async fn post_edit_schedule_handler(
 
     let now = Utc::now();
     let next_run_at = if form.is_enabled {
-        match compute_next_run_at(cron_expression, &now) {
+        match compute_next_run_at(cron_expression, timezone, &now) {
             Ok(next_dt) => Some(next_dt),
             Err(err_msg) => {
                 return HtmlTemplate(ScheduleFormTemplate {
@@ -475,6 +519,8 @@ pub async fn post_edit_schedule_handler(
                     cron_expression: cron_expression.to_string(),
                     timezone: timezone.to_string(),
                     worker_group_id: form.worker_group_id,
+                    overlap_policy: form.overlap_policy.clone(),
+                    max_queue_age_secs: form.max_queue_age_secs,
                     is_enabled: form.is_enabled,
                     automations,
                     worker_groups,
@@ -495,9 +541,11 @@ pub async fn post_edit_schedule_handler(
             cron_expression = $3,
             timezone = $4,
             worker_group_id = $5,
-            is_enabled = $6,
-            next_run_at = $7
-        WHERE id = $8
+            overlap_policy = $6,
+            max_queue_age_secs = $7,
+            is_enabled = $8,
+            next_run_at = $9
+        WHERE id = $10
         "#,
     )
     .bind(form.automation_id)
@@ -505,6 +553,8 @@ pub async fn post_edit_schedule_handler(
     .bind(cron_expression)
     .bind(timezone)
     .bind(form.worker_group_id)
+    .bind(&form.overlap_policy)
+    .bind(form.max_queue_age_secs)
     .bind(form.is_enabled)
     .bind(next_run_at)
     .bind(id)
@@ -522,6 +572,8 @@ pub async fn post_edit_schedule_handler(
             cron_expression: cron_expression.to_string(),
             timezone: timezone.to_string(),
             worker_group_id: form.worker_group_id,
+            overlap_policy: form.overlap_policy.clone(),
+            max_queue_age_secs: form.max_queue_age_secs,
             is_enabled: form.is_enabled,
             automations,
             worker_groups,
@@ -557,7 +609,7 @@ pub async fn post_toggle_schedule_handler(
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
     let row = match sqlx::query(
-        "SELECT is_enabled, cron_expression FROM schedules WHERE id = $1",
+        "SELECT is_enabled, cron_expression, timezone FROM schedules WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -573,11 +625,12 @@ pub async fn post_toggle_schedule_handler(
 
     let current_enabled: bool = row.get("is_enabled");
     let cron_expr: String = row.get("cron_expression");
+    let timezone: String = row.get("timezone");
     let new_enabled = !current_enabled;
 
     let now = Utc::now();
     let next_run_at = if new_enabled {
-        compute_next_run_at(&cron_expr, &now).ok()
+        compute_next_run_at(&cron_expr, &timezone, &now).ok()
     } else {
         None
     };
@@ -648,7 +701,8 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
 
     let due_schedules = sqlx::query(
         r#"
-        SELECT id, automation_id, cron_expression, timezone, worker_group_id
+        SELECT id, automation_id, cron_expression, timezone, worker_group_id,
+               overlap_policy, max_queue_age_secs, next_run_at
         FROM schedules
         WHERE is_enabled = true
           AND next_run_at IS NOT NULL
@@ -659,50 +713,125 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     .fetch_all(&mut *tx)
     .await?;
 
-    let count = due_schedules.len() as u64;
+    let mut queued_count = 0u64;
 
     for sched in due_schedules {
         let schedule_id: i64 = sched.get("id");
         let automation_id: i64 = sched.get("automation_id");
         let cron_expr: String = sched.get("cron_expression");
+        let timezone: String = sched.get("timezone");
         let worker_group_id: Option<i64> = sched.get("worker_group_id");
-
-        sqlx::query(
-            r#"
-            INSERT INTO task_runs (automation_id, schedule_id, target_worker_group_id, status, queued_at)
-            VALUES ($1, $2, $3, 'queued', now())
-            "#,
-        )
-        .bind(automation_id)
-        .bind(schedule_id)
-        .bind(worker_group_id)
-        .execute(&mut *tx)
-        .await?;
+        let overlap_policy: String = sched.get("overlap_policy");
+        let max_queue_age_secs: Option<i32> = sched.get("max_queue_age_secs");
+        let scheduled_run_at: DateTime<Utc> = sched.get("next_run_at");
 
         let now = Utc::now();
-        let next_run = compute_next_run_at(&cron_expr, &now).ok();
+        let mut should_queue = true;
 
-        sqlx::query(
-            r#"
-            UPDATE schedules
-            SET last_run_at = now(),
-                next_run_at = $1
-            WHERE id = $2
-            "#,
-        )
-        .bind(next_run)
-        .bind(schedule_id)
-        .execute(&mut *tx)
-        .await?;
+        // 1. Check max_queue_age_secs expiry
+        if let Some(max_age) = max_queue_age_secs {
+            let age_secs = (now - scheduled_run_at).num_seconds();
+            if age_secs > max_age as i64 {
+                tracing::warn!(
+                    schedule_id = schedule_id,
+                    age_secs = age_secs,
+                    max_queue_age_secs = max_age,
+                    "Scheduled run expired because it exceeded max_queue_age_secs; skipping execution"
+                );
+                should_queue = false;
+            }
+        }
+
+        // 2. Check overlap policy if 'skip'
+        if should_queue && overlap_policy == "skip" {
+            let active_run_exists: bool = sqlx::query_scalar(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1 FROM task_runs
+                    WHERE schedule_id = $1
+                      AND status IN ('queued', 'running', 'cancelling')
+                )
+                "#,
+            )
+            .bind(schedule_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            if active_run_exists {
+                tracing::warn!(
+                    schedule_id = schedule_id,
+                    "Active task run exists for schedule with overlap_policy='skip'; skipping execution"
+                );
+                should_queue = false;
+            }
+        }
+
+        if should_queue {
+            sqlx::query(
+                r#"
+                INSERT INTO task_runs (automation_id, schedule_id, target_worker_group_id, status, queued_at)
+                VALUES ($1, $2, $3, 'queued', now())
+                "#,
+            )
+            .bind(automation_id)
+            .bind(schedule_id)
+            .bind(worker_group_id)
+            .execute(&mut *tx)
+            .await?;
+
+            queued_count += 1;
+        }
+
+        // Recompute next run time loudly on failure
+        let next_run = match compute_next_run_at(&cron_expr, &timezone, &now) {
+            Ok(next_dt) => Some(next_dt),
+            Err(e) => {
+                tracing::error!(
+                    schedule_id = schedule_id,
+                    cron_expression = %cron_expr,
+                    timezone = %timezone,
+                    error = %e,
+                    "FAILED to compute next_run_at for schedule! Schedule next_run_at will be set to NULL."
+                );
+                None
+            }
+        };
+
+        if should_queue {
+            sqlx::query(
+                r#"
+                UPDATE schedules
+                SET last_run_at = now(),
+                    next_run_at = $1
+                WHERE id = $2
+                "#,
+            )
+            .bind(next_run)
+            .bind(schedule_id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query(
+                r#"
+                UPDATE schedules
+                SET next_run_at = $1
+                WHERE id = $2
+                "#,
+            )
+            .bind(next_run)
+            .bind(schedule_id)
+            .execute(&mut *tx)
+            .await?;
+        }
     }
 
     tx.commit().await?;
 
-    if count > 0 {
-        tracing::info!(count = count, "Queued scheduled task runs");
+    if queued_count > 0 {
+        tracing::info!(count = queued_count, "Queued scheduled task runs");
     }
 
-    Ok(count)
+    Ok(queued_count)
 }
 
 #[cfg(test)]
@@ -712,16 +841,47 @@ mod tests {
     #[test]
     fn test_compute_next_run_at_valid_cron() {
         let now = Utc::now();
-        let result = compute_next_run_at("0 9 * * MON-FRI", &now);
+        let result = compute_next_run_at("0 9 * * MON-FRI", "UTC", &now);
         assert!(result.is_ok(), "Expected valid cron expression to parse successfully");
         let next_dt = result.unwrap();
         assert!(next_dt > now, "Next run time must be in the future");
     }
 
     #[test]
+    fn test_compute_next_run_at_timezone_support() {
+        use chrono::TimeZone;
+        // Fix base time: 2025-01-15 08:00:00 UTC
+        let base_dt = Utc.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap();
+
+        // Standard 5-field cron: 0 9 * * * (9:00 AM)
+        let res_utc = compute_next_run_at("0 9 * * *", "UTC", &base_dt).unwrap();
+        // UTC 9:00 AM on Jan 15, 2025
+        assert_eq!(res_utc, Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap());
+
+        // In America/New_York (EST, UTC-5 in Jan)
+        // 9:00 AM EST on Jan 15, 2025 is 14:00:00 UTC
+        let res_ny = compute_next_run_at("0 9 * * *", "America/New_York", &base_dt).unwrap();
+        assert_eq!(res_ny, Utc.with_ymd_and_hms(2025, 1, 15, 14, 0, 0).unwrap());
+
+        // Test DST in America/New_York (EDT, UTC-4 in July)
+        let base_july = Utc.with_ymd_and_hms(2025, 7, 15, 8, 0, 0).unwrap();
+        // 9:00 AM EDT on July 15, 2025 is 13:00:00 UTC
+        let res_july_ny = compute_next_run_at("0 9 * * *", "America/New_York", &base_july).unwrap();
+        assert_eq!(res_july_ny, Utc.with_ymd_and_hms(2025, 7, 15, 13, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn test_compute_next_run_at_invalid_timezone() {
+        let now = Utc::now();
+        let result = compute_next_run_at("0 9 * * *", "Invalid/Timezone_Name", &now);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid timezone"));
+    }
+
+    #[test]
     fn test_compute_next_run_at_invalid_cron() {
         let now = Utc::now();
-        let result = compute_next_run_at("invalid cron expression", &now);
+        let result = compute_next_run_at("invalid cron expression", "UTC", &now);
         assert!(result.is_err(), "Expected invalid cron expression to fail");
     }
 
@@ -736,6 +896,8 @@ mod tests {
             timezone: "UTC".to_string(),
             worker_group_id: None,
             worker_group_name: None,
+            overlap_policy: "allow".to_string(),
+            max_queue_age_secs: Some(3600),
             is_enabled: true,
             next_run_at: None,
             last_run_at: None,

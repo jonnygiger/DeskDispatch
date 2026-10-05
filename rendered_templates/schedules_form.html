@@ -102,6 +102,26 @@
             </select>
         </div>
 
+        <div style="margin-bottom: 1.25rem;">
+            <label for="overlap_policy" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Overlap Policy</label>
+            <select name="overlap_policy" id="overlap_policy" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+                <option value="allow" selected>Allow (always queue when due)</option>
+                <option value="skip" >Skip (do not queue if run is active)</option>
+                <option value="queue" >Queue (enqueue regardless)</option>
+            </select>
+            <small style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
+                Determines how to handle due schedules when a previous task run for this schedule is still active.
+            </small>
+        </div>
+
+        <div style="margin-bottom: 1.25rem;">
+            <label for="max_queue_age_secs" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Max Queue Age (Seconds)</label>
+            <input type="number" name="max_queue_age_secs" id="max_queue_age_secs" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" value="3600" placeholder="e.g. 3600 (optional)" min="1" />
+            <small style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
+                If a schedule is delayed longer than this threshold (e.g. workers offline), the run expires instead of piling up.
+            </small>
+        </div>
+
         <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
             <input type="checkbox" name="is_enabled" id="is_enabled" value="true" checked />
             <label for="is_enabled" style="font-weight: 500; cursor: pointer;">Enable this schedule immediately</label>
