@@ -426,6 +426,8 @@ fn main() {
         timezone: "UTC".to_string(),
         worker_group_id: Some(1),
         worker_group_name: Some("Warehouse Fleet".to_string()),
+        overlap_policy: "allow".to_string(),
+        max_queue_age_secs: Some(3600),
         is_enabled: true,
         next_run_at: Some(Utc::now()),
         last_run_at: Some(Utc::now()),
@@ -448,6 +450,8 @@ fn main() {
         cron_expression: "0 9 * * MON-FRI".to_string(),
         timezone: "UTC".to_string(),
         worker_group_id: Some(1),
+        overlap_policy: "allow".to_string(),
+        max_queue_age_secs: Some(3600),
         is_enabled: true,
         automations: vec![ScheduleAutomationOption {
             id: 12,

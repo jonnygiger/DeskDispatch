@@ -34,6 +34,7 @@
                     <th>Cron Expression</th>
                     <th>Timezone</th>
                     <th>Target Worker Group</th>
+                    <th>Overlap / Max Age</th>
                     <th>Next Run At</th>
                     <th>Last Run At</th>
                     <th>Status</th>
@@ -54,6 +55,12 @@
                             {{ wg_name }}
                         {% else %}
                             <span style="color: var(--color-text-muted);">Any available worker</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <code>{{ s.overlap_policy }}</code>
+                        {% if let Some(max_age) = s.max_queue_age_secs %}
+                            <br/><small class="text-muted">max {{ max_age }}s</small>
                         {% endif %}
                     </td>
                     <td>{{ s.formatted_next_run() }}</td>
