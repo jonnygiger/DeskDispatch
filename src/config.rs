@@ -3,7 +3,9 @@ use std::env;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
+    pub public_base_url: String,
     pub s3_endpoint: Option<String>,
+    pub s3_public_endpoint: Option<String>,
     pub s3_bucket: String,
     pub s3_access_key: String,
     pub s3_secret_key: String,
@@ -23,9 +25,18 @@ impl Config {
         let database_url = env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
 
+        let public_base_url = env::var("PUBLIC_BASE_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "http://localhost:3000".to_string());
+
         let s3_endpoint = env::var("S3_ENDPOINT")
             .ok()
-            .or_else(|| Some("http://localhost:9000".to_string()));
+            .filter(|v| !v.trim().is_empty());
+
+        let s3_public_endpoint = env::var("S3_PUBLIC_ENDPOINT")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
 
         let s3_bucket = env::var("S3_BUCKET")
             .unwrap_or_else(|_| "deskdispatch-bucket".to_string());
@@ -62,7 +73,9 @@ impl Config {
 
         Ok(Self {
             database_url,
+            public_base_url,
             s3_endpoint,
+            s3_public_endpoint,
             s3_bucket,
             s3_access_key,
             s3_secret_key,

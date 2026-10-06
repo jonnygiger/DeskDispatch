@@ -26,5 +26,6 @@ impl AppState {
                 &self.config.s3_region,
                 self.config.s3_endpoint.as_deref(),
             )
+            .with_public_endpoint(self.config.s3_public_endpoint.as_deref())
     }
 }
