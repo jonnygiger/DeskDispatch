@@ -4809,8 +4809,8 @@ mod tests {
         assert!(rendered.contains("action=\"/automations/42/run-now\""));
         assert!(rendered.contains("Run Now"));
         assert!(rendered.contains("test_csrf_token"));
-        assert!(rendered.contains("aria-label=\"Move step up\""));
-        assert!(rendered.contains("aria-label=\"Move step down\""));
+        assert!(rendered.contains("aria-label=\"Move step 1 up\""));
+        assert!(rendered.contains("aria-label=\"Move step 1 down\""));
     }
 
     #[test]
