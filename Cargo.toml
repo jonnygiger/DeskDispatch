@@ -25,6 +25,7 @@ tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 mime_guess = "2.0"
 rust-embed = "8.12"
+secrecy = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.27", features = ["v4", "serde"] }

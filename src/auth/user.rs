@@ -3,6 +3,7 @@ use axum::{
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
+use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::str::FromStr;
@@ -130,7 +131,7 @@ impl FromRequestParts<AppState> for AuthUser {
             Redirect::to("/login").into_response()
         })?;
 
-        let csrf_token = super::csrf::generate_csrf_token(record.session_id, &state.config.session_secret);
+        let csrf_token = super::csrf::generate_csrf_token(record.session_id, state.config.session_secret.expose_secret());
 
         Ok(AuthUser {
             id: record.id,

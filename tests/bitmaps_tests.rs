@@ -3,6 +3,7 @@ use app::{
     routes::*,
     AppState,
 };
+use secrecy::ExposeSecret;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -215,11 +216,11 @@ async fn test_bitmap_upload_flow() {
 
     // Extract CSRF token for admin session
     let session_uuid = uuid::Uuid::parse_str(&admin_session).unwrap();
-    let admin_csrf = app::auth::generate_csrf_token(session_uuid, &config.session_secret);
+    let admin_csrf = app::auth::generate_csrf_token(session_uuid, config.session_secret.expose_secret());
 
     // Extract CSRF token for viewer session
     let viewer_session_uuid = uuid::Uuid::parse_str(&viewer_session).unwrap();
-    let viewer_csrf = app::auth::generate_csrf_token(viewer_session_uuid, &config.session_secret);
+    let viewer_csrf = app::auth::generate_csrf_token(viewer_session_uuid, config.session_secret.expose_secret());
 
     // 1. Viewer attempt to POST /bitmaps -> 403 Forbidden
     let req_viewer = Request::builder()
@@ -370,9 +371,9 @@ async fn test_bitmap_deletion_flow() {
     let (editor_id, editor_session) = create_test_user(&pool, &format!("editor_del_{}", uuid::Uuid::new_v4().simple()), "editor").await;
     let (admin_id, admin_session) = create_test_user(&pool, &format!("admin_del_{}", uuid::Uuid::new_v4().simple()), "admin").await;
 
-    let viewer_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), &config.session_secret);
-    let editor_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), &config.session_secret);
-    let admin_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&admin_session).unwrap(), &config.session_secret);
+    let viewer_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), config.session_secret.expose_secret());
+    let editor_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), config.session_secret.expose_secret());
+    let admin_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&admin_session).unwrap(), config.session_secret.expose_secret());
 
     // Insert a test bitmap record
     let key1 = format!("bitmaps/del_test_1_{}.png", uuid::Uuid::new_v4().simple());
@@ -519,7 +520,7 @@ async fn test_region_picker_top_left_flow() {
         .with_state(state);
 
     let (_user_id, session) = create_test_user(&pool, &format!("region_user_{}", uuid::Uuid::new_v4().simple()), "editor").await;
-    let csrf_token = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&session).unwrap(), &config.session_secret);
+    let csrf_token = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&session).unwrap(), config.session_secret.expose_secret());
 
     // 1. GET /bitmaps/pick-region
     let req_get = Request::builder()
@@ -597,8 +598,8 @@ async fn test_region_picker_confirm_crop_flow() {
     let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_confirm_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
     let (editor_id, editor_session) = create_test_user(&pool, &format!("editor_confirm_{}", uuid::Uuid::new_v4().simple()), "editor").await;
 
-    let viewer_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), &config.session_secret);
-    let editor_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), &config.session_secret);
+    let viewer_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), config.session_secret.expose_secret());
+    let editor_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), config.session_secret.expose_secret());
 
     // 1. Editor POST /bitmaps/pick-region/bottom-right -> Stage 3 HTML with Step 3 Confirm Crop Preview
     let br_post_body = format!(

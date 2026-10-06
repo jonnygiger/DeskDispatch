@@ -7,6 +7,7 @@ pub mod routes;
 pub mod storage;
 
 use config::Config;
+use secrecy::ExposeSecret;
 use sqlx::PgPool;
 
 #[derive(Clone)]
@@ -22,7 +23,7 @@ impl AppState {
         storage::StorageService::new(self.s3_client.clone(), &self.config.s3_bucket)
             .with_credentials(
                 &self.config.s3_access_key,
-                &self.config.s3_secret_key,
+                self.config.s3_secret_key.expose_secret(),
                 &self.config.s3_region,
                 self.config.s3_endpoint.as_deref(),
             )

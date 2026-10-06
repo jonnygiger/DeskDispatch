@@ -2,6 +2,7 @@ use app::auth::{
     clear_session_cookie, create_session_cookie, generate_csrf_token,
     validate_csrf_token, LoginRateLimiter, UserRole,
 };
+use secrecy::ExposeSecret;
 use app::config::Config;
 use app::routes::{
     get_index_handler, get_login_handler, get_password_handler, post_login_handler,
@@ -356,7 +357,7 @@ async fn test_full_auth_and_password_workflow() {
 
     // Extract session ID and generate CSRF token
     let session_id = app::auth::session::extract_session_id(&cookie_header).unwrap();
-    let csrf_token = generate_csrf_token(session_id, &config.session_secret);
+    let csrf_token = generate_csrf_token(session_id, config.session_secret.expose_secret());
 
     // 4. POST /account/password with wrong current password
     let pwd_form = format!(

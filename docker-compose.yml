@@ -15,15 +15,15 @@ services:
       migration:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/deskdispatch
+      DATABASE_URL: postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch
       PUBLIC_BASE_URL: http://localhost:3000
       S3_ENDPOINT: http://rustfs:9000
       S3_PUBLIC_ENDPOINT: http://localhost:9000
       S3_BUCKET: deskdispatch-bucket
-      S3_ACCESS_KEY: rustfsadmin
-      S3_SECRET_KEY: rustfsadminpassword
+      S3_ACCESS_KEY: deskdispatch_s3_user
+      S3_SECRET_KEY: deskdispatch_s3_prod_secret_4712
       S3_REGION: us-east-1
-      SESSION_SECRET: super-secret-key-change-me
+      SESSION_SECRET: deskdispatch_session_prod_secret_8832
       BIND_ADDRESS: 0.0.0.0:3000
       APP_ENV: production
     healthcheck:
@@ -39,10 +39,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_PASSWORD: deskdispatch_db_prod_secret_9823
       POSTGRES_DB: deskdispatch
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -57,11 +55,8 @@ services:
     container_name: deskdispatch-rustfs
     restart: unless-stopped
     environment:
-      RUSTFS_ROOT_USER: rustfsadmin
-      RUSTFS_ROOT_PASSWORD: rustfsadminpassword
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      RUSTFS_ROOT_USER: deskdispatch_s3_user
+      RUSTFS_ROOT_PASSWORD: deskdispatch_s3_prod_secret_4712
     volumes:
       - rustfs_data:/data
     healthcheck:
@@ -83,11 +78,11 @@ services:
       rustfs:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/deskdispatch
+      DATABASE_URL: postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch
       S3_ENDPOINT: http://rustfs:9000
       S3_BUCKET: deskdispatch-bucket
-      S3_ACCESS_KEY: rustfsadmin
-      S3_SECRET_KEY: rustfsadminpassword
+      S3_ACCESS_KEY: deskdispatch_s3_user
+      S3_SECRET_KEY: deskdispatch_s3_prod_secret_4712
       S3_REGION: us-east-1
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: test

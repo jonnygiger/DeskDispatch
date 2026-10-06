@@ -1,5 +1,6 @@
 use app::auth::{generate_csrf_token, AuthUser, UserRole};
 use app::config::Config;
+use secrecy::ExposeSecret;
 use app::routes::workers::*;
 use app::AppState;
 use askama::Template;
@@ -321,7 +322,7 @@ async fn test_admin_workers_crud_and_rbac() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // --- Admin access: POST /worker-groups (Create group) ---
-    let csrf_token = generate_csrf_token(admin_session_id, &config.session_secret);
+    let csrf_token = generate_csrf_token(admin_session_id, config.session_secret.expose_secret());
     let group_form = format!(
         "csrf_token={}&name=Test+Group+Alpha&description=Testing+group&worker_ids={}",
         csrf_token, worker_id

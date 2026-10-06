@@ -4,6 +4,7 @@ use axum::{
     response::Response,
 };
 use hmac::{Hmac, KeyInit, Mac};
+use secrecy::ExposeSecret;
 use sha2::Sha256;
 use uuid::Uuid;
 
@@ -52,7 +53,7 @@ pub async fn csrf_middleware(
         .and_then(super::session::extract_session_id)
         .ok_or(StatusCode::FORBIDDEN)?;
 
-    let expected_csrf = generate_csrf_token(session_id, &state.config.session_secret);
+    let expected_csrf = generate_csrf_token(session_id, state.config.session_secret.expose_secret());
 
     let (parts, body) = req.into_parts();
     let bytes = axum::body::to_bytes(body, 1024 * 1024)

@@ -4,6 +4,7 @@ use app::{
     routes::*,
     AppState,
 };
+use secrecy::ExposeSecret;
 use argon2::{Argon2, PasswordHasher};
 use axum::{
     extract::State,
@@ -258,7 +259,7 @@ async fn create_admin_user(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error
 fn build_s3_client(config: &Config) -> aws_sdk_s3::Client {
     let credentials = aws_sdk_s3::config::Credentials::new(
         &config.s3_access_key,
-        &config.s3_secret_key,
+        config.s3_secret_key.expose_secret(),
         None,
         None,
         "static",

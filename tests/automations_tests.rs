@@ -3,6 +3,7 @@ use app::{
     routes::*,
     AppState,
 };
+use secrecy::ExposeSecret;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
@@ -88,7 +89,7 @@ async fn test_automations_crud_and_steps_ordering() {
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("auto_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
     let csrf_token = app::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
-        &config.session_secret,
+        config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
@@ -251,7 +252,7 @@ async fn test_mouse_click_step_crud_and_validation() {
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("mc_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
     let csrf_token = app::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
-        &config.session_secret,
+        config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
@@ -441,7 +442,7 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("fp_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
     let csrf_token = app::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
-        &config.session_secret,
+        config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
@@ -682,7 +683,7 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("branch_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
     let csrf_token = app::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
-        &config.session_secret,
+        config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
@@ -877,7 +878,7 @@ async fn test_automation_parameters_crud_and_validation() {
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("param_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
     let csrf_token = app::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
-        &config.session_secret,
+        config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
