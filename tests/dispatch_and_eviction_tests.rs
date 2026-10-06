@@ -260,3 +260,71 @@ async fn test_stalled_task_run_eviction() {
     );
     assert!(completed_at.is_some());
 }
+
+#[tokio::test]
+async fn test_sweep_stalled_recording_sessions() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_sweep_stalled_recording_sessions");
+        return;
+    };
+
+    let user_id = seed_test_user(&pool).await;
+
+    // Seed active worker (heartbeat 10s ago)
+    let active_worker_id = seed_test_worker(&pool, &format!("active_rec_w_{}", uuid::Uuid::new_v4().simple())).await;
+    sqlx::query("UPDATE task_worker_pcs SET last_heartbeat_at = now() - INTERVAL '10 seconds' WHERE id = $1")
+        .bind(active_worker_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Seed stalled worker (heartbeat 120s ago)
+    let stalled_worker_id = seed_test_worker(&pool, &format!("stalled_rec_w_{}", uuid::Uuid::new_v4().simple())).await;
+    sqlx::query("UPDATE task_worker_pcs SET last_heartbeat_at = now() - INTERVAL '120 seconds' WHERE id = $1")
+        .bind(stalled_worker_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Create recording session for active worker
+    let active_rec_row = sqlx::query(
+        "INSERT INTO recording_sessions (worker_id, started_by_user_id, status, started_at) VALUES ($1, $2, 'recording', now()) RETURNING id",
+    )
+    .bind(active_worker_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let active_rec_id: i64 = active_rec_row.get("id");
+
+    // Create recording session for stalled worker
+    let stalled_rec_row = sqlx::query(
+        "INSERT INTO recording_sessions (worker_id, started_by_user_id, status, started_at) VALUES ($1, $2, 'recording', now()) RETURNING id",
+    )
+    .bind(stalled_worker_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let stalled_rec_id: i64 = stalled_rec_row.get("id");
+
+    // Execute background sweeper
+    let swept_count = sweep_stalled_task_runs(&pool).await.expect("Sweeper failed");
+    assert!(swept_count >= 1, "At least 1 stalled record/run should be swept");
+
+    // Verify active worker's recording session remains 'recording'
+    let active_rec_status: String = sqlx::query_scalar("SELECT status FROM recording_sessions WHERE id = $1")
+        .bind(active_rec_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(active_rec_status, "recording");
+
+    // Verify stalled worker's recording session was transitioned to 'discarded'
+    let stalled_rec_status: String = sqlx::query_scalar("SELECT status FROM recording_sessions WHERE id = $1")
+        .bind(stalled_rec_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stalled_rec_status, "discarded");
+}

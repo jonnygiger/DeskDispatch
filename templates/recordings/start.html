@@ -38,7 +38,7 @@
     <div style="background: var(--color-bg-secondary); padding: 1rem; border-radius: 6px; border: 1px solid var(--color-border); margin-bottom: 1.5rem;">
         <dl style="display: grid; grid-template-columns: 1fr 2fr; gap: 0.5rem 1rem; margin: 0; font-size: 0.875rem;">
             <dt style="font-weight: 600; color: var(--color-text-muted);">Worker Status:</dt>
-            <dd style="margin: 0;"><span class="badge {{ worker.status_badge_class() }}">{{ worker.status }}</span></dd>
+            <dd style="margin: 0;"><span class="badge {{ worker.status_badge_class() }}">{{ worker.derived_status() }}</span></dd>
 
             <dt style="font-weight: 600; color: var(--color-text-muted);">Last Heartbeat:</dt>
             <dd style="margin: 0;">{{ worker.formatted_last_heartbeat() }}</dd>

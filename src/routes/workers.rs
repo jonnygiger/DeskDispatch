@@ -28,8 +28,25 @@ pub struct WorkerPcItem {
 }
 
 impl WorkerPcItem {
+    pub fn derived_status(&self) -> &str {
+        if self.status == "offline" {
+            return "offline";
+        }
+        match self.last_heartbeat_at {
+            Some(dt) => {
+                let seconds = Utc::now().signed_duration_since(dt).num_seconds();
+                if seconds > 90 {
+                    "offline"
+                } else {
+                    self.status.as_str()
+                }
+            }
+            None => "offline",
+        }
+    }
+
     pub fn status_badge_class(&self) -> &'static str {
-        match self.status.as_str() {
+        match self.derived_status() {
             "online" => "badge-success",
             "busy" => "badge-warning",
             "error" => "badge-danger",
@@ -203,6 +220,93 @@ mod tests {
         assert!(rendered.contains("Rotate API Key"));
         assert!(rendered.contains("Deactivate"));
     }
+
+    #[test]
+    fn test_worker_derived_status() {
+        use chrono::Duration;
+
+        let recent_hb = Some(Utc::now());
+        let stale_hb = Some(Utc::now() - Duration::seconds(100));
+
+        let worker_online = WorkerPcItem {
+            id: 1,
+            hostname: "w1".to_string(),
+            display_name: "Worker 1".to_string(),
+            status: "online".to_string(),
+            last_heartbeat_at: recent_hb,
+            screen_width: None,
+            screen_height: None,
+            os_info: None,
+            agent_version: None,
+            created_at: Utc::now(),
+            groups: vec![],
+        };
+        assert_eq!(worker_online.derived_status(), "online");
+        assert_eq!(worker_online.status_badge_class(), "badge-success");
+
+        let worker_stale = WorkerPcItem {
+            id: 2,
+            hostname: "w2".to_string(),
+            display_name: "Worker 2".to_string(),
+            status: "online".to_string(),
+            last_heartbeat_at: stale_hb,
+            screen_width: None,
+            screen_height: None,
+            os_info: None,
+            agent_version: None,
+            created_at: Utc::now(),
+            groups: vec![],
+        };
+        assert_eq!(worker_stale.derived_status(), "offline");
+        assert_eq!(worker_stale.status_badge_class(), "badge-neutral");
+
+        let worker_no_hb = WorkerPcItem {
+            id: 3,
+            hostname: "w3".to_string(),
+            display_name: "Worker 3".to_string(),
+            status: "online".to_string(),
+            last_heartbeat_at: None,
+            screen_width: None,
+            screen_height: None,
+            os_info: None,
+            agent_version: None,
+            created_at: Utc::now(),
+            groups: vec![],
+        };
+        assert_eq!(worker_no_hb.derived_status(), "offline");
+
+        let worker_offline_explicit = WorkerPcItem {
+            id: 4,
+            hostname: "w4".to_string(),
+            display_name: "Worker 4".to_string(),
+            status: "offline".to_string(),
+            last_heartbeat_at: recent_hb,
+            screen_width: None,
+            screen_height: None,
+            os_info: None,
+            agent_version: None,
+            created_at: Utc::now(),
+            groups: vec![],
+        };
+        assert_eq!(worker_offline_explicit.derived_status(), "offline");
+
+        let worker_busy = WorkerDetail {
+            id: 5,
+            hostname: "w5".to_string(),
+            display_name: "Worker 5".to_string(),
+            status: "busy".to_string(),
+            last_heartbeat_at: recent_hb,
+            screen_width: None,
+            screen_height: None,
+            os_info: None,
+            agent_version: None,
+            created_at: Utc::now(),
+            groups: vec![],
+            registration_token: None,
+        };
+        assert_eq!(worker_busy.derived_status(), "busy");
+        assert_eq!(worker_busy.status_badge_class(), "badge-warning");
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -260,8 +364,25 @@ pub struct WorkerDetail {
 }
 
 impl WorkerDetail {
+    pub fn derived_status(&self) -> &str {
+        if self.status == "offline" {
+            return "offline";
+        }
+        match self.last_heartbeat_at {
+            Some(dt) => {
+                let seconds = Utc::now().signed_duration_since(dt).num_seconds();
+                if seconds > 90 {
+                    "offline"
+                } else {
+                    self.status.as_str()
+                }
+            }
+            None => "offline",
+        }
+    }
+
     pub fn status_badge_class(&self) -> &'static str {
-        match self.status.as_str() {
+        match self.derived_status() {
             "online" => "badge-success",
             "busy" => "badge-warning",
             "error" => "badge-danger",

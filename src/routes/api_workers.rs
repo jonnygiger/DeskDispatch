@@ -1151,7 +1151,28 @@ pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::E
     if count > 0 {
         tracing::info!(count = count, "Swept stalled task runs with silent heartbeats to lost status");
     }
-    Ok(count)
+
+    let rec_result = sqlx::query(
+        r#"
+        UPDATE recording_sessions
+        SET status = 'discarded'
+        WHERE status = 'recording'
+          AND EXISTS (
+            SELECT 1 FROM task_worker_pcs w
+            WHERE w.id = recording_sessions.worker_id
+              AND (w.last_heartbeat_at IS NULL OR w.last_heartbeat_at < now() - INTERVAL '90 seconds')
+          )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    let rec_count = rec_result.rows_affected();
+    if rec_count > 0 {
+        tracing::info!(count = rec_count, "Swept stuck recording sessions with silent worker heartbeats to discarded status");
+    }
+
+    Ok(count + rec_count)
 }
 
 #[tracing::instrument(skip(worker, state))]

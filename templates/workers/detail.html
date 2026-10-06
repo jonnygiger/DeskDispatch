@@ -12,7 +12,7 @@
     <div>
         <div style="display: flex; align-items: center; gap: 0.75rem;">
             <h1 class="dashboard-title" style="margin: 0;">{{ worker.display_name }}</h1>
-            <span class="badge {{ worker.status_badge_class() }}">{{ worker.status }}</span>
+            <span class="badge {{ worker.status_badge_class() }}">{{ worker.derived_status() }}</span>
         </div>
         <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Hostname: <code>{{ worker.hostname }}</code></p>
     </div>
@@ -60,7 +60,7 @@
             <dd style="margin: 0;">{{ worker.display_name }}</dd>
 
             <dt style="font-weight: 600; color: var(--color-text-muted);">Status:</dt>
-            <dd style="margin: 0;"><span class="badge {{ worker.status_badge_class() }}">{{ worker.status }}</span></dd>
+            <dd style="margin: 0;"><span class="badge {{ worker.status_badge_class() }}">{{ worker.derived_status() }}</span></dd>
 
             <dt style="font-weight: 600; color: var(--color-text-muted);">Last Heartbeat:</dt>
             <dd style="margin: 0;">{{ worker.formatted_last_heartbeat() }}</dd>

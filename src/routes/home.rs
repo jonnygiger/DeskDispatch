@@ -61,8 +61,10 @@ pub async fn get_index_handler(
     ) = tokio::join!(
         sqlx::query_scalar("SELECT COUNT(*) FROM automations WHERE status = 'active'")
             .fetch_one(&state.db),
-        sqlx::query_scalar("SELECT COUNT(*) FROM task_worker_pcs WHERE status = 'online'")
-            .fetch_one(&state.db),
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_worker_pcs WHERE status != 'offline' AND last_heartbeat_at >= NOW() - INTERVAL '90 seconds'",
+        )
+        .fetch_one(&state.db),
         sqlx::query_scalar("SELECT COUNT(*) FROM task_runs WHERE queued_at >= CURRENT_DATE")
             .fetch_one(&state.db),
         sqlx::query_scalar(
