@@ -229,10 +229,53 @@ pub async fn get_runs_handler(
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
-    let auto_rows = sqlx::query("SELECT id, name FROM automations ORDER BY name ASC")
+    let filter_status_clean = filter
+        .status
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s != "all");
+
+    // Bolt Optimization: Run all 3 independent queries (automations filter list, workers filter list,
+    // and filtered task runs list) concurrently using `tokio::join!`. This reduces page response latency
+    // from the cumulative sum of 3 sequential database round-trips to the duration of the single longest query.
+    let (auto_rows_res, worker_rows_res, run_rows_res) = tokio::join!(
+        sqlx::query("SELECT id, name FROM automations ORDER BY name ASC").fetch_all(&state.db),
+        sqlx::query("SELECT id, display_name FROM task_worker_pcs ORDER BY display_name ASC").fetch_all(&state.db),
+        sqlx::query(
+            r#"
+            SELECT
+                tr.id,
+                tr.automation_id,
+                a.name AS automation_name,
+                tr.schedule_id,
+                s.name AS schedule_name,
+                tr.worker_id,
+                w.display_name AS worker_name,
+                tr.status,
+                COALESCE(u.display_name, u.username, s.name, 'Manual') AS triggered_by,
+                tr.queued_at,
+                tr.started_at,
+                tr.completed_at,
+                tr.error_message
+            FROM task_runs tr
+            JOIN automations a ON tr.automation_id = a.id
+            LEFT JOIN schedules s ON tr.schedule_id = s.id
+            LEFT JOIN task_worker_pcs w ON tr.worker_id = w.id
+            LEFT JOIN users u ON tr.triggered_by_user_id = u.id
+            WHERE ($1::BIGINT IS NULL OR tr.automation_id = $1)
+              AND ($2::BIGINT IS NULL OR tr.worker_id = $2)
+              AND ($3::TEXT IS NULL OR tr.status = $3)
+            ORDER BY tr.queued_at DESC, tr.id DESC
+            LIMIT 100
+            "#,
+        )
+        .bind(filter.automation_id)
+        .bind(filter.worker_id)
+        .bind(filter_status_clean.as_deref())
         .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    );
+
+    let auto_rows = auto_rows_res.unwrap_or_default();
     let automations = auto_rows
         .into_iter()
         .map(|r| AutomationOption {
@@ -241,10 +284,7 @@ pub async fn get_runs_handler(
         })
         .collect();
 
-    let worker_rows = sqlx::query("SELECT id, display_name FROM task_worker_pcs ORDER BY display_name ASC")
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    let worker_rows = worker_rows_res.unwrap_or_default();
     let workers = worker_rows
         .into_iter()
         .map(|r| WorkerOption {
@@ -253,46 +293,7 @@ pub async fn get_runs_handler(
         })
         .collect();
 
-    let filter_status_clean = filter
-        .status
-        .as_deref()
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty() && s != "all");
-
-    let run_rows = sqlx::query(
-        r#"
-        SELECT
-            tr.id,
-            tr.automation_id,
-            a.name AS automation_name,
-            tr.schedule_id,
-            s.name AS schedule_name,
-            tr.worker_id,
-            w.display_name AS worker_name,
-            tr.status,
-            COALESCE(u.display_name, u.username, s.name, 'Manual') AS triggered_by,
-            tr.queued_at,
-            tr.started_at,
-            tr.completed_at,
-            tr.error_message
-        FROM task_runs tr
-        JOIN automations a ON tr.automation_id = a.id
-        LEFT JOIN schedules s ON tr.schedule_id = s.id
-        LEFT JOIN task_worker_pcs w ON tr.worker_id = w.id
-        LEFT JOIN users u ON tr.triggered_by_user_id = u.id
-        WHERE ($1::BIGINT IS NULL OR tr.automation_id = $1)
-          AND ($2::BIGINT IS NULL OR tr.worker_id = $2)
-          AND ($3::TEXT IS NULL OR tr.status = $3)
-        ORDER BY tr.queued_at DESC, tr.id DESC
-        LIMIT 100
-        "#,
-    )
-    .bind(filter.automation_id)
-    .bind(filter.worker_id)
-    .bind(filter_status_clean.as_deref())
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let run_rows = run_rows_res.unwrap_or_default();
 
     let runs = run_rows
         .into_iter()
