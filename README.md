@@ -34,6 +34,7 @@ DeskDispatch is a high-performance, zero-JavaScript task server for managing and
   - [Recording Session Capture & Conversion Engine](#recording-session-capture--conversion-engine)
   - [Scheduling & Cron Engine](#scheduling--cron-engine)
   - [User Management & Access Control](#user-management--access-control)
+  - [Binary CLI Subcommands](#binary-cli-subcommands)
 - [Security & Access Control](#security--access-control)
 - [Implementation Roadmap & Plan Status](#implementation-roadmap--plan-status)
 
@@ -391,6 +392,9 @@ Automated schedule management interface (`GET/POST /schedules`, `GET /schedules/
 
 ### User Management & Access Control
 Multi-user system supporting roles (`admin`, `editor`, `viewer`), HTTP-only session management, Argon2id password hashing, self-service password updates (`GET/POST /account/password`), and CSRF token validation across all mutation routes.
+
+### Binary CLI Subcommands
+In addition to running the web server, the `deskdispatch` application binary supports CLI subcommands (`migrate`, `create-admin`, `init-s3`, `setup`) for container initialization and automated administrative tasks. Running `deskdispatch migrate` executes embedded database migrations, `deskdispatch create-admin` provisions or updates the default admin account using environment variables (`ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_DISPLAY_NAME`), and `deskdispatch init-s3` ensures the target S3 bucket is created. The composite `deskdispatch setup` subcommand executes all three initialization steps sequentially, providing a single entrypoint for container startup routines and CI/CD pipelines.
 
 ---
 
