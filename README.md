@@ -26,6 +26,7 @@ DeskDispatch is a high-performance, zero-JavaScript task server for managing and
   - [Reference Bitmaps & Zero-JS Region Picker](#reference-bitmaps--zero-js-region-picker)
   - [Three-Panel CSS Screenshot Magnifier](#three-panel-css-screenshot-magnifier)
   - [Worker PC & Group Management](#worker-pc--group-management)
+  - [Minimum Worker Agent Version Enforcement](#minimum-worker-agent-version-enforcement)
   - [Execution & Concurrent Dispatch Engine](#execution--concurrent-dispatch-engine)
   - [Stalled Execution Sweeper & Timeout Recovery](#stalled-execution-sweeper--timeout-recovery)
   - [Runs & Execution History UI](#runs--execution-history-ui)
@@ -126,6 +127,7 @@ S3_REGION=us-east-1
 SESSION_SECRET=super-secret-key-change-me
 BIND_ADDRESS=0.0.0.0:3000
 APP_ENV=development
+MIN_AGENT_VERSION=1.0.0
 ```
 
 ---
@@ -360,6 +362,9 @@ Administrators manage worker fleets via the web UI:
 - Organise workers into custom worker groups for execution targeting.
 - Track worker health status (`online`, `busy`, `offline`, `error`), agent versions, screen resolution, and last heartbeat timestamps.
 - Rotate worker API keys or deactivate compromised nodes instantly.
+
+### Minimum Worker Agent Version Enforcement
+To ensure fleet compatibility and prevent outdated worker software from executing incompatible automation primitives, the task server enforces a configurable minimum agent version requirement (`MIN_AGENT_VERSION`). During periodic heartbeat exchanges (`POST /api/v1/workers/heartbeat`), the server compares the worker's reported `agent_version` against the configured minimum required semantic version. If the worker's agent version is missing or falls below the minimum required version, the server rejects the heartbeat request with an `HTTP 426 Upgrade Required` status code and an error message detailing the version mismatch. This mechanism alerts worker processes to halt polling and initiate an agent update before claiming further automation assignments.
 
 ### Execution & Concurrent Dispatch Engine
 Manual runs triggered via `POST /automations/{id}/run-now` queue a new entry in `task_runs`. Worker PCs polling `GET /api/v1/workers/next-assignment` execute an atomic transaction using `SELECT ... FOR UPDATE SKIP LOCKED` to claim queued runs matching their assigned worker group. The complete automation hierarchy (steps, details, variables, parameters) is serialized as JSON in the dispatch response.
