@@ -96,6 +96,7 @@ pub struct StorageService {
     secret_key: Option<String>,
     region: Option<String>,
     endpoint_url: Option<String>,
+    public_endpoint_url: Option<String>,
 }
 
 impl StorageService {
@@ -107,6 +108,7 @@ impl StorageService {
             secret_key: None,
             region: None,
             endpoint_url: None,
+            public_endpoint_url: None,
         }
     }
 
@@ -121,6 +123,14 @@ impl StorageService {
         self.secret_key = Some(secret_key.into());
         self.region = Some(region.into());
         self.endpoint_url = endpoint_url.map(|e| e.into());
+        self
+    }
+
+    pub fn with_public_endpoint(
+        mut self,
+        public_endpoint_url: Option<impl Into<String>>,
+    ) -> Self {
+        self.public_endpoint_url = public_endpoint_url.map(|e| e.into());
         self
     }
 
@@ -139,7 +149,12 @@ impl StorageService {
         object_key: &str,
         expires_in: Duration,
     ) -> Result<String, StorageError> {
-        get_presigned_get_url(&self.s3_client, &self.bucket, object_key, expires_in).await
+        let url = get_presigned_get_url(&self.s3_client, &self.bucket, object_key, expires_in).await?;
+        Ok(rewrite_url_with_public_endpoint(
+            url,
+            self.endpoint_url.as_deref(),
+            self.public_endpoint_url.as_deref(),
+        ))
     }
 
     /// Generates a presigned PUT URL for worker node file uploads in S3 / RustFS with the given expiration duration.
@@ -149,7 +164,12 @@ impl StorageService {
         object_key: &str,
         expires_in: Duration,
     ) -> Result<String, StorageError> {
-        get_presigned_put_url(&self.s3_client, &self.bucket, object_key, expires_in).await
+        let url = get_presigned_put_url(&self.s3_client, &self.bucket, object_key, expires_in).await?;
+        Ok(rewrite_url_with_public_endpoint(
+            url,
+            self.endpoint_url.as_deref(),
+            self.public_endpoint_url.as_deref(),
+        ))
     }
 
     /// Generates a presigned POST policy for browser-direct file uploads in S3 / RustFS.
@@ -164,7 +184,10 @@ impl StorageService {
         let access_key = self.access_key.as_deref().unwrap_or("rustfsadmin");
         let secret_key = self.secret_key.as_deref().unwrap_or("rustfsadminpassword");
         let region = self.region.as_deref().unwrap_or("us-east-1");
-        let endpoint_url = self.endpoint_url.as_deref().or(Some("http://localhost:9000"));
+        let endpoint_url = self
+            .public_endpoint_url
+            .as_deref()
+            .or(self.endpoint_url.as_deref());
 
         generate_presigned_post_policy(
             &self.bucket,
@@ -177,6 +200,23 @@ impl StorageService {
             endpoint_url,
             success_action_redirect,
         )
+    }
+}
+
+fn rewrite_url_with_public_endpoint(
+    url: String,
+    internal_endpoint: Option<&str>,
+    public_endpoint: Option<&str>,
+) -> String {
+    let (Some(internal_ep), Some(public_ep)) = (internal_endpoint, public_endpoint) else {
+        return url;
+    };
+    let clean_internal = internal_ep.trim_end_matches('/');
+    let clean_public = public_ep.trim_end_matches('/');
+    if url.starts_with(clean_internal) {
+        format!("{}{}", clean_public, &url[clean_internal.len()..])
+    } else {
+        url
     }
 }
 

@@ -1,7 +1,7 @@
 use askama::Template;
 use axum::{
     extract::{Form, Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
 use sqlx::Row;
@@ -374,7 +374,6 @@ pub async fn get_automation_bitmaps_handler(
 pub async fn post_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
-    headers: HeaderMap,
     Form(form): Form<BitmapUploadForm>,
 ) -> Response {
     if user.role == UserRole::Viewer {
@@ -391,20 +390,11 @@ pub async fn post_bitmaps_handler(
 
     let object_key = format!("bitmaps/user_{}_{}.png", user.id, uuid::Uuid::new_v4());
 
-    let host = headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost:3000");
-    let scheme = if host.contains("localhost") || host.contains("127.0.0.1") {
-        "http"
-    } else {
-        "https"
-    };
+    let base_url = state.config.public_base_url.trim_end_matches('/');
 
     let redirect_url = format!(
-        "{}://{}/bitmaps/commit?key={}&name={}",
-        scheme,
-        host,
+        "{}/bitmaps/commit?key={}&name={}",
+        base_url,
         object_key,
         urlencoding::encode(&bitmap_name)
     );
@@ -446,7 +436,6 @@ pub async fn post_automation_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    headers: HeaderMap,
     Form(form): Form<BitmapUploadForm>,
 ) -> Response {
     if user.role == UserRole::Viewer {
@@ -463,20 +452,11 @@ pub async fn post_automation_bitmaps_handler(
 
     let object_key = format!("bitmaps/{}.png", uuid::Uuid::new_v4());
 
-    let host = headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost:3000");
-    let scheme = if host.contains("localhost") || host.contains("127.0.0.1") {
-        "http"
-    } else {
-        "https"
-    };
+    let base_url = state.config.public_base_url.trim_end_matches('/');
 
     let redirect_url = format!(
-        "{}://{}/bitmaps/commit?key={}&name={}&automation_id={}",
-        scheme,
-        host,
+        "{}/bitmaps/commit?key={}&name={}&automation_id={}",
+        base_url,
         object_key,
         urlencoding::encode(&bitmap_name),
         id
