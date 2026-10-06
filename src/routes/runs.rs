@@ -632,4 +632,132 @@ mod tests {
         assert_eq!(step_item.captured_rgb_display(), Some("RGB(40, 180, 60)".to_string()));
         assert_eq!(step_item.captured_xy_display(), Some("(824, 391)".to_string()));
     }
+
+    #[test]
+    fn test_task_run_formatting_and_badge_classes() {
+        use crate::auth::UserRole;
+
+        let now = chrono::Utc::now();
+
+        // 1. TaskRunListItem duration display edge cases
+        let mut item = TaskRunListItem {
+            id: 1,
+            automation_id: 1,
+            automation_name: "Auto".to_string(),
+            schedule_id: None,
+            schedule_name: None,
+            worker_id: None,
+            worker_name: None,
+            status: "succeeded".to_string(),
+            triggered_by: "User".to_string(),
+            queued_at: now,
+            started_at: Some(now),
+            completed_at: Some(now + chrono::Duration::seconds(125)), // 2m 5s
+            error_message: None,
+        };
+        assert_eq!(item.duration_display(), "2m 5s");
+
+        item.completed_at = Some(now + chrono::Duration::seconds(3665)); // 1h 1m
+        assert_eq!(item.duration_display(), "1h 1m");
+
+        item.completed_at = None; // Running state
+        assert!(item.duration_display().contains("(running)"));
+
+        item.started_at = None; // Unstarted/Queued state
+        assert_eq!(item.duration_display(), "-");
+        assert_eq!(item.formatted_started_at(), "-");
+        assert_eq!(item.formatted_completed_at(), "-");
+
+        // 2. TaskRunListItem status badge classes
+        let status_cases = [
+            ("queued", "badge-warning"),
+            ("running", "badge-info"),
+            ("cancelling", "badge-warning"),
+            ("succeeded", "badge-success"),
+            ("failed", "badge-danger"),
+            ("cancelled", "badge-secondary"),
+            ("lost", "badge-danger"),
+            ("unknown", "badge-secondary"),
+        ];
+        for (status, expected_class) in status_cases {
+            item.status = status.to_string();
+            assert_eq!(item.status_badge_class(), expected_class, "Status '{}' mismatch", status);
+        }
+
+        // 3. ExecutedStepItem result badge classes and partial captures
+        let mut step = ExecutedStepItem {
+            id: 1,
+            step_id: 10,
+            step_number: 1,
+            step_type: "branch".to_string(),
+            label: None,
+            result: Some("branch_matched".to_string()),
+            started_at: now,
+            completed_at: None,
+            captured_r: Some(255),
+            captured_g: None,
+            captured_b: Some(0),
+            captured_found: None,
+            captured_x: Some(100),
+            captured_y: None,
+            screenshot_object_key: None,
+            magnifier: None,
+        };
+
+        assert_eq!(step.result_badge_class(), "badge-success");
+        assert_eq!(step.formatted_completed_at(), "-");
+        assert_eq!(step.captured_rgb_display(), None); // Incomplete RGB
+        assert_eq!(step.captured_xy_display(), None);  // Incomplete XY
+
+        step.result = Some("branch_not_matched".to_string());
+        assert_eq!(step.result_badge_class(), "badge-info");
+
+        step.result = Some("failed".to_string());
+        assert_eq!(step.result_badge_class(), "badge-danger");
+
+        step.result = None;
+        assert_eq!(step.result_badge_class(), "badge-secondary");
+
+        // 4. RunsListTemplate filter selection logic
+        let dummy_user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin".to_string(),
+            role: UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "csrf".to_string(),
+        };
+
+        let list_tmpl = RunsListTemplate {
+            user: dummy_user,
+            csrf_token: "csrf".to_string(),
+            runs: vec![],
+            automations: vec![],
+            workers: vec![],
+            filter_automation_id: None,
+            filter_worker_id: None,
+            filter_status: Some("running".to_string()),
+        };
+
+        assert!(list_tmpl.is_status_selected("running"));
+        assert!(!list_tmpl.is_status_selected("succeeded"));
+
+        let default_list_tmpl = RunsListTemplate {
+            filter_status: None,
+            ..list_tmpl
+        };
+        assert!(default_list_tmpl.is_status_selected("all"));
+        assert!(!default_list_tmpl.is_status_selected("running"));
+
+        // 5. AutomationOption and WorkerOption selection helpers
+        let auto_opt = AutomationOption { id: 42, name: "Auto 42".to_string() };
+        assert!(auto_opt.is_selected(&Some(42)));
+        assert!(!auto_opt.is_selected(&Some(10)));
+        assert!(!auto_opt.is_selected(&None));
+
+        let worker_opt = WorkerOption { id: 7, display_name: "Worker 7".to_string() };
+        assert!(worker_opt.is_selected(&Some(7)));
+        assert!(!worker_opt.is_selected(&Some(1)));
+        assert!(!worker_opt.is_selected(&None));
+    }
 }
