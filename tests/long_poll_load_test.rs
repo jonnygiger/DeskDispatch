@@ -57,6 +57,10 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         database_max_connections: 5,
         database_acquire_timeout_secs: 5,
         worker_long_poll_timeout_secs: 2,
+        session_retention_days: 7,
+        audit_log_retention_days: 90,
+        task_run_step_retention_days: 30,
+        screenshot_retention_days: 30,
     });
     config.worker_long_poll_timeout_secs = 2; // Short timeout for fast test execution
 

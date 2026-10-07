@@ -120,8 +120,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let db_pool = state.db.clone();
+    let retention_s3_client = state.s3_client.clone();
+    let retention_config = config.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        let mut retention_counter: u32 = 0;
         loop {
             interval.tick().await;
             if let Err(e) = sweep_stalled_task_runs(&db_pool).await {
@@ -130,6 +133,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = process_due_schedules(&db_pool).await {
                 tracing::error!("Error processing due schedules: {}", e);
             }
+
+            // Run retention jobs every 1 hour (120 * 30s)
+            if retention_counter == 0 {
+                app::retention::run_all_retention_jobs(
+                    &db_pool,
+                    &retention_s3_client,
+                    &retention_config,
+                )
+                .await;
+            }
+            retention_counter = (retention_counter + 1) % 120;
         }
     });
 
@@ -346,6 +360,42 @@ async fn ensure_s3_bucket(
             info!("S3 bucket '{}' created successfully.", bucket_name);
         }
     }
+
+    // Set lifecycle rule to auto-expire tmp/ uploads after 1 day
+    let filter = aws_sdk_s3::types::LifecycleRuleFilter::builder()
+        .prefix("tmp/")
+        .build();
+    let rule = aws_sdk_s3::types::LifecycleRule::builder()
+        .id("expire-tmp-uploads")
+        .filter(filter)
+        .status(aws_sdk_s3::types::ExpirationStatus::Enabled)
+        .expiration(
+            aws_sdk_s3::types::LifecycleExpiration::builder()
+                .days(1)
+                .build(),
+        )
+        .build();
+
+    if let Ok(rule) = rule {
+        let lifecycle_config = aws_sdk_s3::types::BucketLifecycleConfiguration::builder()
+            .rules(rule)
+            .build();
+
+        if let Ok(lifecycle_config) = lifecycle_config {
+            if let Err(e) = s3_client
+                .put_bucket_lifecycle_configuration()
+                .bucket(bucket_name)
+                .lifecycle_configuration(lifecycle_config)
+                .send()
+                .await
+            {
+                tracing::warn!("Failed to set S3 bucket lifecycle policy (may be unsupported by mock/RustFS): {}", e);
+            } else {
+                info!("S3 lifecycle configuration set for 'tmp/' prefix on bucket '{}'", bucket_name);
+            }
+        }
+    }
+
     Ok(())
 }
 

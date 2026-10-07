@@ -21,6 +21,10 @@ pub struct Config {
     pub database_max_connections: u32,
     pub database_acquire_timeout_secs: u64,
     pub worker_long_poll_timeout_secs: u64,
+    pub session_retention_days: u32,
+    pub audit_log_retention_days: u32,
+    pub task_run_step_retention_days: u32,
+    pub screenshot_retention_days: u32,
 }
 
 impl Config {
@@ -95,6 +99,26 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(10);
 
+        let session_retention_days = env::var("SESSION_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(7);
+
+        let audit_log_retention_days = env::var("AUDIT_LOG_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(90);
+
+        let task_run_step_retention_days = env::var("TASK_RUN_STEP_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+
+        let screenshot_retention_days = env::var("SCREENSHOT_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+
         let config = Self {
             database_url,
             public_base_url,
@@ -114,6 +138,10 @@ impl Config {
             database_max_connections,
             database_acquire_timeout_secs,
             worker_long_poll_timeout_secs,
+            session_retention_days,
+            audit_log_retention_days,
+            task_run_step_retention_days,
+            screenshot_retention_days,
         };
 
         config.validate()?;
@@ -175,6 +203,10 @@ mod tests {
             database_max_connections: 20,
             database_acquire_timeout_secs: 5,
             worker_long_poll_timeout_secs: 10,
+            session_retention_days: 7,
+            audit_log_retention_days: 90,
+            task_run_step_retention_days: 30,
+            screenshot_retention_days: 30,
         }
     }
 
@@ -182,6 +214,10 @@ mod tests {
     fn test_default_config() {
         let config = Config::from_env().unwrap();
         assert_eq!(config.s3_bucket, "deskdispatch-bucket");
+        assert_eq!(config.session_retention_days, 7);
+        assert_eq!(config.audit_log_retention_days, 90);
+        assert_eq!(config.task_run_step_retention_days, 30);
+        assert_eq!(config.screenshot_retention_days, 30);
         assert!(!config.is_production());
     }
 
