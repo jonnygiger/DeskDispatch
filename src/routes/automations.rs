@@ -87,7 +87,7 @@ pub struct CreateAutomationForm {
     pub description: Option<String>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AutomationDetail {
     pub id: i64,
     pub name: String,
@@ -4811,6 +4811,68 @@ mod tests {
         assert!(rendered.contains("test_csrf_token"));
         assert!(rendered.contains("aria-label=\"Move step 1 up\""));
         assert!(rendered.contains("aria-label=\"Move step 1 down\""));
+    }
+
+    #[test]
+    fn test_automation_sub_nav_template_rendering() {
+        use crate::auth::UserRole;
+
+        let dummy_user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf".to_string(),
+        };
+
+        let automation = AutomationDetail {
+            id: 10,
+            name: "SubNav Test".to_string(),
+            description: "Testing SubNav".to_string(),
+            status: "active".to_string(),
+            created_by: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        // 1. Automation Detail (Steps tab active)
+        let tmpl_detail = AutomationDetailTemplate {
+            user: dummy_user.clone(),
+            csrf_token: "test_csrf".to_string(),
+            automation: automation.clone(),
+            steps: vec![],
+            active_tab: "steps".to_string(),
+            error: None,
+            success: None,
+        };
+        let rendered_detail = tmpl_detail.render().unwrap();
+        assert!(rendered_detail.contains("<nav aria-label=\"Automation sub-navigation\""));
+        assert!(rendered_detail.contains("<a href=\"/automations/10\" aria-current=\"page\""));
+
+        // 2. Automation Variables
+        let tmpl_vars = AutomationVariablesTemplate {
+            user: dummy_user.clone(),
+            csrf_token: "test_csrf".to_string(),
+            automation: automation.clone(),
+            variables: vec![],
+            error: None,
+        };
+        let rendered_vars = tmpl_vars.render().unwrap();
+        assert!(rendered_vars.contains("<nav aria-label=\"Automation sub-navigation\""));
+        assert!(rendered_vars.contains("<a href=\"/automations/10/variables\" aria-current=\"page\""));
+
+        // 3. Automation Parameters
+        let tmpl_params = AutomationParametersTemplate {
+            user: dummy_user,
+            csrf_token: "test_csrf".to_string(),
+            automation,
+            parameters: vec![],
+            error: None,
+        };
+        let rendered_params = tmpl_params.render().unwrap();
+        assert!(rendered_params.contains("<nav aria-label=\"Automation sub-navigation\""));
+        assert!(rendered_params.contains("<a href=\"/automations/10/parameters\" aria-current=\"page\""));
     }
 
     #[test]
