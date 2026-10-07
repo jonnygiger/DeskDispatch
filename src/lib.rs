@@ -16,6 +16,7 @@ pub struct AppState {
     pub s3_client: aws_sdk_s3::Client,
     pub config: Config,
     pub rate_limiter: auth::LoginRateLimiter,
+    pub task_queue_notifier: tokio::sync::broadcast::Sender<()>,
 }
 
 impl AppState {

@@ -446,183 +446,208 @@ pub async fn get_next_assignment_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let mut tx = match state.db.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            tracing::error!(worker_id = worker.id, "Failed to begin transaction for next assignment: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    let active_recording: Option<i64> = match sqlx::query_scalar(
-        "SELECT id FROM recording_sessions WHERE worker_id = $1 AND status = 'recording' ORDER BY id ASC LIMIT 1",
-    )
-    .bind(worker.id)
-    .fetch_optional(&mut *tx)
-    .await
+    // Fold heartbeat into next-assignment call to update worker's last_heartbeat_at
+    if let Err(e) = sqlx::query("UPDATE task_worker_pcs SET last_heartbeat_at = now() WHERE id = $1")
+        .bind(worker.id)
+        .execute(&state.db)
+        .await
     {
-        Ok(rec) => rec,
-        Err(e) => {
-            tracing::error!(worker_id = worker.id, "Error checking active recording sessions: {}", e);
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error checking recording sessions".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    if let Some(recording_session_id) = active_recording {
-        let _ = tx.commit().await;
-        tracing::info!(
-            worker_id = worker.id,
-            recording_session_id = recording_session_id,
-            "Dispatched start_recording instruction to worker"
-        );
-        return (
-            StatusCode::OK,
-            Json(NextAssignmentResponse::StartRecording {
-                recording_session_id,
-            }),
-        )
-            .into_response();
+        tracing::error!(worker_id = worker.id, "Failed to update worker heartbeat in next-assignment: {}", e);
     }
 
-    let select_res = sqlx::query(
-        r#"
-        SELECT tr.id AS task_run_id, tr.automation_id
-        FROM task_runs tr
-        LEFT JOIN schedules s ON tr.schedule_id = s.id
-        WHERE tr.status = 'queued'
-          AND (
-            COALESCE(tr.target_worker_group_id, s.worker_group_id) IS NULL
-            OR EXISTS (
-              SELECT 1 FROM worker_group_members wgm
-              WHERE wgm.worker_id = $1 AND wgm.group_id = COALESCE(tr.target_worker_group_id, s.worker_group_id)
+    let start_time = std::time::Instant::now();
+    let timeout_duration = std::time::Duration::from_secs(state.config.worker_long_poll_timeout_secs);
+    let mut rx_notify = state.task_queue_notifier.subscribe();
+
+    loop {
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::error!(worker_id = worker.id, "Failed to begin transaction for next assignment: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Database error".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        let active_recording: Option<i64> = match sqlx::query_scalar(
+            "SELECT id FROM recording_sessions WHERE worker_id = $1 AND status = 'recording' ORDER BY id ASC LIMIT 1",
+        )
+        .bind(worker.id)
+        .fetch_optional(&mut *tx)
+        .await
+        {
+            Ok(rec) => rec,
+            Err(e) => {
+                tracing::error!(worker_id = worker.id, "Error checking active recording sessions: {}", e);
+                let _ = tx.rollback().await;
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Database error checking recording sessions".to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        if let Some(recording_session_id) = active_recording {
+            let _ = tx.commit().await;
+            tracing::info!(
+                worker_id = worker.id,
+                recording_session_id = recording_session_id,
+                "Dispatched start_recording instruction to worker"
+            );
+            return (
+                StatusCode::OK,
+                Json(NextAssignmentResponse::StartRecording {
+                    recording_session_id,
+                }),
             )
-          )
-        ORDER BY tr.queued_at ASC, tr.id ASC
-        LIMIT 1
-        FOR UPDATE OF tr SKIP LOCKED
-        "#,
-    )
-    .bind(worker.id)
-    .fetch_optional(&mut *tx)
-    .await;
+                .into_response();
+        }
 
-    match select_res {
-        Ok(Some(row)) => {
-            let task_run_id: i64 = row.get("task_run_id");
-            let automation_id: i64 = row.get("automation_id");
+        let select_res = sqlx::query(
+            r#"
+            SELECT tr.id AS task_run_id, tr.automation_id
+            FROM task_runs tr
+            LEFT JOIN schedules s ON tr.schedule_id = s.id
+            WHERE tr.status = 'queued'
+              AND (
+                COALESCE(tr.target_worker_group_id, s.worker_group_id) IS NULL
+                OR EXISTS (
+                  SELECT 1 FROM worker_group_members wgm
+                  WHERE wgm.worker_id = $1 AND wgm.group_id = COALESCE(tr.target_worker_group_id, s.worker_group_id)
+                )
+              )
+            ORDER BY tr.queued_at ASC, tr.id ASC
+            LIMIT 1
+            FOR UPDATE OF tr SKIP LOCKED
+            "#,
+        )
+        .bind(worker.id)
+        .fetch_optional(&mut *tx)
+        .await;
 
-            let automation_json = match fetch_full_automation_json(&mut *tx, automation_id).await {
-                Ok(json) => json,
-                Err(e) => {
+        match select_res {
+            Ok(Some(row)) => {
+                let task_run_id: i64 = row.get("task_run_id");
+                let automation_id: i64 = row.get("automation_id");
+
+                let automation_json = match fetch_full_automation_json(&mut *tx, automation_id).await {
+                    Ok(json) => json,
+                    Err(e) => {
+                        tracing::error!(
+                            worker_id = worker.id,
+                            automation_id = automation_id,
+                            "Failed to fetch automation json payload: {}",
+                            e
+                        );
+                        let _ = tx.rollback().await;
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse {
+                                error: "Failed to load automation details".to_string(),
+                            }),
+                        )
+                            .into_response();
+                    }
+                };
+
+                let update_res = sqlx::query(
+                    r#"
+                    UPDATE task_runs
+                    SET status = 'running',
+                        worker_id = $1,
+                        started_at = now(),
+                        dispatched_automation_json = $2
+                    WHERE id = $3
+                    "#,
+                )
+                .bind(worker.id)
+                .bind(&automation_json)
+                .bind(task_run_id)
+                .execute(&mut *tx)
+                .await;
+
+                if let Err(e) = update_res {
                     tracing::error!(
                         worker_id = worker.id,
-                        automation_id = automation_id,
-                        "Failed to fetch automation json payload: {}",
+                        task_run_id = task_run_id,
+                        "Failed to update task run status to running: {}",
                         e
                     );
                     let _ = tx.rollback().await;
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
-                            error: "Failed to load automation details".to_string(),
+                            error: "Failed to claim task run".to_string(),
                         }),
                     )
                         .into_response();
                 }
-            };
 
-            let update_res = sqlx::query(
-                r#"
-                UPDATE task_runs
-                SET status = 'running',
-                    worker_id = $1,
-                    started_at = now(),
-                    dispatched_automation_json = $2
-                WHERE id = $3
-                "#,
-            )
-            .bind(worker.id)
-            .bind(&automation_json)
-            .bind(task_run_id)
-            .execute(&mut *tx)
-            .await;
+                if let Err(e) = tx.commit().await {
+                    tracing::error!(
+                        worker_id = worker.id,
+                        task_run_id = task_run_id,
+                        "Failed to commit transaction claiming task run: {}",
+                        e
+                    );
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "Failed to commit task run claim".to_string(),
+                        }),
+                    )
+                        .into_response();
+                }
 
-            if let Err(e) = update_res {
-                tracing::error!(
+                tracing::info!(
                     worker_id = worker.id,
                     task_run_id = task_run_id,
-                    "Failed to update task run status to running: {}",
-                    e
+                    automation_id = automation_id,
+                    "Claimed queued task run for worker"
                 );
+
+                return (
+                    StatusCode::OK,
+                    Json(NextAssignmentResponse::ExecuteAutomation {
+                        task_run_id,
+                        automation: automation_json,
+                    }),
+                )
+                    .into_response();
+            }
+            Ok(None) => {
+                let _ = tx.commit().await;
+                // No assignment available; check if long polling timeout reached or wait for notification
+                let elapsed = start_time.elapsed();
+                if elapsed >= timeout_duration {
+                    return (StatusCode::OK, Json(NextAssignmentResponse::None)).into_response();
+                }
+
+                let remaining = timeout_duration - elapsed;
+                tokio::select! {
+                    _ = rx_notify.recv() => {},
+                    _ = tokio::time::sleep(remaining) => {},
+                }
+            }
+            Err(e) => {
+                tracing::error!(worker_id = worker.id, "Error fetching next task run assignment: {}", e);
                 let _ = tx.rollback().await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ErrorResponse {
-                        error: "Failed to claim task run".to_string(),
+                        error: "Database error querying next assignment".to_string(),
                     }),
                 )
                     .into_response();
             }
-
-            if let Err(e) = tx.commit().await {
-                tracing::error!(
-                    worker_id = worker.id,
-                    task_run_id = task_run_id,
-                    "Failed to commit transaction claiming task run: {}",
-                    e
-                );
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to commit task run claim".to_string(),
-                    }),
-                )
-                    .into_response();
-            }
-
-            tracing::info!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                automation_id = automation_id,
-                "Claimed queued task run for worker"
-            );
-
-            (
-                StatusCode::OK,
-                Json(NextAssignmentResponse::ExecuteAutomation {
-                    task_run_id,
-                    automation: automation_json,
-                }),
-            )
-                .into_response()
-        }
-        Ok(None) => {
-            let _ = tx.commit().await;
-            (StatusCode::OK, Json(NextAssignmentResponse::None)).into_response()
-        }
-        Err(e) => {
-            tracing::error!(worker_id = worker.id, "Error fetching next task run assignment: {}", e);
-            let _ = tx.rollback().await;
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error querying next assignment".to_string(),
-                }),
-            )
-                .into_response()
         }
     }
 }

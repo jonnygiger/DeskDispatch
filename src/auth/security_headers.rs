@@ -82,6 +82,9 @@ mod tests {
             worker_poll_interval_secs: 5,
             worker_heartbeat_interval_secs: 15,
             trust_proxy_headers: false,
+            database_max_connections: 20,
+            database_acquire_timeout_secs: 5,
+            worker_long_poll_timeout_secs: 10,
         };
 
         let pool = sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/deskdispatch").unwrap();
@@ -98,12 +101,14 @@ mod tests {
             .region(aws_sdk_s3::config::Region::new("us-east-1"))
             .build();
         let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+        let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
         AppState {
             db: pool,
             s3_client,
             config,
             rate_limiter: LoginRateLimiter::default(),
+            task_queue_notifier: tx_notify,
         }
     }
 

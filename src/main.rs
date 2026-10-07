@@ -75,12 +75,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_migrations(&pool).await?;
     let s3_client = build_s3_client(&config);
 
+    let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
+
     let state = AppState {
         db: pool,
         s3_client,
         config: config.clone(),
         rate_limiter: LoginRateLimiter::default(),
+        task_queue_notifier: tx_notify.clone(),
     };
+
+    // Spawn PgListener task for LISTEN/NOTIFY task_queue_changed
+    let listener_db_url = config.database_url.clone();
+    let listener_tx = tx_notify.clone();
+    tokio::spawn(async move {
+        loop {
+            match sqlx::postgres::PgListener::connect(&listener_db_url).await {
+                Ok(mut listener) => {
+                    if let Err(e) = listener.listen("task_queue_changed").await {
+                        error!("PgListener failed to listen on 'task_queue_changed': {}", e);
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                    info!("PgListener connected and listening on 'task_queue_changed'");
+                    loop {
+                        match listener.recv().await {
+                            Ok(_notification) => {
+                                let _ = listener_tx.send(());
+                            }
+                            Err(e) => {
+                                error!("PgListener recv error: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("PgListener connection error: {}", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+    });
 
     let db_pool = state.db.clone();
     tokio::spawn(async move {
@@ -214,7 +250,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn connect_db(config: &Config) -> Result<sqlx::PgPool, Box<dyn std::error::Error>> {
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(config.database_max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(config.database_acquire_timeout_secs))
         .connect(&config.database_url)
         .await
         .map_err(|e| {
