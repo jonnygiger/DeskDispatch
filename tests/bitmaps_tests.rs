@@ -66,6 +66,7 @@ async fn test_bitmaps_list_routes() {
         s3_client: s3_client.clone(),
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -199,6 +200,7 @@ async fn test_bitmap_upload_flow() {
         s3_client: s3_client.clone(),
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -356,6 +358,7 @@ async fn test_bitmap_deletion_flow() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -508,6 +511,7 @@ async fn test_region_picker_top_left_flow() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -583,6 +587,7 @@ async fn test_region_picker_confirm_crop_flow() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()

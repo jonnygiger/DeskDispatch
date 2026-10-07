@@ -50,7 +50,7 @@ pub async fn dev_magnifier_verify_handler(
 }
 
 /// GET /media/screenshots/{id}
-/// Generates a presigned GET URL for a step screenshot and issues a 302 Found redirect.
+/// Generates a presigned GET URL for a step screenshot and issues a 302 Found redirect with Cache-Control headers.
 #[tracing::instrument(skip(state, _user))]
 pub async fn get_media_screenshot_handler(
     State(state): State<AppState>,
@@ -72,7 +72,10 @@ pub async fn get_media_screenshot_handler(
             {
                 Ok(presigned_url) => (
                     StatusCode::FOUND,
-                    [(header::LOCATION, presigned_url)],
+                    [
+                        (header::LOCATION, presigned_url),
+                        (header::CACHE_CONTROL, "private, max-age=300".to_string()),
+                    ],
                 )
                     .into_response(),
                 Err(err) => {
@@ -90,7 +93,7 @@ pub async fn get_media_screenshot_handler(
 }
 
 /// GET /media/bitmaps/{id}
-/// Generates a presigned GET URL for a bitmap reference image and issues a 302 Found redirect.
+/// Generates a presigned GET URL for a bitmap reference image and issues a 302 Found redirect with Cache-Control headers.
 #[tracing::instrument(skip(state, _user))]
 pub async fn get_media_bitmap_handler(
     State(state): State<AppState>,
@@ -112,7 +115,10 @@ pub async fn get_media_bitmap_handler(
             {
                 Ok(presigned_url) => (
                     StatusCode::FOUND,
-                    [(header::LOCATION, presigned_url)],
+                    [
+                        (header::LOCATION, presigned_url),
+                        (header::CACHE_CONTROL, "private, max-age=300".to_string()),
+                    ],
                 )
                     .into_response(),
                 Err(err) => {

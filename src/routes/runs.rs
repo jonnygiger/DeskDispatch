@@ -226,6 +226,15 @@ pub struct RunDetailTemplate {
     pub auto_refresh: bool,
 }
 
+#[derive(Template)]
+#[template(path = "runs/status_frame.html")]
+pub struct RunStatusFrameTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub run: TaskRunListItem,
+    pub auto_refresh: bool,
+}
+
 #[tracing::instrument(skip(state, user))]
 pub async fn get_runs_handler(
     State(state): State<AppState>,
@@ -351,6 +360,73 @@ pub async fn get_runs_handler(
         next_id,
         has_next_page,
     })
+}
+
+#[tracing::instrument(skip(state, user))]
+pub async fn get_run_status_frame_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+
+    let run_row = match sqlx::query(
+        r#"
+        SELECT
+            tr.id,
+            tr.automation_id,
+            a.name AS automation_name,
+            tr.schedule_id,
+            s.name AS schedule_name,
+            tr.worker_id,
+            w.display_name AS worker_name,
+            tr.status,
+            COALESCE(u.display_name, u.username, s.name, 'Manual') AS triggered_by,
+            tr.queued_at,
+            tr.started_at,
+            tr.completed_at,
+            tr.error_message
+        FROM task_runs tr
+        JOIN automations a ON tr.automation_id = a.id
+        LEFT JOIN schedules s ON tr.schedule_id = s.id
+        LEFT JOIN task_worker_pcs w ON tr.worker_id = w.id
+        LEFT JOIN users u ON tr.triggered_by_user_id = u.id
+        WHERE tr.id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(Some(row)) => row,
+        _ => return (StatusCode::NOT_FOUND, "Task run not found").into_response(),
+    };
+
+    let run_item = TaskRunListItem {
+        id: run_row.get("id"),
+        automation_id: run_row.get("automation_id"),
+        automation_name: run_row.get("automation_name"),
+        schedule_id: run_row.get("schedule_id"),
+        schedule_name: run_row.get("schedule_name"),
+        worker_id: run_row.get("worker_id"),
+        worker_name: run_row.get("worker_name"),
+        status: run_row.get("status"),
+        triggered_by: run_row.get("triggered_by"),
+        queued_at: run_row.get("queued_at"),
+        started_at: run_row.get("started_at"),
+        completed_at: run_row.get("completed_at"),
+        error_message: run_row.get("error_message"),
+    };
+
+    let auto_refresh = run_item.status == "queued" || run_item.status == "running" || run_item.status == "cancelling";
+
+    HtmlTemplate(RunStatusFrameTemplate {
+        user,
+        csrf_token,
+        run: run_item,
+        auto_refresh,
+    })
+    .into_response()
 }
 
 #[tracing::instrument(skip(state, user))]

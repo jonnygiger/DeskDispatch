@@ -260,6 +260,7 @@ async fn test_admin_workers_crud_and_rbac() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()

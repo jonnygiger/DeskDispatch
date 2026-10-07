@@ -23,6 +23,7 @@ serde_urlencoded = "0.7"
 sqlx = { version = "0.9", features = ["postgres", "runtime-tokio", "tls-rustls", "macros", "uuid", "chrono"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "compression-deflate", "compression-br"] }
 mime_guess = "2.0"
 rust-embed = "8.12"
 secrecy = "0.8"

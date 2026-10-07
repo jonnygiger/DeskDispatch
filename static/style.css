@@ -350,6 +350,9 @@ body {
 .shot--grid {
     width: 320px;
     height: 320px;
+    background-image: repeating-linear-gradient(to right, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), repeating-linear-gradient(to bottom, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), var(--grid-bg-url);
+    background-size: 20px 20px, 20px 20px, var(--grid-bg-w, 100%) var(--grid-bg-h, 100%);
+    background-position: 0 0, 0 0, var(--grid-pan-x, 0px) var(--grid-pan-y, 0px);
 }
 
 .marker {
