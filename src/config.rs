@@ -18,6 +18,9 @@ pub struct Config {
     pub worker_poll_interval_secs: u64,
     pub worker_heartbeat_interval_secs: u64,
     pub trust_proxy_headers: bool,
+    pub database_max_connections: u32,
+    pub database_acquire_timeout_secs: u64,
+    pub worker_long_poll_timeout_secs: u64,
 }
 
 impl Config {
@@ -77,6 +80,21 @@ impl Config {
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
             .unwrap_or(false);
 
+        let database_max_connections = env::var("DATABASE_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20);
+
+        let database_acquire_timeout_secs = env::var("DATABASE_ACQUIRE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+
+        let worker_long_poll_timeout_secs = env::var("WORKER_LONG_POLL_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+
         let config = Self {
             database_url,
             public_base_url,
@@ -93,6 +111,9 @@ impl Config {
             worker_poll_interval_secs,
             worker_heartbeat_interval_secs,
             trust_proxy_headers,
+            database_max_connections,
+            database_acquire_timeout_secs,
+            worker_long_poll_timeout_secs,
         };
 
         config.validate()?;
@@ -151,6 +172,9 @@ mod tests {
             worker_poll_interval_secs: 5,
             worker_heartbeat_interval_secs: 15,
             trust_proxy_headers: false,
+            database_max_connections: 20,
+            database_acquire_timeout_secs: 5,
+            worker_long_poll_timeout_secs: 10,
         }
     }
 

@@ -350,6 +350,9 @@ fn main() {
         filter_automation_id: None,
         filter_worker_id: None,
         filter_status: None,
+        next_queued_at: None,
+        next_id: None,
+        has_next_page: false,
     };
     fs::write("rendered_templates/runs_list.html", runs_list_tmpl.render().unwrap()).unwrap();
 
