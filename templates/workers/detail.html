@@ -101,7 +101,7 @@
 
             {% if let Some(token) = worker.registration_token.as_deref() %}
             <dt style="font-weight: 600; color: var(--color-text-muted);">Registration Token:</dt>
-            <dd style="margin: 0;"><code>{{ token }}</code> (pending activation)</dd>
+            <dd style="margin: 0;"><code>{{ token }}</code>{% if !token.contains("Pending") %} (pending activation){% endif %}</dd>
             {% endif %}
         </dl>
     </div>

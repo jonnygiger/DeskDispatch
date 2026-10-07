@@ -8,8 +8,23 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::FromRow;
+use uuid::Uuid;
 
 use crate::AppState;
+
+pub fn generate_worker_api_key() -> String {
+    format!("dd_pk_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+pub fn generate_registration_token() -> String {
+    format!("dd_reg_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+pub fn hash_token(token: &str) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    hasher.finalize().to_vec()
+}
 
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct AuthWorker {
@@ -77,11 +92,9 @@ impl FromRequestParts<AppState> for AuthWorker {
         }
 
         // Compute SHA-256 hash of the bearer API key
-        let mut hasher = Sha256::new();
-        hasher.update(api_key.as_bytes());
-        let api_key_hash: Vec<u8> = hasher.finalize().to_vec();
+        let api_key_hash = hash_token(api_key);
 
-        // Perform SHA-256 hash lookup in task_worker_pcs table
+        // Perform SHA-256 hash lookup in task_worker_pcs table (supporting current key or non-expired previous key during rotation)
         let worker = sqlx::query_as::<_, AuthWorker>(
             r#"
             SELECT
@@ -89,6 +102,7 @@ impl FromRequestParts<AppState> for AuthWorker {
                 screen_width, screen_height, os_info, agent_version, created_at
             FROM task_worker_pcs
             WHERE api_key_hash = $1
+               OR (previous_api_key_hash = $1 AND previous_api_key_expires_at > now())
             "#,
         )
         .bind(&api_key_hash)

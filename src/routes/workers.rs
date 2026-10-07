@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
@@ -9,6 +9,7 @@ use serde::Deserialize;
 use sqlx::{FromRow, Row};
 
 use super::auth::HtmlTemplate;
+use crate::auth::worker::{generate_registration_token, hash_token};
 use crate::auth::{log_audit, CsrfForm, RequireAdmin};
 use crate::AppState;
 
@@ -68,15 +69,18 @@ pub async fn post_deactivate_worker_handler(
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let empty_api_key_hash: Vec<u8> = Vec::new();
     let result = sqlx::query(
         r#"
         UPDATE task_worker_pcs
-        SET status = 'offline', api_key_hash = $1, registration_token = NULL
-        WHERE id = $2
+        SET status = 'offline',
+            api_key_hash = NULL,
+            previous_api_key_hash = NULL,
+            previous_api_key_expires_at = NULL,
+            registration_token_hash = NULL,
+            registration_token_expires_at = NULL
+        WHERE id = $1
         "#,
     )
-    .bind(&empty_api_key_hash)
     .bind(id)
     .execute(&state.db)
     .await;
@@ -110,18 +114,25 @@ pub async fn post_rotate_worker_key_handler(
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let new_token = uuid::Uuid::new_v4().to_string();
-    let empty_api_key_hash: Vec<u8> = Vec::new();
+    let new_token = generate_registration_token();
+    let token_hash = hash_token(&new_token);
 
     let result = sqlx::query(
         r#"
         UPDATE task_worker_pcs
-        SET status = 'offline', api_key_hash = $1, registration_token = $2
-        WHERE id = $3
+        SET status = 'offline',
+            previous_api_key_hash = COALESCE(api_key_hash, previous_api_key_hash),
+            previous_api_key_expires_at = CASE
+                WHEN api_key_hash IS NOT NULL THEN now() + INTERVAL '24 hours'
+                ELSE previous_api_key_expires_at
+            END,
+            api_key_hash = NULL,
+            registration_token_hash = $1,
+            registration_token_expires_at = now() + INTERVAL '24 hours'
+        WHERE id = $2
         "#,
     )
-    .bind(&empty_api_key_hash)
-    .bind(&new_token)
+    .bind(&token_hash)
     .bind(id)
     .execute(&state.db)
     .await;
@@ -138,11 +149,11 @@ pub async fn post_rotate_worker_key_handler(
                 "task_worker_pc",
                 Some(id),
                 Some(serde_json::json!({
-                    "registration_token": new_token,
+                    "action": "rotate_key",
                 })),
             )
             .await;
-            Redirect::to(&format!("/workers/{}", id)).into_response()
+            Redirect::to(&format!("/workers/{}?token={}", id, new_token)).into_response()
         }
         Err(e) => {
             tracing::error!("Failed to rotate worker key: {}", e);
@@ -330,6 +341,11 @@ pub struct WorkerSimple {
     pub id: i64,
     pub hostname: String,
     pub display_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkerDetailQuery {
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -521,20 +537,19 @@ pub async fn post_create_worker_handler(
         .into_response();
     }
 
-    let token = uuid::Uuid::new_v4().to_string();
-    let empty_api_key_hash: Vec<u8> = Vec::new();
+    let token = generate_registration_token();
+    let token_hash = hash_token(&token);
 
     let row = sqlx::query(
         r#"
-        INSERT INTO task_worker_pcs (hostname, display_name, api_key_hash, registration_token, status)
-        VALUES ($1, $2, $3, $4, 'offline')
+        INSERT INTO task_worker_pcs (hostname, display_name, api_key_hash, registration_token_hash, registration_token_expires_at, status)
+        VALUES ($1, $2, NULL, $3, now() + INTERVAL '24 hours', 'offline')
         RETURNING id
         "#,
     )
     .bind(hostname)
     .bind(display_name)
-    .bind(&empty_api_key_hash)
-    .bind(&token)
+    .bind(&token_hash)
     .fetch_one(&state.db)
     .await;
 
@@ -561,12 +576,11 @@ pub async fn post_create_worker_handler(
         Some(serde_json::json!({
             "hostname": hostname,
             "display_name": display_name,
-            "registration_token": token,
         })),
     )
     .await;
 
-    Redirect::to(&format!("/workers/{}", worker_id)).into_response()
+    Redirect::to(&format!("/workers/{}?token={}", worker_id, token)).into_response()
 }
 
 #[tracing::instrument(skip(state, user))]
@@ -587,7 +601,11 @@ pub async fn get_workers_handler(
             w.os_info,
             w.agent_version,
             w.created_at,
-            w.registration_token
+            CASE
+                WHEN w.registration_token_expires_at > now() AND w.registration_token_hash IS NOT NULL
+                THEN '[Pending activation]'
+                ELSE NULL
+            END AS registration_token
         FROM task_worker_pcs w
         ORDER BY w.display_name ASC, w.id ASC
         "#,
@@ -714,6 +732,7 @@ pub async fn get_workers_handler(
 pub async fn get_worker_detail_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<WorkerDetailQuery>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
     let row = match sqlx::query_as::<_, WorkerDetailRow>(
@@ -721,7 +740,12 @@ pub async fn get_worker_detail_handler(
         SELECT
             id, hostname, display_name, status, last_heartbeat_at,
             screen_width, screen_height, os_info, agent_version,
-            created_at, registration_token
+            created_at,
+            CASE
+                WHEN registration_token_expires_at > now() AND registration_token_hash IS NOT NULL
+                THEN '[Pending activation]'
+                ELSE NULL
+            END AS registration_token
         FROM task_worker_pcs
         WHERE id = $1
         "#,
@@ -754,6 +778,8 @@ pub async fn get_worker_detail_handler(
     .await
     .unwrap_or_default();
 
+    let display_token = query.token.or(row.registration_token);
+
     let worker = WorkerDetail {
         id: row.id,
         hostname: row.hostname,
@@ -766,7 +792,7 @@ pub async fn get_worker_detail_handler(
         agent_version: row.agent_version,
         created_at: row.created_at,
         groups,
-        registration_token: row.registration_token,
+        registration_token: display_token,
     };
 
     HtmlTemplate(WorkerDetailTemplate {
@@ -788,7 +814,12 @@ pub async fn get_edit_worker_handler(
         SELECT
             id, hostname, display_name, status, last_heartbeat_at,
             screen_width, screen_height, os_info, agent_version,
-            created_at, registration_token
+            created_at,
+            CASE
+                WHEN registration_token_expires_at > now() AND registration_token_hash IS NOT NULL
+                THEN '[Pending activation]'
+                ELSE NULL
+            END AS registration_token
         FROM task_worker_pcs
         WHERE id = $1
         "#,
