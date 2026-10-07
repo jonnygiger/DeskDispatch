@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    extract::{Form, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
@@ -8,7 +8,7 @@ use serde::Deserialize;
 use sqlx::{PgPool, Row};
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser};
+use crate::auth::{log_audit, AuthUser, CsrfForm};
 use crate::de::deserialize_option_number;
 use crate::AppState;
 
@@ -627,7 +627,7 @@ pub async fn get_new_automation_handler(user: AuthUser) -> impl IntoResponse {
 pub async fn post_automations_handler(
     State(state): State<AppState>,
     user: AuthUser,
-    Form(form): Form<CreateAutomationForm>,
+    CsrfForm(form): CsrfForm<CreateAutomationForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -827,7 +827,7 @@ pub async fn post_create_automation_variable_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<VariableForm>,
+    CsrfForm(form): CsrfForm<VariableForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -961,7 +961,7 @@ pub async fn post_update_automation_variable_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, vid)): Path<(i64, i64)>,
-    Form(form): Form<VariableForm>,
+    CsrfForm(form): CsrfForm<VariableForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -1211,7 +1211,7 @@ pub async fn post_create_automation_parameter_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<ParameterForm>,
+    CsrfForm(form): CsrfForm<ParameterForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -1350,7 +1350,7 @@ pub async fn post_update_automation_parameter_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, pid)): Path<(i64, i64)>,
-    Form(form): Form<ParameterForm>,
+    CsrfForm(form): CsrfForm<ParameterForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -1885,7 +1885,7 @@ pub async fn post_automation_edit_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<EditAutomationForm>,
+    CsrfForm(form): CsrfForm<EditAutomationForm>,
 ) -> impl IntoResponse {
     if !user.role.can_edit() {
         return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -2021,7 +2021,7 @@ pub async fn post_run_now_automation_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<RunNowForm>,
+    CsrfForm(form): CsrfForm<RunNowForm>,
 ) -> impl IntoResponse {
     if !user.role.can_edit() {
         return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -2287,7 +2287,7 @@ pub async fn post_create_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<MouseClickStepForm>,
+    CsrfForm(form): CsrfForm<MouseClickStepForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -2348,7 +2348,7 @@ pub async fn post_create_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
 
         let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
             .bind(id)
@@ -2465,7 +2465,7 @@ pub async fn post_create_step_handler(
     }
 
     if step_type_str == "find_pixel_rgb" {
-        let (final_x, final_y) = (form.x, form.y);
+        let (final_x, final_y): (Option<i32>, Option<i32>) = (form.x, form.y);
 
         let variables = fetch_automation_variables(&state.db, id).await;
 
@@ -2514,7 +2514,7 @@ pub async fn post_create_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
 
         let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
             .bind(id)
@@ -2726,7 +2726,7 @@ pub async fn post_create_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
 
         let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
@@ -2895,7 +2895,7 @@ pub async fn post_create_step_handler(
         .to_string();
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
 
         let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
             .bind(id)
@@ -3003,7 +3003,7 @@ pub async fn post_create_step_handler(
     }
 
     let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-    let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+    let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
 
     let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
         .bind(id)
@@ -3396,7 +3396,7 @@ pub async fn post_edit_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, sid)): Path<(i64, i64)>,
-    Form(form): Form<MouseClickStepForm>,
+    CsrfForm(form): CsrfForm<MouseClickStepForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -3466,7 +3466,7 @@ pub async fn post_edit_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
 
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
@@ -3561,7 +3561,7 @@ pub async fn post_edit_step_handler(
     }
 
     if step_type == "find_pixel_rgb" {
-        let (final_x, final_y) = (form.x, form.y);
+        let (final_x, final_y): (Option<i32>, Option<i32>) = (form.x, form.y);
 
         let variables = fetch_automation_variables(&state.db, id).await;
 
@@ -3610,7 +3610,7 @@ pub async fn post_edit_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
 
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
@@ -3793,7 +3793,7 @@ pub async fn post_edit_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
 
         let mut tx = match state.db.begin().await {
@@ -3931,7 +3931,7 @@ pub async fn post_edit_step_handler(
         .to_string();
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
 
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
@@ -4010,7 +4010,7 @@ pub async fn post_edit_step_handler(
     }
 
     let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-    let label = form.label.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+    let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
 
     let mut tx = match state.db.begin().await {
         Ok(tx) => tx,

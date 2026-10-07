@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    extract::{Form, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
@@ -8,7 +8,7 @@ use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser};
+use crate::auth::{log_audit, AuthUser, CsrfForm};
 use crate::magnifier::ImageMagnifier;
 use crate::AppState;
 
@@ -522,18 +522,15 @@ pub async fn get_run_detail_handler(
     .into_response()
 }
 
-#[tracing::instrument(skip(state, user, form))]
+#[tracing::instrument(skip(state, user, _form))]
 pub async fn post_cancel_run_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<CancelRunForm>,
+    CsrfForm(_form): CsrfForm<CancelRunForm>,
 ) -> Response {
     if !user.role.can_edit() {
         return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot cancel task runs").into_response();
-    }
-    if form.csrf_token != user.csrf_token {
-        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
 
     let update_res = sqlx::query(

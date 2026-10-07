@@ -104,11 +104,16 @@ fn test_login_rate_limiter() {
 #[test]
 fn test_session_cookie_formatting() {
     let session_id = Uuid::new_v4();
-    let cookie = create_session_cookie(session_id);
-    assert!(cookie.contains(&format!("session_id={}", session_id)));
+    let cookie = create_session_cookie(session_id, true);
+    assert!(cookie.contains(&format!("__Host-session_id={}", session_id)));
     assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("Secure"));
     assert!(cookie.contains("SameSite=Lax"));
-    assert!(cookie.contains("Max-Age=86400"));
+    assert!(cookie.contains("Max-Age=604800"));
+
+    let insecure_cookie = create_session_cookie(session_id, false);
+    assert!(insecure_cookie.contains(&format!("session_id={}", session_id)));
+    assert!(!insecure_cookie.contains("__Host-"));
 
     let clear_cookie = clear_session_cookie();
     assert!(clear_cookie.contains("session_id="));
