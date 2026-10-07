@@ -775,17 +775,19 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     let branch_step_id: i64 = sqlx::Row::get(&steps_all[2], "id");
 
     // Verify foreign keys in step_branches
-    let branch_row = sqlx::query("SELECT condition_type, on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1")
+    let branch_row = sqlx::query("SELECT condition_type, automation_id, on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1")
         .bind(branch_step_id)
         .fetch_one(&pool)
         .await
         .unwrap();
 
     let cond_type: String = sqlx::Row::get(&branch_row, "condition_type");
+    let branch_auto_id: i64 = sqlx::Row::get(&branch_row, "automation_id");
     let match_target: Option<i64> = sqlx::Row::get(&branch_row, "on_match_step_id");
     let no_match_target: Option<i64> = sqlx::Row::get(&branch_row, "on_no_match_step_id");
 
     assert_eq!(cond_type, "pixel_rgb");
+    assert_eq!(branch_auto_id, automation_id);
     assert_eq!(match_target, Some(step1_id));
     assert_eq!(no_match_target, Some(step2_id));
 
