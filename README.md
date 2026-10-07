@@ -29,6 +29,7 @@ DeskDispatch is a high-performance, zero-JavaScript task server for managing and
   - [Minimum Worker Agent Version Enforcement](#minimum-worker-agent-version-enforcement)
   - [Execution & Concurrent Dispatch Engine](#execution--concurrent-dispatch-engine)
   - [Stalled Execution Sweeper & Timeout Recovery](#stalled-execution-sweeper--timeout-recovery)
+  - [Automated Data Retention & Storage Maintenance](#automated-data-retention--storage-maintenance)
   - [Runs & Execution History UI](#runs--execution-history-ui)
   - [Worker Screenshots & Execution Capture](#worker-screenshots--execution-capture)
   - [Recording Session Capture & Conversion Engine](#recording-session-capture--conversion-engine)
@@ -372,6 +373,9 @@ Manual runs triggered via `POST /automations/{id}/run-now` queue a new entry in 
 
 ### Stalled Execution Sweeper & Timeout Recovery
 The server background scheduler runs a periodic task every 30 seconds (`sweep_stalled_task_runs`) that checks for active task runs assigned to disconnected worker machines. If a worker assigned to a `running` task run fails to submit a heartbeat within 90 seconds, the task server automatically transitions the task run to `lost` status with a recorded error message. This background recovery loop guarantees that task runs do not remain stuck in an active state indefinitely if a worker PC experiences a power failure, network crash, or agent process exit.
+
+### Automated Data Retention & Storage Maintenance
+To prevent database bloat and storage resource exhaustion, the task server executes an hourly background maintenance service that enforces configurable data retention policies. The service automatically prunes expired user sessions (`SESSION_RETENTION_DAYS`, default 7 days), historical audit log entries (`AUDIT_LOG_RETENTION_DAYS`, default 90 days), and completed task run step logs (`TASK_RUN_STEP_RETENTION_DAYS`, default 30 days). For binary assets, step execution screenshots older than `SCREENSHOT_RETENTION_DAYS` (default 30 days) are deleted from the database before removing their corresponding S3 storage objects. Furthermore, the sweeper cleans up abandoned temporary uploads in S3 (`tmp/` prefix older than 24 hours) and performs orphan garbage collection to remove unreferenced S3 objects from `bitmaps/` and `screenshots/` storage paths.
 
 ### Runs & Execution History UI
 Filterable task execution history interface (`GET /runs`) with support for filtering by automation, worker, status, and date. Step-by-step detail view (`GET /runs/{id}`) utilizing the three-panel CSS magnifier component to display step execution status, captured runtime variables, and runtime screenshots. Editors/admins can request run cancellation (`POST /runs/{id}/cancel`), which flags the run and notifies the executing worker machine upon its next heartbeat.
