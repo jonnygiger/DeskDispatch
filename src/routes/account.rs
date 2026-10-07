@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    extract::{Form, State},
+    extract::State,
     http::StatusCode,
     response::IntoResponse,
 };
@@ -8,7 +8,10 @@ use serde::Deserialize;
 use sqlx::Row;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{hash_password_async, log_audit, verify_password_async, AuthUser};
+use crate::auth::{
+    hash_password_async, log_audit, revoke_user_sessions_except, verify_password_async, AuthUser,
+    CsrfForm,
+};
 use crate::AppState;
 
 #[derive(Template)]
@@ -39,7 +42,7 @@ pub async fn get_password_handler(user: AuthUser) -> impl IntoResponse {
 pub async fn post_password_handler(
     State(state): State<AppState>,
     user: AuthUser,
-    Form(form): Form<PasswordForm>,
+    CsrfForm(form): CsrfForm<PasswordForm>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -171,6 +174,10 @@ pub async fn post_password_handler(
             }),
         )
             .into_response();
+    }
+
+    if let Err(e) = revoke_user_sessions_except(&state.db, user.id, user.session_id).await {
+        tracing::error!("Failed to revoke other sessions on password change: {}", e);
     }
 
     let _ = log_audit(

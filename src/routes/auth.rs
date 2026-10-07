@@ -199,7 +199,8 @@ pub async fn post_login_handler(
     )
     .await;
 
-    let cookie = create_session_cookie(session_id);
+    let is_secure = state.config.is_production() || state.config.public_base_url.starts_with("https://");
+    let cookie = create_session_cookie(session_id, is_secure);
     (
         StatusCode::SEE_OTHER,
         [(header::SET_COOKIE, cookie), (header::LOCATION, "/".to_string())],

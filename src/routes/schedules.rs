@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    extract::{Form, Path, State},
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
@@ -11,7 +11,7 @@ use sqlx::{FromRow, Row};
 use std::str::FromStr;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser, RequireEditor};
+use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
 use crate::AppState;
 
 #[derive(Debug, Clone)]
@@ -267,7 +267,7 @@ pub async fn get_new_schedule_handler(
 pub async fn post_create_schedule_handler(
     State(state): State<AppState>,
     RequireEditor(user): RequireEditor,
-    Form(form): Form<ScheduleForm>,
+    CsrfForm(form): CsrfForm<ScheduleForm>,
 ) -> impl IntoResponse {
     let name = form.name.trim();
     let cron_expression = form.cron_expression.trim();
@@ -447,7 +447,7 @@ pub async fn post_edit_schedule_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
-    Form(form): Form<ScheduleForm>,
+    CsrfForm(form): CsrfForm<ScheduleForm>,
 ) -> impl IntoResponse {
     let name = form.name.trim();
     let cron_expression = form.cron_expression.trim();

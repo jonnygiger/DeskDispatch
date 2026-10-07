@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    extract::{Form, Path, State},
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
@@ -10,7 +10,7 @@ use sqlx::Row;
 
 use super::auth::HtmlTemplate;
 use super::workers::WorkerDetail;
-use crate::auth::{log_audit, AuthUser, RequireEditor};
+use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
 use crate::magnifier::ImageMagnifier;
 use crate::AppState;
 
@@ -463,7 +463,7 @@ pub async fn post_recording_convert_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
-    Form(form): Form<ConvertRecordingForm>,
+    CsrfForm(form): CsrfForm<ConvertRecordingForm>,
 ) -> impl IntoResponse {
     let auto_name = form.automation_name.trim();
     if auto_name.is_empty() {

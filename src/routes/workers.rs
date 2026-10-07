@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    extract::{Form, Path, State},
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
@@ -9,7 +9,7 @@ use serde::Deserialize;
 use sqlx::{FromRow, Row};
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, RequireAdmin};
+use crate::auth::{log_audit, CsrfForm, RequireAdmin};
 use crate::AppState;
 
 #[derive(Debug, Clone)]
@@ -506,7 +506,7 @@ pub async fn get_new_worker_handler(
 pub async fn post_create_worker_handler(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
-    Form(form): Form<WorkerCreateForm>,
+    CsrfForm(form): CsrfForm<WorkerCreateForm>,
 ) -> impl IntoResponse {
     let hostname = form.hostname.trim();
     let display_name = form.display_name.trim();
@@ -861,7 +861,7 @@ pub async fn post_edit_worker_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
-    Form(form): Form<WorkerEditForm>,
+    CsrfForm(form): CsrfForm<WorkerEditForm>,
 ) -> impl IntoResponse {
     let hostname = form.hostname.trim();
     let display_name = form.display_name.trim();
@@ -1013,7 +1013,7 @@ pub async fn get_new_worker_group_handler(
 pub async fn post_create_worker_group_handler(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
-    Form(form): Form<WorkerGroupForm>,
+    CsrfForm(form): CsrfForm<WorkerGroupForm>,
 ) -> impl IntoResponse {
     let name = form.name.trim();
     let description = form.description.trim();
@@ -1160,7 +1160,7 @@ pub async fn post_edit_worker_group_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
-    Form(form): Form<WorkerGroupForm>,
+    CsrfForm(form): CsrfForm<WorkerGroupForm>,
 ) -> impl IntoResponse {
     let name = form.name.trim();
     let description = form.description.trim();

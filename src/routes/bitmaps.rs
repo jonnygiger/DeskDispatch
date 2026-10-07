@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    extract::{Form, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
@@ -8,7 +8,7 @@ use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser, UserRole};
+use crate::auth::{log_audit, AuthUser, CsrfForm, UserRole};
 use crate::de::deserialize_option_number;
 use crate::magnifier::ImageMagnifier;
 use crate::picker::{map_coarse_click_to_native, map_grid_click_to_native};
@@ -374,7 +374,7 @@ pub async fn get_automation_bitmaps_handler(
 pub async fn post_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
-    Form(form): Form<BitmapUploadForm>,
+    CsrfForm(form): CsrfForm<BitmapUploadForm>,
 ) -> Response {
     if user.role == UserRole::Viewer {
         return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
@@ -436,7 +436,7 @@ pub async fn post_automation_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<BitmapUploadForm>,
+    CsrfForm(form): CsrfForm<BitmapUploadForm>,
 ) -> Response {
     if user.role == UserRole::Viewer {
         return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
@@ -593,7 +593,7 @@ pub async fn get_bitmap_commit_handler(
 pub async fn post_bitmap_commit_handler(
     State(state): State<AppState>,
     user: AuthUser,
-    Form(form): Form<BitmapCommitForm>,
+    CsrfForm(form): CsrfForm<BitmapCommitForm>,
 ) -> Response {
     if !user.role.can_edit() {
         return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
@@ -772,7 +772,7 @@ pub async fn post_delete_bitmap_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<DeleteBitmapForm>,
+    CsrfForm(form): CsrfForm<DeleteBitmapForm>,
 ) -> Response {
     delete_bitmap_logic(&state, &user, id, &form.csrf_token, None).await
 }
@@ -784,7 +784,7 @@ pub async fn post_automation_delete_bitmap_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, bid)): Path<(i64, i64)>,
-    Form(form): Form<DeleteBitmapForm>,
+    CsrfForm(form): CsrfForm<DeleteBitmapForm>,
 ) -> Response {
     delete_bitmap_logic(&state, &user, bid, &form.csrf_token, Some(id)).await
 }
@@ -867,12 +867,8 @@ pub async fn get_automation_pick_region_handler(
 #[tracing::instrument(skip(user, form))]
 pub async fn post_pick_region_top_left_handler(
     user: AuthUser,
-    Form(form): Form<PickRegionTopLeftForm>,
+    CsrfForm(form): CsrfForm<PickRegionTopLeftForm>,
 ) -> Response {
-    if form.csrf_token != user.csrf_token {
-        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
-    }
-
     let (top_left_x, top_left_y) = map_coarse_click_to_native(
         form.x,
         form.y,
@@ -919,12 +915,8 @@ pub async fn post_pick_region_top_left_handler(
 pub async fn post_automation_pick_region_top_left_handler(
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(form): Form<PickRegionTopLeftForm>,
+    CsrfForm(form): CsrfForm<PickRegionTopLeftForm>,
 ) -> Response {
-    if form.csrf_token != user.csrf_token {
-        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
-    }
-
     let (top_left_x, top_left_y) = map_coarse_click_to_native(
         form.x,
         form.y,
@@ -970,12 +962,8 @@ pub async fn post_automation_pick_region_top_left_handler(
 #[tracing::instrument(skip(user, form))]
 pub async fn post_pick_region_bottom_right_handler(
     user: AuthUser,
-    Form(form): Form<PickRegionBottomRightForm>,
+    CsrfForm(form): CsrfForm<PickRegionBottomRightForm>,
 ) -> Response {
-    if form.csrf_token != user.csrf_token {
-        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
-    }
-
     let (raw_br_x, raw_br_y) = if let (Some(gx), Some(gy)) = (form.grid_x, form.grid_y) {
         map_grid_click_to_native(
             gx,
@@ -1040,10 +1028,10 @@ pub async fn post_pick_region_bottom_right_handler(
 pub async fn post_automation_pick_region_bottom_right_handler(
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(mut form): Form<PickRegionBottomRightForm>,
+    CsrfForm(mut form): CsrfForm<PickRegionBottomRightForm>,
 ) -> Response {
     form.automation_id = Some(id);
-    post_pick_region_bottom_right_handler(user, Form(form)).await
+    post_pick_region_bottom_right_handler(user, CsrfForm(form)).await
 }
 
 /// Helper to load source image bytes, crop to (tl_x, tl_y, crop_w, crop_h), and return PNG bytes.
@@ -1265,7 +1253,7 @@ pub async fn confirm_region_crop_logic(
 pub async fn post_pick_region_confirm_handler(
     State(state): State<AppState>,
     user: AuthUser,
-    Form(form): Form<PickRegionConfirmForm>,
+    CsrfForm(form): CsrfForm<PickRegionConfirmForm>,
 ) -> Response {
     confirm_region_crop_logic(&state, &user, form).await
 }
@@ -1276,7 +1264,7 @@ pub async fn post_automation_pick_region_confirm_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    Form(mut form): Form<PickRegionConfirmForm>,
+    CsrfForm(mut form): CsrfForm<PickRegionConfirmForm>,
 ) -> Response {
     form.automation_id = Some(id);
     confirm_region_crop_logic(&state, &user, form).await
