@@ -215,6 +215,13 @@ impl RunVariableValueItem {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RunParameterItem {
+    pub name: String,
+    pub value: String,
+    pub is_override: bool,
+}
+
 #[derive(Template)]
 #[template(path = "runs/detail.html")]
 pub struct RunDetailTemplate {
@@ -223,6 +230,7 @@ pub struct RunDetailTemplate {
     pub run: TaskRunListItem,
     pub steps: Vec<ExecutedStepItem>,
     pub variable_values: Vec<RunVariableValueItem>,
+    pub parameters: Vec<RunParameterItem>,
     pub auto_refresh: bool,
 }
 
@@ -385,7 +393,9 @@ pub async fn get_run_status_frame_handler(
             tr.queued_at,
             tr.started_at,
             tr.completed_at,
-            tr.error_message
+            tr.error_message,
+            tr.parameter_overrides,
+            tr.dispatched_automation_json
         FROM task_runs tr
         JOIN automations a ON tr.automation_id = a.id
         LEFT JOIN schedules s ON tr.schedule_id = s.id
@@ -614,12 +624,59 @@ pub async fn get_run_detail_handler(
         })
         .collect();
 
+    let parameter_overrides_json: Option<serde_json::Value> = run_row.get("parameter_overrides");
+    let dispatched_json: Option<serde_json::Value> = run_row.get("dispatched_automation_json");
+
+    let mut parameters = Vec::new();
+    let overrides_map = parameter_overrides_json.as_ref().and_then(|v| v.as_object());
+
+    if let Some(params_obj) = dispatched_json.as_ref().and_then(|j| j.get("parameters")).and_then(|p| p.as_object()) {
+        for (k, v) in params_obj {
+            let val_str = match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                _ => v.to_string(),
+            };
+            let is_override = overrides_map.map_or(false, |m| m.contains_key(k));
+            parameters.push(RunParameterItem {
+                name: k.clone(),
+                value: val_str,
+                is_override,
+            });
+        }
+    } else {
+        let param_rows = sqlx::query(
+            "SELECT name, default_value FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC",
+        )
+        .bind(run_item.automation_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        for p in param_rows {
+            let pname: String = p.get("name");
+            let default_val: String = p.get("default_value");
+            let (val_str, is_override) = if let Some(override_val) = overrides_map.and_then(|m| m.get(&pname)).and_then(|v| v.as_str()) {
+                (override_val.to_string(), true)
+            } else {
+                (default_val, false)
+            };
+            parameters.push(RunParameterItem {
+                name: pname,
+                value: val_str,
+                is_override,
+            });
+        }
+    }
+
     HtmlTemplate(RunDetailTemplate {
         user,
         csrf_token,
         run: run_item,
         steps: executed_steps,
         variable_values,
+        parameters,
         auto_refresh,
     })
     .into_response()

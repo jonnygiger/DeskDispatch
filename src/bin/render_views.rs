@@ -390,6 +390,7 @@ fn main() {
         run: sample_run_item,
         steps: vec![sample_exec_step],
         variable_values: vec![sample_var_val],
+        parameters: vec![],
         auto_refresh: false,
     };
     fs::write("rendered_templates/runs_detail.html", run_detail_tmpl.render().unwrap()).unwrap();

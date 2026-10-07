@@ -16,10 +16,6 @@
         </div>
         {% if user.role.can_edit() %}
         <div class="dashboard-actions" style="display: flex; gap: 0.5rem; align-items: center;">
-            <form method="post" action="/automations/{{ automation.id }}/run-now" style="display: inline;">
-                {% call macros::csrf_field(csrf_token) %}{% endcall %}
-                <button type="submit" class="btn btn-outline">Run Now</button>
-            </form>
             <a href="/automations/{{ automation.id }}/steps/new" class="btn btn-primary">+ New Step</a>
             <a href="/automations/{{ automation.id }}/delete" class="btn btn-danger-outline">Delete</a>
         </div>
@@ -32,6 +28,49 @@
 
 <!-- Sub-navigation -->
 {% call macros::automation_sub_nav(automation.id, "steps") %}{% endcall %}
+
+{% if user.role.can_edit() %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem;">Run Now (Manual Trigger)</h3>
+    <form method="post" action="/automations/{{ automation.id }}/run-now" onsubmit="let btn = this.querySelector('button[type=submit]'); btn.disabled = true; btn.innerText = 'Queuing...';" style="display: flex; flex-direction: column; gap: 1rem;">
+        {% call macros::csrf_field(csrf_token) %}{% endcall %}
+
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+            <div style="flex: 1; min-width: 200px;">
+                <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Target Worker Group</label>
+                <select name="worker_group_id" class="form-control" style="width: 100%;">
+                    <option value="">Any Worker Group</option>
+                    {% for group in worker_groups %}
+                        <option value="{{ group.id }}">{{ group.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <button type="submit" class="btn btn-primary">Run Now</button>
+            </div>
+        </div>
+
+        {% if !parameters.is_empty() %}
+        <div style="border-top: 1px solid var(--color-border); padding-top: 1rem; margin-top: 0.5rem;">
+            <h4 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">Parameter Overrides</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+                {% for param in parameters %}
+                <div>
+                    <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">
+                        {{ param.name }} <span style="font-weight: 400; color: var(--color-text-muted);">({{ param.param_type }})</span>
+                    </label>
+                    <input type="text" name="parameters[{{ param.name }}]" value="{{ param.default_value }}" class="form-control" style="width: 100%;">
+                    {% if !param.description.is_empty() %}
+                    <span style="font-size: 0.75rem; color: var(--color-text-muted); display: block; margin-top: 0.125rem;">{{ param.description }}</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </form>
+</div>
+{% endif %}
 
 {% if user.role.can_edit() %}
 <div class="card" style="margin-bottom: 1.5rem;">
