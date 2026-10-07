@@ -234,9 +234,13 @@ impl FromRequestParts<AppState> for RequireAdmin {
         if user.role.is_admin() {
             Ok(RequireAdmin(user))
         } else {
+            let body = crate::routes::errors::ForbiddenTemplate {
+                message: Some("Admin permission required".to_string()),
+                user: Some(user),
+            };
             Err((
                 StatusCode::FORBIDDEN,
-                "Forbidden: Admin permission required",
+                crate::routes::auth::HtmlTemplate(body),
             )
                 .into_response())
         }
@@ -256,9 +260,13 @@ impl FromRequestParts<AppState> for RequireEditor {
         if user.role.can_edit() {
             Ok(RequireEditor(user))
         } else {
+            let body = crate::routes::errors::ForbiddenTemplate {
+                message: Some("Editor or Admin permission required".to_string()),
+                user: Some(user),
+            };
             Err((
                 StatusCode::FORBIDDEN,
-                "Forbidden: Editor permission required",
+                crate::routes::auth::HtmlTemplate(body),
             )
                 .into_response())
         }

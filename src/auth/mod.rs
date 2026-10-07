@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod csrf;
+pub mod flash;
 pub mod rate_limit;
 pub mod security_headers;
 pub mod session;
@@ -7,6 +8,9 @@ pub mod user;
 pub mod worker;
 
 pub use audit::log_audit;
+pub use flash::{
+    build_flash_cookie, clear_flash_cookie, extract_flash_message, FlashLevel, FlashMessage,
+};
 pub use csrf::{csrf_middleware, generate_csrf_token, validate_csrf_token, CsrfForm};
 pub use security_headers::security_headers_middleware;
 pub use rate_limit::LoginRateLimiter;

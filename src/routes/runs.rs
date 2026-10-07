@@ -8,7 +8,7 @@ use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser, CsrfForm};
+use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
 use crate::magnifier::ImageMagnifier;
 use crate::AppState;
 
@@ -628,13 +628,10 @@ pub async fn get_run_detail_handler(
 #[tracing::instrument(skip(state, user, _form))]
 pub async fn post_cancel_run_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     Path(id): Path<i64>,
     CsrfForm(_form): CsrfForm<CancelRunForm>,
 ) -> Response {
-    if !user.role.can_edit() {
-        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot cancel task runs").into_response();
-    }
 
     let update_res = sqlx::query(
         r#"
