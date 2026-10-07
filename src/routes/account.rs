@@ -1,7 +1,3 @@
-use argon2::{
-    password_hash::phc::PasswordHash,
-    Argon2, PasswordHasher, PasswordVerifier,
-};
 use askama::Template;
 use axum::{
     extract::{Form, State},
@@ -12,7 +8,7 @@ use serde::Deserialize;
 use sqlx::Row;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser};
+use crate::auth::{hash_password_async, log_audit, verify_password_async, AuthUser};
 use crate::AppState;
 
 #[derive(Template)]
@@ -104,10 +100,16 @@ pub async fn post_password_handler(
 
     let password_hash: String = user_row.get("password_hash");
 
-    let parsed_hash = match PasswordHash::new(&password_hash) {
-        Ok(h) => h,
+    let is_current_valid = match verify_password_async(
+        state.rate_limiter.argon2_semaphore.clone(),
+        form.current_password,
+        password_hash,
+    )
+    .await
+    {
+        Ok(valid) => valid,
         Err(e) => {
-            tracing::error!("Invalid stored password hash: {}", e);
+            tracing::error!("Password verification error: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 HtmlTemplate(AccountPasswordTemplate {
@@ -120,10 +122,7 @@ pub async fn post_password_handler(
         }
     };
 
-    if Argon2::default()
-        .verify_password(form.current_password.as_bytes(), &parsed_hash)
-        .is_err()
-    {
+    if !is_current_valid {
         return (
             StatusCode::UNAUTHORIZED,
             HtmlTemplate(AccountPasswordTemplate {
@@ -135,8 +134,13 @@ pub async fn post_password_handler(
             .into_response();
     }
 
-    let new_password_hash = match Argon2::default().hash_password(form.new_password.as_bytes()) {
-        Ok(h) => h.to_string(),
+    let new_password_hash = match hash_password_async(
+        state.rate_limiter.argon2_semaphore.clone(),
+        form.new_password,
+    )
+    .await
+    {
+        Ok(h) => h,
         Err(e) => {
             tracing::error!("Password hashing error: {}", e);
             return (

@@ -1,20 +1,16 @@
-use argon2::{
-    password_hash::phc::PasswordHash,
-    Argon2, PasswordVerifier,
-};
 use askama::Template;
 use axum::{
-    extract::{Form, State},
+    extract::{ConnectInfo, Form, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
 };
 use serde::Deserialize;
 use sqlx::Row;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use crate::auth::{
     clear_session_cookie, create_session, create_session_cookie, delete_session, log_audit,
-    session::extract_session_id, OptionalAuthUser,
+    session::extract_session_id, verify_password_async, OptionalAuthUser,
 };
 use crate::AppState;
 
@@ -51,6 +47,9 @@ pub struct LoginForm {
     pub password: String,
 }
 
+const DUMMY_ARGON2_HASH: &str =
+    "$argon2id$v=19$m=19456,t=2,p=1$cG03OThscDRvYm9oMDAwMA$R3841R3841R3841R3841R3841R3841R3841R3841";
+
 struct UserRow {
     id: i64,
     password_hash: String,
@@ -64,11 +63,16 @@ pub async fn get_login_handler() -> impl IntoResponse {
 
 #[tracing::instrument(skip(headers, state, form))]
 pub async fn post_login_handler(
-    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
-    let client_ip = extract_client_ip(&headers);
+    let client_ip = extract_client_ip(
+        &headers,
+        Some(&addr),
+        state.config.trust_proxy_headers,
+    );
     let username_trim = form.username.trim();
 
     if let Err(rate_err) = state.rate_limiter.check_rate_limit(client_ip, username_trim) {
@@ -92,7 +96,7 @@ pub async fn post_login_handler(
     .fetch_optional(&state.db)
     .await;
 
-    let user = match user_res {
+    let user_opt = match user_res {
         Ok(Some(row)) => {
             let u = UserRow {
                 id: row.get("id"),
@@ -100,28 +104,12 @@ pub async fn post_login_handler(
                 is_active: row.get("is_active"),
             };
             if u.is_active {
-                u
+                Some(u)
             } else {
-                state.rate_limiter.record_failure(client_ip, username_trim);
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    HtmlTemplate(LoginTemplate {
-                        error: Some("Invalid username or password".to_string()),
-                    }),
-                )
-                    .into_response();
+                None
             }
         }
-        Ok(None) => {
-            state.rate_limiter.record_failure(client_ip, username_trim);
-            return (
-                StatusCode::UNAUTHORIZED,
-                HtmlTemplate(LoginTemplate {
-                    error: Some("Invalid username or password".to_string()),
-                }),
-            )
-                .into_response();
-        }
+        Ok(None) => None,
         Err(e) => {
             tracing::error!("Database error during login: {}", e);
             return (
@@ -134,10 +122,21 @@ pub async fn post_login_handler(
         }
     };
 
-    let parsed_hash = match PasswordHash::new(&user.password_hash) {
-        Ok(h) => h,
+    let (target_hash, real_user) = match user_opt {
+        Some(u) => (u.password_hash.clone(), Some(u)),
+        None => (DUMMY_ARGON2_HASH.to_string(), None),
+    };
+
+    let is_valid = match verify_password_async(
+        state.rate_limiter.argon2_semaphore.clone(),
+        form.password,
+        target_hash,
+    )
+    .await
+    {
+        Ok(valid) => valid,
         Err(e) => {
-            tracing::error!("Invalid password hash in database: {}", e);
+            tracing::error!("Password verification error: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 HtmlTemplate(LoginTemplate {
@@ -148,19 +147,19 @@ pub async fn post_login_handler(
         }
     };
 
-    if Argon2::default()
-        .verify_password(form.password.as_bytes(), &parsed_hash)
-        .is_err()
-    {
-        state.rate_limiter.record_failure(client_ip, username_trim);
-        return (
-            StatusCode::UNAUTHORIZED,
-            HtmlTemplate(LoginTemplate {
-                error: Some("Invalid username or password".to_string()),
-            }),
-        )
-            .into_response();
-    }
+    let user = match (is_valid, real_user) {
+        (true, Some(u)) => u,
+        _ => {
+            state.rate_limiter.record_failure(client_ip, username_trim);
+            return (
+                StatusCode::UNAUTHORIZED,
+                HtmlTemplate(LoginTemplate {
+                    error: Some("Invalid username or password".to_string()),
+                }),
+            )
+                .into_response();
+        }
+    };
 
     state.rate_limiter.clear(client_ip, username_trim);
 
@@ -235,19 +234,29 @@ pub async fn post_logout_handler(
         .into_response()
 }
 
-fn extract_client_ip(headers: &HeaderMap) -> IpAddr {
-    if let Some(forwarded) = headers.get("X-Forwarded-For").and_then(|h| h.to_str().ok()) {
-        if let Some(first_ip) = forwarded.split(',').next() {
-            if let Ok(ip) = first_ip.trim().parse() {
+pub fn extract_client_ip(
+    headers: &HeaderMap,
+    connect_info: Option<&SocketAddr>,
+    trust_proxy_headers: bool,
+) -> IpAddr {
+    if trust_proxy_headers {
+        if let Some(forwarded) = headers.get("X-Forwarded-For").and_then(|h| h.to_str().ok()) {
+            if let Some(first_ip) = forwarded.split(',').next() {
+                if let Ok(ip) = first_ip.trim().parse() {
+                    return ip;
+                }
+            }
+        }
+
+        if let Some(real_ip) = headers.get("X-Real-IP").and_then(|h| h.to_str().ok()) {
+            if let Ok(ip) = real_ip.trim().parse() {
                 return ip;
             }
         }
     }
 
-    if let Some(real_ip) = headers.get("X-Real-IP").and_then(|h| h.to_str().ok()) {
-        if let Ok(ip) = real_ip.trim().parse() {
-            return ip;
-        }
+    if let Some(addr) = connect_info {
+        return addr.ip();
     }
 
     "127.0.0.1".parse().unwrap()
@@ -261,10 +270,17 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_headers() {
-        // 1. Single IPv4 address in X-Forwarded-For
+        let conn_addr: SocketAddr = "10.0.0.5:12345".parse().unwrap();
+
+        // When trust_proxy_headers is false, headers are ignored
         let mut headers = HeaderMap::new();
         headers.insert("X-Forwarded-For", HeaderValue::from_static("203.0.113.195"));
-        let ip = extract_client_ip(&headers);
+        let ip = extract_client_ip(&headers, Some(&conn_addr), false);
+        assert_eq!(ip, conn_addr.ip());
+
+        // When trust_proxy_headers is true:
+        // 1. Single IPv4 address in X-Forwarded-For
+        let ip = extract_client_ip(&headers, Some(&conn_addr), true);
         assert_eq!(ip, "203.0.113.195".parse::<IpAddr>().unwrap());
 
         // 2. Multiple comma-separated IPs in X-Forwarded-For (client IP is first)
@@ -273,38 +289,38 @@ mod tests {
             "X-Forwarded-For",
             HeaderValue::from_static("198.51.100.1, 203.0.113.195, 70.41.3.18"),
         );
-        let ip = extract_client_ip(&headers);
+        let ip = extract_client_ip(&headers, None, true);
         assert_eq!(ip, "198.51.100.1".parse::<IpAddr>().unwrap());
 
         // 3. X-Forwarded-For takes precedence over X-Real-IP
         let mut headers = HeaderMap::new();
         headers.insert("X-Forwarded-For", HeaderValue::from_static("203.0.113.195"));
         headers.insert("X-Real-IP", HeaderValue::from_static("198.51.100.22"));
-        let ip = extract_client_ip(&headers);
+        let ip = extract_client_ip(&headers, None, true);
         assert_eq!(ip, "203.0.113.195".parse::<IpAddr>().unwrap());
 
         // 4. X-Real-IP fallback when X-Forwarded-For is missing
         let mut headers = HeaderMap::new();
         headers.insert("X-Real-IP", HeaderValue::from_static("198.51.100.22"));
-        let ip = extract_client_ip(&headers);
+        let ip = extract_client_ip(&headers, None, true);
         assert_eq!(ip, "198.51.100.22".parse::<IpAddr>().unwrap());
 
         // 5. IPv6 address parsing in X-Forwarded-For
         let mut headers = HeaderMap::new();
         headers.insert("X-Forwarded-For", HeaderValue::from_static("2001:db8::1"));
-        let ip = extract_client_ip(&headers);
+        let ip = extract_client_ip(&headers, None, true);
         assert_eq!(ip, "2001:db8::1".parse::<IpAddr>().unwrap());
 
         // 6. Invalid IP format in X-Forwarded-For falls back to valid X-Real-IP
         let mut headers = HeaderMap::new();
         headers.insert("X-Forwarded-For", HeaderValue::from_static("invalid_ip"));
         headers.insert("X-Real-IP", HeaderValue::from_static("198.51.100.22"));
-        let ip = extract_client_ip(&headers);
+        let ip = extract_client_ip(&headers, None, true);
         assert_eq!(ip, "198.51.100.22".parse::<IpAddr>().unwrap());
 
-        // 7. No headers present falls back to 127.0.0.1
+        // 7. No headers present falls back to connect_info or 127.0.0.1
         let headers = HeaderMap::new();
-        let ip = extract_client_ip(&headers);
+        let ip = extract_client_ip(&headers, None, false);
         assert_eq!(ip, "127.0.0.1".parse::<IpAddr>().unwrap());
     }
 }

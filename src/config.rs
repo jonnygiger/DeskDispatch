@@ -17,6 +17,7 @@ pub struct Config {
     pub min_agent_version: Option<String>,
     pub worker_poll_interval_secs: u64,
     pub worker_heartbeat_interval_secs: u64,
+    pub trust_proxy_headers: bool,
 }
 
 impl Config {
@@ -72,6 +73,10 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(15);
 
+        let trust_proxy_headers = env::var("TRUST_PROXY_HEADERS")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false);
+
         let config = Self {
             database_url,
             public_base_url,
@@ -87,6 +92,7 @@ impl Config {
             min_agent_version,
             worker_poll_interval_secs,
             worker_heartbeat_interval_secs,
+            trust_proxy_headers,
         };
 
         config.validate()?;
@@ -144,6 +150,7 @@ mod tests {
             min_agent_version: None,
             worker_poll_interval_secs: 5,
             worker_heartbeat_interval_secs: 15,
+            trust_proxy_headers: false,
         }
     }
 

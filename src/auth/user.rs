@@ -1,3 +1,7 @@
+use argon2::{
+    password_hash::phc::PasswordHash,
+    Argon2, PasswordHasher, PasswordVerifier,
+};
 use axum::{
     extract::FromRequestParts,
     http::{request::Parts, StatusCode},
@@ -7,9 +11,55 @@ use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use crate::AppState;
+
+pub async fn verify_password_async(
+    semaphore: Arc<Semaphore>,
+    password: String,
+    password_hash: String,
+) -> Result<bool, String> {
+    let permit = semaphore
+        .acquire_owned()
+        .await
+        .map_err(|e| format!("Failed to acquire argon2 semaphore permit: {}", e))?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let parsed_hash = match PasswordHash::new(&password_hash) {
+            Ok(h) => h,
+            Err(e) => return Err(format!("Invalid password hash format: {}", e)),
+        };
+        Ok(Argon2::default()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .is_ok())
+    })
+    .await
+    .map_err(|e| format!("Password verification task panicked: {}", e))?
+}
+
+pub async fn hash_password_async(
+    semaphore: Arc<Semaphore>,
+    password: String,
+) -> Result<String, String> {
+    let permit = semaphore
+        .acquire_owned()
+        .await
+        .map_err(|e| format!("Failed to acquire argon2 semaphore permit: {}", e))?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        Argon2::default()
+            .hash_password(password.as_bytes())
+            .map(|h| h.to_string())
+            .map_err(|e| format!("Password hashing error: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Password hashing task panicked: {}", e))?
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -53,6 +103,33 @@ impl FromStr for UserRole {
             "viewer" => Ok(UserRole::Viewer),
             _ => Err(format!("Unknown user role: {}", s)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_async_password_hashing_and_verification() {
+        let sem = Arc::new(Semaphore::new(2));
+        let password = "AsyncPassword123!".to_string();
+
+        let hash = hash_password_async(sem.clone(), password.clone())
+            .await
+            .unwrap();
+
+        assert!(!hash.is_empty());
+
+        let is_valid = verify_password_async(sem.clone(), password, hash.clone())
+            .await
+            .unwrap();
+        assert!(is_valid);
+
+        let is_wrong_valid = verify_password_async(sem.clone(), "WrongPassword!".to_string(), hash)
+            .await
+            .unwrap();
+        assert!(!is_wrong_valid);
     }
 }
 
