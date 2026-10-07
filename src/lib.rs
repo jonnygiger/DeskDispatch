@@ -3,6 +3,7 @@ pub mod config;
 pub mod de;
 pub mod magnifier;
 pub mod picker;
+pub mod retention;
 pub mod routes;
 pub mod storage;
 
