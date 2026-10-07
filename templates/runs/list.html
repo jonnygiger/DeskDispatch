@@ -97,6 +97,14 @@
                 {% endfor %}
             </tbody>
         </table>
+
+        {% if has_next_page %}
+        <div style="margin-top: 1rem; display: flex; justify-content: flex-end;">
+            <a href="/runs?{% if let Some(aid) = filter_automation_id %}automation_id={{ aid }}&{% endif %}{% if let Some(wid) = filter_worker_id %}worker_id={{ wid }}&{% endif %}{% if let Some(st) = filter_status %}status={{ st }}&{% endif %}{% if let Some(nqa) = next_queued_at %}before_queued_at={{ nqa }}&{% endif %}{% if let Some(nid) = next_id %}before_id={{ nid }}{% endif %}" class="btn btn-outline">
+                Next Page &rarr;
+            </a>
+        </div>
+        {% endif %}
     {% endif %}
 </div>
 {% endblock %}
