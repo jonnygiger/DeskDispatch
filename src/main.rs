@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/livez", get(livez_handler))
         .route("/readyz", get(readyz_handler))
         .route("/healthz", get(readyz_handler))

@@ -2301,7 +2301,9 @@ pub async fn post_create_step_handler(
         let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb").to_string();
 
         let mut error_msg = None;
-        if condition_type == "pixel_rgb" {
+        if form.on_match_step_id.filter(|&sid| sid > 0).is_none() || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none() {
+            error_msg = Some("Both match and no-match target steps are required for branch conditions.".to_string());
+        } else if condition_type == "pixel_rgb" {
             if form.x.is_none() || form.y.is_none() {
                 error_msg = Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string());
             }
@@ -2393,13 +2395,14 @@ pub async fn post_create_step_handler(
             sqlx::query(
                 r#"
                 INSERT INTO step_branches
-                    (step_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                    (step_id, automation_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                      reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
                      on_match_step_id, on_no_match_step_id)
-                VALUES ($1, 'pixel_rgb', $2, $3, $4, $5, $6, $7, NULL, NULL, NULL, NULL, NULL, NULL, $8, $9)
+                VALUES ($1, $2, 'pixel_rgb', $3, $4, $5, $6, $7, $8, NULL, NULL, NULL, NULL, NULL, NULL, $9, $10)
                 "#,
             )
             .bind(step_id)
+            .bind(id)
             .bind(form.x.unwrap_or(0))
             .bind(form.y.unwrap_or(0))
             .bind(form.expected_r.unwrap_or(0))
@@ -2414,13 +2417,14 @@ pub async fn post_create_step_handler(
             sqlx::query(
                 r#"
                 INSERT INTO step_branches
-                    (step_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                    (step_id, automation_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                      reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
                      on_match_step_id, on_no_match_step_id)
-                VALUES ($1, 'bitmap', NULL, NULL, NULL, NULL, NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
+                VALUES ($1, $2, 'bitmap', NULL, NULL, NULL, NULL, NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
                 "#,
             )
             .bind(step_id)
+            .bind(id)
             .bind(form.reference_bitmap_id.unwrap())
             .bind(form.search_x)
             .bind(form.search_y)
@@ -3419,7 +3423,9 @@ pub async fn post_edit_step_handler(
         let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb").to_string();
 
         let mut error_msg = None;
-        if condition_type == "pixel_rgb" {
+        if form.on_match_step_id.filter(|&sid| sid > 0).is_none() || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none() {
+            error_msg = Some("Both match and no-match target steps are required for branch conditions.".to_string());
+        } else if condition_type == "pixel_rgb" {
             if form.x.is_none() || form.y.is_none() {
                 error_msg = Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string());
             }
@@ -3490,8 +3496,8 @@ pub async fn post_edit_step_handler(
                 SET condition_type = 'pixel_rgb',
                     x = $1, y = $2, expected_r = $3, expected_g = $4, expected_b = $5, tolerance = $6,
                     reference_bitmap_id = NULL, search_x = NULL, search_y = NULL, search_width = NULL, search_height = NULL, match_threshold = NULL,
-                    on_match_step_id = $7, on_no_match_step_id = $8
-                WHERE step_id = $9
+                    on_match_step_id = $7, on_no_match_step_id = $8, automation_id = $9
+                WHERE step_id = $10
                 "#,
             )
             .bind(form.x.unwrap_or(0))
@@ -3502,6 +3508,7 @@ pub async fn post_edit_step_handler(
             .bind(form.tolerance.unwrap_or(10))
             .bind(form.on_match_step_id.filter(|&sid| sid > 0))
             .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .bind(id)
             .bind(sid)
             .execute(&mut *tx)
             .await
@@ -3512,8 +3519,8 @@ pub async fn post_edit_step_handler(
                 SET condition_type = 'bitmap',
                     x = NULL, y = NULL, expected_r = NULL, expected_g = NULL, expected_b = NULL, tolerance = NULL,
                     reference_bitmap_id = $1, search_x = $2, search_y = $3, search_width = $4, search_height = $5, match_threshold = $6,
-                    on_match_step_id = $7, on_no_match_step_id = $8
-                WHERE step_id = $9
+                    on_match_step_id = $7, on_no_match_step_id = $8, automation_id = $9
+                WHERE step_id = $10
                 "#,
             )
             .bind(form.reference_bitmap_id.unwrap())
@@ -3524,6 +3531,7 @@ pub async fn post_edit_step_handler(
             .bind(form.match_threshold.unwrap_or(0.95))
             .bind(form.on_match_step_id.filter(|&sid| sid > 0))
             .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .bind(id)
             .bind(sid)
             .execute(&mut *tx)
             .await
@@ -4153,20 +4161,6 @@ pub async fn post_delete_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    // Clear branch step targets that point to this step
-    let _ = sqlx::query(
-        "UPDATE step_branches SET on_match_step_id = NULL WHERE on_match_step_id = $1",
-    )
-    .bind(sid)
-    .execute(&state.db)
-    .await;
-
-    let _ = sqlx::query(
-        "UPDATE step_branches SET on_no_match_step_id = NULL WHERE on_no_match_step_id = $1",
-    )
-    .bind(sid)
-    .execute(&state.db)
-    .await;
 
     // Check if step is referenced in task_run_steps execution history
     let has_history: bool = sqlx::query_scalar(
