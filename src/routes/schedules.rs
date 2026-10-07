@@ -887,6 +887,8 @@ mod tests {
 
     #[test]
     fn test_schedule_item_formatting() {
+        use chrono::TimeZone;
+
         let item = ScheduleItem {
             id: 1,
             automation_id: 10,
@@ -911,9 +913,101 @@ mod tests {
 
         let disabled_item = ScheduleItem {
             is_enabled: false,
-            ..item
+            ..item.clone()
         };
         assert_eq!(disabled_item.formatted_next_run(), "Disabled");
         assert_eq!(disabled_item.status_badge_class(), "badge-neutral");
+
+        let next_dt = Utc.with_ymd_and_hms(2025, 6, 15, 12, 30, 0).unwrap();
+        let last_dt = Utc.with_ymd_and_hms(2025, 6, 15, 10, 15, 0).unwrap();
+        let active_item_with_timestamps = ScheduleItem {
+            next_run_at: Some(next_dt),
+            last_run_at: Some(last_dt),
+            ..item
+        };
+        assert_eq!(
+            active_item_with_timestamps.formatted_next_run(),
+            "2025-06-15 12:30:00 UTC"
+        );
+        assert_eq!(
+            active_item_with_timestamps.formatted_last_run(),
+            "2025-06-15 10:15:00 UTC"
+        );
+    }
+
+    #[test]
+    fn test_schedule_form_template_selection_helpers() {
+        let user = AuthUser {
+            id: 1,
+            username: "editor".to_string(),
+            display_name: "Editor User".to_string(),
+            role: crate::auth::UserRole::Editor,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "csrf_token_test".to_string(),
+        };
+
+        let template_with_selections = ScheduleFormTemplate {
+            user: user.clone(),
+            is_edit: true,
+            schedule_id: Some(42),
+            automation_id: Some(10),
+            name: "Nightly Sync".to_string(),
+            cron_expression: "0 2 * * *".to_string(),
+            timezone: "UTC".to_string(),
+            worker_group_id: Some(5),
+            overlap_policy: "skip".to_string(),
+            max_queue_age_secs: Some(1800),
+            is_enabled: true,
+            automations: vec![],
+            worker_groups: vec![],
+            error: None,
+        };
+
+        // Assert automation selection helper returns true for matching id and false for non-matching id
+        assert!(
+            template_with_selections.is_automation_selected(&10),
+            "Expected automation_id 10 to be selected"
+        );
+        assert!(
+            !template_with_selections.is_automation_selected(&99),
+            "Expected automation_id 99 not to be selected"
+        );
+
+        // Assert worker group selection helper returns true for matching id and false for non-matching id
+        assert!(
+            template_with_selections.is_worker_group_selected(&5),
+            "Expected worker_group_id 5 to be selected"
+        );
+        assert!(
+            !template_with_selections.is_worker_group_selected(&99),
+            "Expected worker_group_id 99 not to be selected"
+        );
+
+        let template_without_selections = ScheduleFormTemplate {
+            user,
+            is_edit: false,
+            schedule_id: None,
+            automation_id: None,
+            name: String::new(),
+            cron_expression: String::new(),
+            timezone: "UTC".to_string(),
+            worker_group_id: None,
+            overlap_policy: "allow".to_string(),
+            max_queue_age_secs: None,
+            is_enabled: true,
+            automations: vec![],
+            worker_groups: vec![],
+            error: None,
+        };
+
+        // Assert selection helpers return false when template selection fields are None
+        assert!(
+            !template_without_selections.is_automation_selected(&10),
+            "Expected false when automation_id is None"
+        );
+        assert!(
+            !template_without_selections.is_worker_group_selected(&5),
+            "Expected false when worker_group_id is None"
+        );
     }
 }
