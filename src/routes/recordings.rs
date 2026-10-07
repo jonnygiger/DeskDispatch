@@ -141,7 +141,12 @@ pub async fn get_worker_record_start_handler(
         r#"
         SELECT id, hostname, display_name, status, last_heartbeat_at,
                screen_width, screen_height, os_info, agent_version,
-               created_at, registration_token
+               created_at,
+               CASE
+                   WHEN registration_token_expires_at > now() AND registration_token_hash IS NOT NULL
+                   THEN '[Pending activation]'
+                   ELSE NULL
+               END AS registration_token
         FROM task_worker_pcs
         WHERE id = $1
         "#,

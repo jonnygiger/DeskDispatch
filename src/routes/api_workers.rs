@@ -7,10 +7,10 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sqlx::Row;
 use uuid::Uuid;
 
+use crate::auth::worker::{generate_worker_api_key, hash_token};
 use crate::{auth::AuthWorker, AppState};
 
 #[derive(Debug, Deserialize)]
@@ -1917,24 +1917,23 @@ pub async fn post_register_worker_handler(
             .into_response();
     }
 
-    // Generate a 256-bit (64 hex characters) random API key
-    let api_key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-
-    // Compute SHA-256 hash of the bearer API key
-    let mut hasher = Sha256::new();
-    hasher.update(api_key.as_bytes());
-    let api_key_hash: Vec<u8> = hasher.finalize().to_vec();
+    let token_hash = hash_token(&token);
+    let api_key = generate_worker_api_key();
+    let api_key_hash = hash_token(&api_key);
 
     let row_result = sqlx::query(
         r#"
         UPDATE task_worker_pcs
-        SET api_key_hash = $1, registration_token = NULL
-        WHERE registration_token = $2 AND registration_token IS NOT NULL
+        SET api_key_hash = $1,
+            registration_token_hash = NULL,
+            registration_token_expires_at = NULL
+        WHERE registration_token_hash = $2
+          AND registration_token_expires_at > now()
         RETURNING id, hostname, display_name
         "#,
     )
     .bind(&api_key_hash)
-    .bind(&token)
+    .bind(&token_hash)
     .fetch_optional(&state.db)
     .await;
 
@@ -2003,12 +2002,11 @@ mod tests {
 
     #[test]
     fn test_api_key_generation_and_sha256_hash() {
-        let api_key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-        assert_eq!(api_key.len(), 64);
+        let api_key = generate_worker_api_key();
+        assert!(api_key.starts_with("dd_pk_"));
+        assert_eq!(api_key.len(), 70); // "dd_pk_" (6) + 64 hex chars = 70
 
-        let mut hasher = Sha256::new();
-        hasher.update(api_key.as_bytes());
-        let hash: Vec<u8> = hasher.finalize().to_vec();
+        let hash = hash_token(&api_key);
         assert_eq!(hash.len(), 32);
     }
 
