@@ -119,11 +119,14 @@ async fn test_dashboard_stats_tiles() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
+    let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
+
     let state = AppState {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
         rate_limiter: LoginRateLimiter::default(),
+        task_queue_notifier: tx_notify,
     };
 
     let app = Router::new()

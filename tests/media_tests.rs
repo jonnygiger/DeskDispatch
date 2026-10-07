@@ -60,11 +60,14 @@ async fn test_media_screenshot_redirects() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
+    let (tx, _) = tokio::sync::broadcast::channel::<()>(100);
+
     let state = AppState {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tx,
     };
 
     let app = Router::new()

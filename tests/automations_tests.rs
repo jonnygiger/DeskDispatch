@@ -64,6 +64,7 @@ async fn test_automations_crud_and_steps_ordering() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -234,6 +235,7 @@ async fn test_mouse_click_step_crud_and_validation() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -424,6 +426,7 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -608,6 +611,7 @@ async fn test_step_type_picker_interface() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -665,6 +669,7 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()
@@ -864,6 +869,7 @@ async fn test_automation_parameters_crud_and_validation() {
         s3_client,
         config: config.clone(),
         rate_limiter: app::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
     let app = Router::new()

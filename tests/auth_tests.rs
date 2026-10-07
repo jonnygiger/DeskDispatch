@@ -225,11 +225,14 @@ async fn test_unauthenticated_redirect_to_login() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
+    let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
+
     let state = AppState {
         db: pool,
         s3_client,
         config,
         rate_limiter: LoginRateLimiter::default(),
+        task_queue_notifier: tx_notify,
     };
 
     let app = Router::new()
@@ -288,11 +291,14 @@ async fn test_full_auth_and_password_workflow() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
+    let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
+
     let state = AppState {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
         rate_limiter: LoginRateLimiter::default(),
+        task_queue_notifier: tx_notify,
     };
 
     let app = Router::new()

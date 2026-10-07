@@ -17,6 +17,7 @@ use axum::{
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::net::SocketAddr;
+use tower_http::compression::CompressionLayer;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -206,6 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/recordings/{id}/convert", post(post_recording_convert_handler))
         .route("/runs", get(get_runs_handler))
         .route("/runs/{id}", get(get_run_detail_handler))
+        .route("/runs/{id}/status-frame", get(get_run_status_frame_handler))
         .route("/runs/{id}/cancel", post(post_cancel_run_handler))
         .route("/workers", get(get_workers_handler).post(post_create_worker_handler))
         .route("/workers/new", get(get_new_worker_handler))
@@ -225,6 +227,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = app
         .fallback(not_found_handler)
+        .layer(CompressionLayer::new())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf_middleware,

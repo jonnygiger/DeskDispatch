@@ -115,7 +115,7 @@ impl ImageMagnifier {
         }
     }
 
-    /// Background style for 20x pixel grid panel (viewport 320x320)
+    /// CSS custom properties style for 20x pixel grid panel (viewport 320x320)
     pub fn grid_style(&self) -> String {
         let bg_w = self.native_w * 20;
         let bg_h = self.native_h * 20;
@@ -130,7 +130,7 @@ impl ImageMagnifier {
         };
 
         format!(
-            "background-image: repeating-linear-gradient(to right, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), repeating-linear-gradient(to bottom, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), url('{}'); background-size: 20px 20px, 20px 20px, {}px {}px; background-position: 0 0, 0 0, {:.2}px {:.2}px;",
+            "--grid-bg-url: url('{}'); --grid-bg-w: {}px; --grid-bg-h: {}px; --grid-pan-x: {:.2}px; --grid-pan-y: {:.2}px;",
             escape_css_url(&self.presigned_url), bg_w, bg_h, pan_x, pan_y
         )
     }
@@ -167,7 +167,7 @@ mod tests {
 
         assert!(mag.normal_style().contains("background-image: url('http://example.com/image.png')"));
         assert!(mag.zoom400_style().contains("background-size: 7680px 4320px"));
-        assert!(mag.grid_style().contains("background-size: 20px 20px, 20px 20px, 38400px 21600px"));
+        assert!(mag.grid_style().contains("--grid-bg-w: 38400px; --grid-bg-h: 21600px;"));
     }
 
     #[test]
@@ -195,11 +195,11 @@ mod tests {
         assert!(zoom400_style.contains("background-position: -240.00px -640.00px"));
 
         let grid_style = mag.grid_style();
-        assert!(grid_style.contains("repeating-linear-gradient"));
-        assert!(grid_style.contains("background-size: 20px 20px, 20px 20px, 20000px 10000px"));
+        assert!(grid_style.contains("--grid-bg-url: url('http://example.com/image.png')"));
+        assert!(grid_style.contains("--grid-bg-w: 20000px; --grid-bg-h: 10000px;"));
         // pan_x = 160 - (100 * 20 + 10) = -1850
         // pan_y = 160 - (200 * 20 + 10) = -3850
-        assert!(grid_style.contains("0 0, 0 0, -1850.00px -3850.00px"));
+        assert!(grid_style.contains("--grid-pan-x: -1850.00px; --grid-pan-y: -3850.00px;"));
     }
 
     #[test]
@@ -303,6 +303,7 @@ mod tests {
     fn test_grid_panel_styling_and_overlays() {
         let css = include_str!("../static/style.css");
         assert!(css.contains("image-rendering: pixelated;"), "CSS must contain image-rendering: pixelated;");
+        assert!(css.contains("repeating-linear-gradient"), "CSS must contain repeating-linear-gradient for grid");
 
         let mag = ImageMagnifier::new(
             "http://example.com/test.png",
@@ -313,10 +314,9 @@ mod tests {
         );
 
         let grid_style = mag.grid_style();
-        assert!(grid_style.contains("repeating-linear-gradient(to right, transparent 0 19px, rgba(128,128,128,.6) 19px 20px)"));
-        assert!(grid_style.contains("repeating-linear-gradient(to bottom, transparent 0 19px, rgba(128,128,128,.6) 19px 20px)"));
-        assert!(grid_style.contains("background-size: 20px 20px, 20px 20px, 16000px 12000px"));
-        assert!(grid_style.contains("0 0, 0 0, -50.00px -250.00px"));
+        assert!(grid_style.contains("--grid-bg-url: url('http://example.com/test.png')"));
+        assert!(grid_style.contains("--grid-bg-w: 16000px; --grid-bg-h: 12000px;"));
+        assert!(grid_style.contains("--grid-pan-x: -50.00px; --grid-pan-y: -250.00px;"));
     }
 
     #[test]
