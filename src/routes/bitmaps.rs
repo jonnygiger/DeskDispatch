@@ -8,7 +8,7 @@ use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser, CsrfForm, UserRole};
+use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
 use crate::de::deserialize_option_number;
 use crate::magnifier::ImageMagnifier;
 use crate::picker::{map_coarse_click_to_native, map_grid_click_to_native};
@@ -373,12 +373,9 @@ pub async fn get_automation_bitmaps_handler(
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_bitmaps_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<BitmapUploadForm>,
 ) -> Response {
-    if user.role == UserRole::Viewer {
-        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
-    }
     if form.csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
@@ -434,13 +431,10 @@ pub async fn post_bitmaps_handler(
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_automation_bitmaps_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     Path(id): Path<i64>,
     CsrfForm(form): CsrfForm<BitmapUploadForm>,
 ) -> Response {
-    if user.role == UserRole::Viewer {
-        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
-    }
     if form.csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
@@ -559,12 +553,9 @@ pub async fn probe_s3_bitmap_dimensions(
 #[tracing::instrument(skip(state, user))]
 pub async fn get_bitmap_commit_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     Query(query): Query<BitmapCommitQuery>,
 ) -> Response {
-    if !user.role.can_edit() {
-        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
-    }
 
     if !validate_bitmap_key(&query.key, user.id) {
         return (StatusCode::BAD_REQUEST, "Invalid storage key").into_response();
@@ -592,12 +583,9 @@ pub async fn get_bitmap_commit_handler(
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_bitmap_commit_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<BitmapCommitForm>,
 ) -> Response {
-    if !user.role.can_edit() {
-        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot upload bitmaps").into_response();
-    }
 
     if form.csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
@@ -688,9 +676,6 @@ async fn delete_bitmap_logic(
     csrf_token: &str,
     redirect_automation_id: Option<i64>,
 ) -> Response {
-    if !user.role.can_edit() {
-        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot delete bitmaps").into_response();
-    }
 
     if csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
@@ -770,7 +755,7 @@ async fn delete_bitmap_logic(
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_delete_bitmap_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     Path(id): Path<i64>,
     CsrfForm(form): CsrfForm<DeleteBitmapForm>,
 ) -> Response {
@@ -782,7 +767,7 @@ pub async fn post_delete_bitmap_handler(
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_automation_delete_bitmap_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     Path((id, bid)): Path<(i64, i64)>,
     CsrfForm(form): CsrfForm<DeleteBitmapForm>,
 ) -> Response {
@@ -1139,9 +1124,6 @@ pub async fn confirm_region_crop_logic(
     mut form: PickRegionConfirmForm,
 ) -> Response {
     form.image_url = sanitize_image_url(Some(form.image_url));
-    if !user.role.can_edit() {
-        return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot create bitmaps").into_response();
-    }
     if form.csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
@@ -1274,7 +1256,7 @@ pub async fn confirm_region_crop_logic(
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_pick_region_confirm_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<PickRegionConfirmForm>,
 ) -> Response {
     confirm_region_crop_logic(&state, &user, form).await
@@ -1284,7 +1266,7 @@ pub async fn post_pick_region_confirm_handler(
 /// Confirms and saves a selected region crop as a reference bitmap scoped to an automation ID.
 pub async fn post_automation_pick_region_confirm_handler(
     State(state): State<AppState>,
-    user: AuthUser,
+    RequireEditor(user): RequireEditor,
     Path(id): Path<i64>,
     CsrfForm(mut form): CsrfForm<PickRegionConfirmForm>,
 ) -> Response {

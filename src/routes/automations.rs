@@ -2045,7 +2045,16 @@ pub async fn post_run_now_automation_handler(
             status = %status,
             "Refusing Run Now trigger for non-active automation"
         );
-        return Redirect::to(&format!("/automations/{}", id)).into_response();
+        let flash = crate::auth::FlashMessage::error("Cannot run non-active automation.");
+        let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+        return (
+            [
+                (axum::http::header::SET_COOKIE, c1),
+                (axum::http::header::SET_COOKIE, c2),
+            ],
+            Redirect::to(&format!("/automations/{}", id)),
+        )
+            .into_response();
     }
 
     // Refuse empty automations (automations without any active steps)
@@ -2059,7 +2068,16 @@ pub async fn post_run_now_automation_handler(
         Ok(cnt) => cnt,
         Err(e) => {
             tracing::error!(automation_id = id, "Error checking step count: {}", e);
-            return Redirect::to(&format!("/automations/{}", id)).into_response();
+            let flash = crate::auth::FlashMessage::error("Error checking automation steps.");
+            let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+            return (
+                [
+                    (axum::http::header::SET_COOKIE, c1),
+                    (axum::http::header::SET_COOKIE, c2),
+                ],
+                Redirect::to(&format!("/automations/{}", id)),
+            )
+                .into_response();
         }
     };
 
@@ -2068,7 +2086,16 @@ pub async fn post_run_now_automation_handler(
             automation_id = id,
             "Refusing Run Now trigger for automation with no active steps"
         );
-        return Redirect::to(&format!("/automations/{}", id)).into_response();
+        let flash = crate::auth::FlashMessage::error("Cannot run automation with no steps.");
+        let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+        return (
+            [
+                (axum::http::header::SET_COOKIE, c1),
+                (axum::http::header::SET_COOKIE, c2),
+            ],
+            Redirect::to(&format!("/automations/{}", id)),
+        )
+            .into_response();
     }
 
     let target_worker_group_id = form.worker_group_id;
@@ -2107,13 +2134,32 @@ pub async fn post_run_now_automation_handler(
                 })),
             )
             .await;
+
+            let flash = crate::auth::FlashMessage::success(format!("Run #{} queued successfully.", task_run_id));
+            let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+            (
+                [
+                    (axum::http::header::SET_COOKIE, c1),
+                    (axum::http::header::SET_COOKIE, c2),
+                ],
+                Redirect::to(&format!("/automations/{}", id)),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to queue manual task run for automation {}: {}", id, e);
+            let flash = crate::auth::FlashMessage::error("Failed to queue run.");
+            let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+            (
+                [
+                    (axum::http::header::SET_COOKIE, c1),
+                    (axum::http::header::SET_COOKIE, c2),
+                ],
+                Redirect::to(&format!("/automations/{}", id)),
+            )
+                .into_response()
         }
     }
-
-    Redirect::to(&format!("/automations/{}", id)).into_response()
 }
 
 /// GET /automations/{id}/steps/new

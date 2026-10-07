@@ -11,11 +11,26 @@ pub struct NotFoundTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "403.html")]
+pub struct ForbiddenTemplate {
+    pub message: Option<String>,
+    pub user: Option<AuthUser>,
+}
+
+#[derive(Template)]
+#[template(path = "409.html")]
+pub struct ConflictTemplate {
+    pub message: Option<String>,
+    pub user: Option<AuthUser>,
+}
+
+#[derive(Template)]
 #[template(path = "500.html")]
 pub struct InternalServerErrorTemplate {
     pub message: Option<String>,
     pub user: Option<AuthUser>,
 }
+
 
 #[tracing::instrument(skip(user))]
 pub async fn not_found_handler(OptionalAuthUser(user): OptionalAuthUser) -> impl IntoResponse {

@@ -20,6 +20,7 @@
     <div class="app-container">
         {% block subnav %}{% endblock %}
         <main id="main-content" class="main-content">
+            {% block flash_messages %}{% endblock %}
             {% block content %}{% endblock %}
         </main>
     </div>

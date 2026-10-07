@@ -1,0 +1,31 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}409 Conflict — DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% if let Some(u) = user %}
+{% call macros::top_nav(u, "") %}{% endcall %}
+{% else %}
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+</header>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="card" style="text-align: center; max-width: 600px; margin: 3rem auto; padding: 2.5rem;">
+    <h1 style="font-size: 3.5rem; color: var(--color-warning, #d97706); margin-bottom: 0.5rem; line-height: 1;">409</h1>
+    <h2 style="font-size: 1.5rem; color: var(--color-text); margin-bottom: 1rem;">Resource Conflict</h2>
+    <p style="color: var(--color-text-muted); margin-bottom: 2rem;">
+        {% if let Some(msg) = message %}
+        {{ msg }}
+        {% else %}
+        The request could not be completed due to a conflict with the current state of the resource.
+        {% endif %}
+    </p>
+    <a href="/" class="btn btn-primary">Return to Dashboard</a>
+</div>
+{% endblock %}
