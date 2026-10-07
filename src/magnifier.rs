@@ -11,6 +11,25 @@ pub struct ImageMagnifier {
     pub target_y: Option<u32>,
 }
 
+/// Helper to escape characters in URLs used inside CSS `url('...')` values.
+pub fn escape_css_url(url: &str) -> String {
+    let mut escaped = String::with_capacity(url.len());
+    for c in url.chars() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '\'' => escaped.push_str("\\'"),
+            '"' => escaped.push_str("\\\""),
+            '\n' | '\r' | '\x0C' => {},
+            '(' => escaped.push_str("%28"),
+            ')' => escaped.push_str("%29"),
+            '<' => escaped.push_str("%3C"),
+            '>' => escaped.push_str("%3E"),
+            c => escaped.push(c),
+        }
+    }
+    escaped
+}
+
 impl ImageMagnifier {
     pub fn new(
         presigned_url: impl Into<String>,
@@ -36,7 +55,7 @@ impl ImageMagnifier {
     pub fn normal_style(&self) -> String {
         format!(
             "background-image: url('{}'); background-size: contain; background-position: center;",
-            self.presigned_url
+            escape_css_url(&self.presigned_url)
         )
     }
 
@@ -83,7 +102,7 @@ impl ImageMagnifier {
 
         format!(
             "background-image: url('{}'); background-size: {}px {}px; background-position: {:.2}px {:.2}px;",
-            self.presigned_url, bg_w, bg_h, pan_x, pan_y
+            escape_css_url(&self.presigned_url), bg_w, bg_h, pan_x, pan_y
         )
     }
 
@@ -112,7 +131,7 @@ impl ImageMagnifier {
 
         format!(
             "background-image: repeating-linear-gradient(to right, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), repeating-linear-gradient(to bottom, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), url('{}'); background-size: 20px 20px, 20px 20px, {}px {}px; background-position: 0 0, 0 0, {:.2}px {:.2}px;",
-            self.presigned_url, bg_w, bg_h, pan_x, pan_y
+            escape_css_url(&self.presigned_url), bg_w, bg_h, pan_x, pan_y
         )
     }
 
@@ -298,6 +317,17 @@ mod tests {
         assert!(grid_style.contains("repeating-linear-gradient(to bottom, transparent 0 19px, rgba(128,128,128,.6) 19px 20px)"));
         assert!(grid_style.contains("background-size: 20px 20px, 20px 20px, 16000px 12000px"));
         assert!(grid_style.contains("0 0, 0 0, -50.00px -250.00px"));
+    }
+
+    #[test]
+    fn test_escape_css_url() {
+        let malicious = "http://example.com/img.png'); body { background: red; } /*";
+        let escaped = escape_css_url(malicious);
+        assert_eq!(escaped, "http://example.com/img.png\\'%29; body { background: red; } /*");
+
+        let mag = ImageMagnifier::new(malicious, 800, 600, None, None);
+        assert!(!mag.normal_style().contains("img.png');"));
+        assert!(mag.normal_style().contains("img.png\\'"));
     }
 
     #[test]

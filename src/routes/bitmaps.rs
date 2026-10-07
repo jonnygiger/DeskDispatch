@@ -789,6 +789,25 @@ pub async fn post_automation_delete_bitmap_handler(
     delete_bitmap_logic(&state, &user, bid, &form.csrf_token, Some(id)).await
 }
 
+/// Sanitizes and validates image URLs used in region pick handlers to prevent CSS injection and open redirects.
+pub fn sanitize_image_url(raw_url: Option<String>) -> String {
+    let default_url = "/static/sample_screenshot.png".to_string();
+    let url = match raw_url {
+        Some(u) if !u.trim().is_empty() => u.trim().to_string(),
+        _ => return default_url,
+    };
+
+    if url.chars().any(|c| c.is_control() || c == '\'' || c == '"' || c == '\\' || c == '<' || c == '>' || c == ';' || c == '{' || c == '}') {
+        return default_url;
+    }
+
+    if url.starts_with("/static/") || url.starts_with("/media/") || url.starts_with("http://") || url.starts_with("https://") {
+        url
+    } else {
+        default_url
+    }
+}
+
 /// GET /bitmaps/pick-region
 /// Renders initial Step 1 of two-click region picker to capture top-left corner.
 #[tracing::instrument(skip(user))]
@@ -797,7 +816,7 @@ pub async fn get_pick_region_handler(
     Query(query): Query<PickRegionQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
-    let image_url = query.image_url.unwrap_or_else(|| "/static/sample_screenshot.png".to_string());
+    let image_url = sanitize_image_url(query.image_url);
     let width = query.width.unwrap_or(1920);
     let height = query.height.unwrap_or(1080);
 
@@ -834,7 +853,7 @@ pub async fn get_automation_pick_region_handler(
     Query(query): Query<PickRegionQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
-    let image_url = query.image_url.unwrap_or_else(|| "/static/sample_screenshot.png".to_string());
+    let image_url = sanitize_image_url(query.image_url);
     let width = query.width.unwrap_or(1920);
     let height = query.height.unwrap_or(1080);
 
@@ -869,6 +888,7 @@ pub async fn post_pick_region_top_left_handler(
     user: AuthUser,
     CsrfForm(form): CsrfForm<PickRegionTopLeftForm>,
 ) -> Response {
+    let image_url = sanitize_image_url(Some(form.image_url));
     let (top_left_x, top_left_y) = map_coarse_click_to_native(
         form.x,
         form.y,
@@ -879,7 +899,7 @@ pub async fn post_pick_region_top_left_handler(
     );
 
     let magnifier = ImageMagnifier::new(
-        &form.image_url,
+        &image_url,
         form.width,
         form.height,
         Some(top_left_x),
@@ -890,7 +910,7 @@ pub async fn post_pick_region_top_left_handler(
         user: user.clone(),
         csrf_token: user.csrf_token,
         automation_id: form.automation_id,
-        image_url: form.image_url,
+        image_url,
         width: form.width,
         height: form.height,
         step_stage: 2,
@@ -964,6 +984,7 @@ pub async fn post_pick_region_bottom_right_handler(
     user: AuthUser,
     CsrfForm(form): CsrfForm<PickRegionBottomRightForm>,
 ) -> Response {
+    let image_url = sanitize_image_url(Some(form.image_url));
     let (raw_br_x, raw_br_y) = if let (Some(gx), Some(gy)) = (form.grid_x, form.grid_y) {
         map_grid_click_to_native(
             gx,
@@ -992,7 +1013,7 @@ pub async fn post_pick_region_bottom_right_handler(
     let norm_br_y = form.top_left_y.max(raw_br_y);
 
     let magnifier = ImageMagnifier::new(
-        &form.image_url,
+        &image_url,
         form.width,
         form.height,
         Some(norm_br_x),
@@ -1003,7 +1024,7 @@ pub async fn post_pick_region_bottom_right_handler(
         user: user.clone(),
         csrf_token: user.csrf_token,
         automation_id: form.automation_id,
-        image_url: form.image_url,
+        image_url,
         width: form.width,
         height: form.height,
         step_stage: 3,
@@ -1115,8 +1136,9 @@ async fn crop_image_region(
 pub async fn confirm_region_crop_logic(
     state: &AppState,
     user: &AuthUser,
-    form: PickRegionConfirmForm,
+    mut form: PickRegionConfirmForm,
 ) -> Response {
+    form.image_url = sanitize_image_url(Some(form.image_url));
     if !user.role.can_edit() {
         return (StatusCode::FORBIDDEN, "Forbidden: Viewers cannot create bitmaps").into_response();
     }
@@ -1345,6 +1367,27 @@ mod tests {
         assert!(!validate_bitmap_key("other/button.png", 1));
         assert!(!validate_bitmap_key("bitmaps/button.jpeg", 1));
         assert!(!validate_bitmap_key("bitmaps/../etc/passwd.png", 1));
+    }
+
+    #[test]
+    fn test_sanitize_image_url() {
+        assert_eq!(
+            sanitize_image_url(Some("/static/test.png".to_string())),
+            "/static/test.png"
+        );
+        assert_eq!(
+            sanitize_image_url(Some("/media/screenshots/12".to_string())),
+            "/media/screenshots/12"
+        );
+        // Malicious injection attempts fall back to default
+        assert_eq!(
+            sanitize_image_url(Some("javascript:alert(1)".to_string())),
+            "/static/sample_screenshot.png"
+        );
+        assert_eq!(
+            sanitize_image_url(Some("/static/test.png'; body { color: red }".to_string())),
+            "/static/sample_screenshot.png"
+        );
     }
 
     #[test]

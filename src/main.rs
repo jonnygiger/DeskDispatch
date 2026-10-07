@@ -1,5 +1,5 @@
 use app::{
-    auth::{csrf_middleware, LoginRateLimiter},
+    auth::{csrf_middleware, security_headers_middleware, LoginRateLimiter},
     config::Config,
     routes::*,
     AppState,
@@ -97,7 +97,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let app = Router::new()
-        .route("/healthz", get(healthz_handler))
+        .route("/livez", get(livez_handler))
+        .route("/readyz", get(readyz_handler))
+        .route("/healthz", get(readyz_handler))
         .route("/static/{*path}", get(static_asset_handler))
         .route("/login", get(get_login_handler).post(post_login_handler))
         .route("/logout", post(post_logout_handler))
@@ -179,12 +181,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/worker-groups/new", get(get_new_worker_group_handler))
         .route("/worker-groups", post(post_create_worker_group_handler))
         .route("/worker-groups/{id}/edit", get(get_edit_worker_group_handler).post(post_edit_worker_group_handler))
-        .route("/worker-groups/{id}/delete", post(post_delete_worker_group_handler))
-        .route("/dev/magnifier-verify", get(dev_magnifier_verify_handler))
+        .route("/worker-groups/{id}/delete", post(post_delete_worker_group_handler));
+
+    if !config.is_production() {
+        app = app.route("/dev/magnifier-verify", get(dev_magnifier_verify_handler));
+    }
+
+    let app = app
         .fallback(not_found_handler)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             csrf_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security_headers_middleware,
         ))
         .with_state(state);
 
@@ -315,12 +326,16 @@ fn init_tracing(config: &Config) {
     }
 }
 
-async fn healthz_handler(State(state): State<AppState>) -> impl IntoResponse {
+async fn livez_handler() -> impl IntoResponse {
+    (StatusCode::OK, "OK")
+}
+
+async fn readyz_handler(State(state): State<AppState>) -> impl IntoResponse {
     match sqlx::query("SELECT 1").execute(&state.db).await {
         Ok(_) => (StatusCode::OK, "OK"),
         Err(err) => {
-            error!("Healthz check failed: {}", err);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Database connection error")
+            error!("Readyz check failed: {}", err);
+            (StatusCode::SERVICE_UNAVAILABLE, "Database connection error")
         }
     }
 }
