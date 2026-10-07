@@ -215,24 +215,34 @@ pub async fn get_schedules_handler(
     HtmlTemplate(SchedulesIndexTemplate { user, schedules }).into_response()
 }
 
+/// Helper function to fetch schedule form dropdown options (automations and worker groups)
+/// concurrently using `tokio::join!`. This reduces HTTP response latency by avoiding sequential database round-trips.
+async fn fetch_schedule_options(
+    db: &sqlx::PgPool,
+) -> (Vec<ScheduleAutomationOption>, Vec<ScheduleWorkerGroupOption>) {
+    let (automations_res, worker_groups_res) = tokio::join!(
+        sqlx::query_as::<_, ScheduleAutomationOption>(
+            "SELECT id, name FROM automations WHERE status != 'archived' ORDER BY name ASC",
+        )
+        .fetch_all(db),
+        sqlx::query_as::<_, ScheduleWorkerGroupOption>(
+            "SELECT id, name FROM worker_groups ORDER BY name ASC",
+        )
+        .fetch_all(db),
+    );
+
+    (
+        automations_res.unwrap_or_default(),
+        worker_groups_res.unwrap_or_default(),
+    )
+}
+
 #[tracing::instrument(skip(state, user))]
 pub async fn get_new_schedule_handler(
     State(state): State<AppState>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    let automations = sqlx::query_as::<_, ScheduleAutomationOption>(
-        "SELECT id, name FROM automations WHERE status != 'archived' ORDER BY name ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
-
-    let worker_groups = sqlx::query_as::<_, ScheduleWorkerGroupOption>(
-        "SELECT id, name FROM worker_groups ORDER BY name ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
 
     HtmlTemplate(ScheduleFormTemplate {
         user,
@@ -267,19 +277,7 @@ pub async fn post_create_schedule_handler(
         form.timezone.trim()
     };
 
-    let automations = sqlx::query_as::<_, ScheduleAutomationOption>(
-        "SELECT id, name FROM automations WHERE status != 'archived' ORDER BY name ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
-
-    let worker_groups = sqlx::query_as::<_, ScheduleWorkerGroupOption>(
-        "SELECT id, name FROM worker_groups ORDER BY name ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
 
     if name.is_empty() || cron_expression.is_empty() {
         return HtmlTemplate(ScheduleFormTemplate {
@@ -423,19 +421,7 @@ pub async fn get_edit_schedule_handler(
         }
     };
 
-    let automations = sqlx::query_as::<_, ScheduleAutomationOption>(
-        "SELECT id, name FROM automations WHERE status != 'archived' ORDER BY name ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
-
-    let worker_groups = sqlx::query_as::<_, ScheduleWorkerGroupOption>(
-        "SELECT id, name FROM worker_groups ORDER BY name ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
 
     HtmlTemplate(ScheduleFormTemplate {
         user,
@@ -471,19 +457,7 @@ pub async fn post_edit_schedule_handler(
         form.timezone.trim()
     };
 
-    let automations = sqlx::query_as::<_, ScheduleAutomationOption>(
-        "SELECT id, name FROM automations WHERE status != 'archived' ORDER BY name ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
-
-    let worker_groups = sqlx::query_as::<_, ScheduleWorkerGroupOption>(
-        "SELECT id, name FROM worker_groups ORDER BY name ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
 
     if name.is_empty() || cron_expression.is_empty() {
         return HtmlTemplate(ScheduleFormTemplate {
