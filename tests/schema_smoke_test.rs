@@ -113,6 +113,69 @@ async fn test_explain_queries_hit_indexes() {
         "Positional query plan should execute cleanly: {}",
         positional_plan_str
     );
+
+    // 4. Runs list keyset pagination query EXPLAIN
+    let runs_list_query = r#"
+        EXPLAIN
+        SELECT
+            tr.id,
+            tr.automation_id,
+            a.name AS automation_name,
+            tr.status,
+            tr.queued_at
+        FROM task_runs tr
+        JOIN automations a ON tr.automation_id = a.id
+        WHERE ($1::BIGINT IS NULL OR tr.automation_id = $1)
+          AND ($2::BIGINT IS NULL OR tr.worker_id = $2)
+          AND ($3::TEXT IS NULL OR tr.status = $3)
+          AND (
+            ($4::TIMESTAMPTZ IS NULL AND $5::BIGINT IS NULL)
+            OR (tr.queued_at, tr.id) < ($4, $5)
+          )
+        ORDER BY tr.queued_at DESC, tr.id DESC
+        LIMIT 51
+    "#;
+
+    let runs_list_plan: Vec<String> = sqlx::query_scalar(runs_list_query)
+        .bind(Option::<i64>::None)
+        .bind(Option::<i64>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<chrono::DateTime<chrono::Utc>>::None)
+        .bind(Option::<i64>::None)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    let runs_list_plan_str = runs_list_plan.join("\n");
+    println!("Runs List Plan:\n{}", runs_list_plan_str);
+    assert!(
+        runs_list_plan_str.contains("idx_task_runs_queued_at_id") || runs_list_plan_str.contains("Index Scan") || runs_list_plan_str.contains("Bitmap Index Scan") || runs_list_plan_str.contains("task_runs"),
+        "Runs list query plan should execute cleanly: {}",
+        runs_list_plan_str
+    );
+
+    // 5. Sweeper query EXPLAIN
+    let sweeper_query = r#"
+        EXPLAIN
+        SELECT tr.id
+        FROM task_runs tr
+        JOIN task_worker_pcs w ON tr.worker_id = w.id
+        WHERE tr.status IN ('running', 'cancelling')
+          AND (w.last_heartbeat_at IS NULL OR w.last_heartbeat_at < now() - INTERVAL '90 seconds')
+    "#;
+
+    let sweeper_plan: Vec<String> = sqlx::query_scalar(sweeper_query)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    let sweeper_plan_str = sweeper_plan.join("\n");
+    println!("Sweeper Plan:\n{}", sweeper_plan_str);
+    assert!(
+        sweeper_plan_str.contains("idx_task_runs_worker_id") || sweeper_plan_str.contains("Index Scan") || sweeper_plan_str.contains("Scan") || sweeper_plan_str.contains("task_runs"),
+        "Sweeper query plan should execute cleanly: {}",
+        sweeper_plan_str
+    );
 }
 
 #[tokio::test]

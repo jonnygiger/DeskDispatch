@@ -17,6 +17,8 @@ pub struct RunsFilterQuery {
     pub automation_id: Option<i64>,
     pub worker_id: Option<i64>,
     pub status: Option<String>,
+    pub before_queued_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub before_id: Option<i64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -128,6 +130,9 @@ pub struct RunsListTemplate {
     pub filter_automation_id: Option<i64>,
     pub filter_worker_id: Option<i64>,
     pub filter_status: Option<String>,
+    pub next_queued_at: Option<String>,
+    pub next_id: Option<i64>,
+    pub has_next_page: bool,
 }
 
 impl RunsListTemplate {
@@ -265,13 +270,19 @@ pub async fn get_runs_handler(
             WHERE ($1::BIGINT IS NULL OR tr.automation_id = $1)
               AND ($2::BIGINT IS NULL OR tr.worker_id = $2)
               AND ($3::TEXT IS NULL OR tr.status = $3)
+              AND (
+                ($4::TIMESTAMPTZ IS NULL AND $5::BIGINT IS NULL)
+                OR (tr.queued_at, tr.id) < ($4, $5)
+              )
             ORDER BY tr.queued_at DESC, tr.id DESC
-            LIMIT 100
+            LIMIT 51
             "#,
         )
         .bind(filter.automation_id)
         .bind(filter.worker_id)
         .bind(filter_status_clean.as_deref())
+        .bind(filter.before_queued_at)
+        .bind(filter.before_id)
         .fetch_all(&state.db)
     );
 
@@ -294,9 +305,12 @@ pub async fn get_runs_handler(
         .collect();
 
     let run_rows = run_rows_res.unwrap_or_default();
+    let limit = 50;
+    let has_next_page = run_rows.len() > limit;
 
-    let runs = run_rows
+    let runs: Vec<TaskRunListItem> = run_rows
         .into_iter()
+        .take(limit)
         .map(|r| TaskRunListItem {
             id: r.get("id"),
             automation_id: r.get("automation_id"),
@@ -314,6 +328,16 @@ pub async fn get_runs_handler(
         })
         .collect();
 
+    let (next_queued_at, next_id) = if has_next_page {
+        if let Some(last_item) = runs.last() {
+            (Some(last_item.queued_at.to_rfc3339()), Some(last_item.id))
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
     HtmlTemplate(RunsListTemplate {
         user,
         csrf_token,
@@ -323,6 +347,9 @@ pub async fn get_runs_handler(
         filter_automation_id: filter.automation_id,
         filter_worker_id: filter.worker_id,
         filter_status: filter_status_clean,
+        next_queued_at,
+        next_id,
+        has_next_page,
     })
 }
 
@@ -735,6 +762,9 @@ mod tests {
             filter_automation_id: None,
             filter_worker_id: None,
             filter_status: Some("running".to_string()),
+            next_queued_at: None,
+            next_id: None,
+            has_next_page: false,
         };
 
         assert!(list_tmpl.is_status_selected("running"));
