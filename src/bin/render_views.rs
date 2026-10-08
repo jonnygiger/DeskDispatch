@@ -196,6 +196,7 @@ fn main() {
         mode: None,
         step_id: None,
         reference_bitmap_id: None,
+        error_msg: None,
     };
     fs::write("rendered_templates/bitmaps_pick_region.html", pick_region_tmpl.render().unwrap()).unwrap();
 
@@ -224,6 +225,7 @@ fn main() {
         mode: None,
         step_id: None,
         reference_bitmap_id: None,
+        error_msg: None,
     };
     fs::write("rendered_templates/bitmaps_pick_region_stage3.html", pick_region_stage3_tmpl.render().unwrap()).unwrap();
 
@@ -422,6 +424,7 @@ fn main() {
         session: rec_session.clone(),
         event_count: 5,
         error: None,
+        paused: false,
     };
     fs::write("rendered_templates/recordings_status.html", rec_status_tmpl.render().unwrap()).unwrap();
 

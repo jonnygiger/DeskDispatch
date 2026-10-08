@@ -50,6 +50,7 @@ pub struct PickRegionQuery {
     pub mode: Option<String>,
     pub step_id: Option<i64>,
     pub reference_bitmap_id: Option<i64>,
+    pub error_msg: Option<String>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -70,6 +71,10 @@ pub struct PickRegionTopLeftForm {
     pub x: u32,
     #[serde(alias = "click.y", default)]
     pub y: u32,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub manual_x: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub manual_y: Option<u32>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -96,6 +101,10 @@ pub struct PickRegionBottomRightForm {
     pub coarse_x: Option<u32>,
     #[serde(alias = "coarse_click.y", default, deserialize_with = "deserialize_option_number")]
     pub coarse_y: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub manual_x: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub manual_y: Option<u32>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -165,6 +174,7 @@ pub struct RegionPickerTopLeftTemplate {
     pub mode: Option<String>,
     pub step_id: Option<i64>,
     pub reference_bitmap_id: Option<i64>,
+    pub error_msg: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -826,6 +836,7 @@ pub async fn get_pick_region_handler(
         mode: query.mode,
         step_id: query.step_id,
         reference_bitmap_id: query.reference_bitmap_id,
+        error_msg: None,
     })
 }
 
@@ -863,25 +874,67 @@ pub async fn get_automation_pick_region_handler(
         mode: query.mode,
         step_id: query.step_id,
         reference_bitmap_id: query.reference_bitmap_id,
+        error_msg: None,
     })
 }
 
 /// POST /bitmaps/pick-region
-/// Processes coarse top-left image input click coordinates for region selection.
+/// Processes coarse top-left image input click coordinates or manual numeric entries for region selection.
 #[tracing::instrument(skip(user, form))]
 pub async fn post_pick_region_top_left_handler(
     user: AuthUser,
     CsrfForm(form): CsrfForm<PickRegionTopLeftForm>,
 ) -> Response {
-    let image_url = sanitize_image_url(Some(form.image_url));
-    let (top_left_x, top_left_y) = map_coarse_click_to_native(
-        form.x,
-        form.y,
-        600.0,
-        340.0,
-        form.width,
-        form.height,
-    );
+    let image_url = sanitize_image_url(Some(form.image_url.clone()));
+
+    let (top_left_x, top_left_y, is_valid_selection) = match (form.manual_x, form.manual_y) {
+        (Some(mx), Some(my)) => {
+            (mx.min(form.width.saturating_sub(1)), my.min(form.height.saturating_sub(1)), true)
+        }
+        _ => {
+            if form.x == 0 && form.y == 0 {
+                // Keyboard activation of <input type="image"> sends x=0, y=0 without click coordinates.
+                // Treat (0,0) without explicit manual entry as a "no pick" keyboard trigger.
+                (0, 0, false)
+            } else {
+                let (nx, ny) = map_coarse_click_to_native(
+                    form.x,
+                    form.y,
+                    form.width as f64,
+                    form.height as f64,
+                    form.width,
+                    form.height,
+                );
+                (nx, ny, true)
+            }
+        }
+    };
+
+    if !is_valid_selection {
+        let magnifier = ImageMagnifier::new(&image_url, form.width, form.height, None, None);
+        return HtmlTemplate(RegionPickerTopLeftTemplate {
+            user: user.clone(),
+            csrf_token: user.csrf_token,
+            automation_id: form.automation_id,
+            image_url,
+            width: form.width,
+            height: form.height,
+            step_stage: 1,
+            top_left_x: None,
+            top_left_y: None,
+            bottom_right_x: None,
+            bottom_right_y: None,
+            click_x: None,
+            click_y: None,
+            magnifier,
+            return_to: form.return_to,
+            mode: form.mode,
+            step_id: form.step_id,
+            reference_bitmap_id: form.reference_bitmap_id,
+            error_msg: Some("Keyboard selection detected (0, 0). Please enter precise pixel coordinates in the manual numeric input fields below, or click directly on the image.".to_string()),
+        })
+        .into_response();
+    }
 
     let magnifier = ImageMagnifier::new(
         &image_url,
@@ -903,13 +956,14 @@ pub async fn post_pick_region_top_left_handler(
         top_left_y: Some(top_left_y),
         bottom_right_x: None,
         bottom_right_y: None,
-        click_x: Some(form.x),
-        click_y: Some(form.y),
+        click_x: Some(top_left_x),
+        click_y: Some(top_left_y),
         magnifier,
         return_to: form.return_to,
         mode: form.mode,
         step_id: form.step_id,
         reference_bitmap_id: form.reference_bitmap_id,
+        error_msg: None,
     })
     .into_response()
 }
@@ -920,77 +974,91 @@ pub async fn post_pick_region_top_left_handler(
 pub async fn post_automation_pick_region_top_left_handler(
     user: AuthUser,
     Path(id): Path<i64>,
-    CsrfForm(form): CsrfForm<PickRegionTopLeftForm>,
+    mut form: CsrfForm<PickRegionTopLeftForm>,
 ) -> Response {
-    let (top_left_x, top_left_y) = map_coarse_click_to_native(
-        form.x,
-        form.y,
-        600.0,
-        340.0,
-        form.width,
-        form.height,
-    );
-
-    let magnifier = ImageMagnifier::new(
-        &form.image_url,
-        form.width,
-        form.height,
-        Some(top_left_x),
-        Some(top_left_y),
-    );
-
-    HtmlTemplate(RegionPickerTopLeftTemplate {
-        user: user.clone(),
-        csrf_token: user.csrf_token,
-        automation_id: Some(id),
-        image_url: form.image_url,
-        width: form.width,
-        height: form.height,
-        step_stage: 2,
-        top_left_x: Some(top_left_x),
-        top_left_y: Some(top_left_y),
-        bottom_right_x: None,
-        bottom_right_y: None,
-        click_x: Some(form.x),
-        click_y: Some(form.y),
-        magnifier,
-        return_to: form.return_to,
-        mode: form.mode,
-        step_id: form.step_id,
-        reference_bitmap_id: form.reference_bitmap_id,
-    })
-    .into_response()
+    form.0.automation_id = Some(id);
+    post_pick_region_top_left_handler(user, form).await
 }
 
 /// POST /bitmaps/pick-region/bottom-right
-/// Processes grid view or coarse image click coordinates for bottom-right corner selection.
+/// Processes grid view, coarse image click coordinates, or manual numeric entries for bottom-right corner selection.
 #[tracing::instrument(skip(user, form))]
 pub async fn post_pick_region_bottom_right_handler(
     user: AuthUser,
     CsrfForm(form): CsrfForm<PickRegionBottomRightForm>,
 ) -> Response {
-    let image_url = sanitize_image_url(Some(form.image_url));
-    let (raw_br_x, raw_br_y) = if let (Some(gx), Some(gy)) = (form.grid_x, form.grid_y) {
-        map_grid_click_to_native(
-            gx,
-            gy,
-            form.top_left_x,
-            form.top_left_y,
-            form.width,
-            form.height,
-        )
-    } else if let (Some(cx), Some(cy)) = (form.coarse_x, form.coarse_y) {
-        map_coarse_click_to_native(
-            cx,
-            cy,
-            600.0,
-            340.0,
-            form.width,
-            form.height,
-        )
-    } else {
-        (form.top_left_x, form.top_left_y)
+    let image_url = sanitize_image_url(Some(form.image_url.clone()));
+
+    let (raw_br_x, raw_br_y, is_valid_selection) = match (form.manual_x, form.manual_y) {
+        (Some(mx), Some(my)) => {
+            (mx.min(form.width.saturating_sub(1)), my.min(form.height.saturating_sub(1)), true)
+        }
+        _ => {
+            if let (Some(gx), Some(gy)) = (form.grid_x, form.grid_y) {
+                if gx == 0 && gy == 0 {
+                    (0, 0, false)
+                } else {
+                    let (nx, ny) = map_grid_click_to_native(
+                        gx,
+                        gy,
+                        form.top_left_x,
+                        form.top_left_y,
+                        form.width,
+                        form.height,
+                    );
+                    (nx, ny, true)
+                }
+            } else if let (Some(cx), Some(cy)) = (form.coarse_x, form.coarse_y) {
+                if cx == 0 && cy == 0 {
+                    (0, 0, false)
+                } else {
+                    let (nx, ny) = map_coarse_click_to_native(
+                        cx,
+                        cy,
+                        form.width as f64,
+                        form.height as f64,
+                        form.width,
+                        form.height,
+                    );
+                    (nx, ny, true)
+                }
+            } else {
+                (form.top_left_x, form.top_left_y, false)
+            }
+        }
     };
+
+    if !is_valid_selection {
+        let magnifier = ImageMagnifier::new(
+            &image_url,
+            form.width,
+            form.height,
+            Some(form.top_left_x),
+            Some(form.top_left_y),
+        );
+        return HtmlTemplate(RegionPickerTopLeftTemplate {
+            user: user.clone(),
+            csrf_token: user.csrf_token,
+            automation_id: form.automation_id,
+            image_url,
+            width: form.width,
+            height: form.height,
+            step_stage: 2,
+            top_left_x: Some(form.top_left_x),
+            top_left_y: Some(form.top_left_y),
+            bottom_right_x: None,
+            bottom_right_y: None,
+            click_x: None,
+            click_y: None,
+            magnifier,
+            return_to: form.return_to,
+            mode: form.mode,
+            step_id: form.step_id,
+            reference_bitmap_id: form.reference_bitmap_id,
+            error_msg: Some("Keyboard selection detected (0, 0). Please enter precise pixel coordinates in the manual numeric input fields below, or click directly on the image / grid.".to_string()),
+        })
+        .into_response();
+    }
 
     let norm_tl_x = form.top_left_x.min(raw_br_x);
     let norm_tl_y = form.top_left_y.min(raw_br_y);
@@ -1017,13 +1085,14 @@ pub async fn post_pick_region_bottom_right_handler(
         top_left_y: Some(norm_tl_y),
         bottom_right_x: Some(norm_br_x),
         bottom_right_y: Some(norm_br_y),
-        click_x: form.grid_x.or(form.coarse_x),
-        click_y: form.grid_y.or(form.coarse_y),
+        click_x: Some(norm_br_x),
+        click_y: Some(norm_br_y),
         magnifier,
         return_to: form.return_to,
         mode: form.mode,
         step_id: form.step_id,
         reference_bitmap_id: form.reference_bitmap_id,
+        error_msg: None,
     })
     .into_response()
 }
@@ -1391,5 +1460,62 @@ mod tests {
         assert_eq!(norm_tl_y, 200);
         assert_eq!(crop_w, 200);
         assert_eq!(crop_h, 200);
+    }
+
+    #[test]
+    fn test_pick_region_numeric_entry_and_keyboard_no_pick_logic() {
+        let _dummy_user = crate::auth::AuthUser {
+            id: 1,
+            username: "testuser".to_string(),
+            display_name: "Test User".to_string(),
+            role: crate::auth::UserRole::Editor,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf".to_string(),
+            must_change_password: false,
+        };
+
+        // 1. Explicit manual numeric entry overrides click coordinates
+        let form_manual = PickRegionTopLeftForm {
+            csrf_token: "test_csrf".to_string(),
+            automation_id: None,
+            image_url: "/static/sample_screenshot.png".to_string(),
+            width: 1920,
+            height: 1080,
+            return_to: None,
+            mode: None,
+            step_id: None,
+            reference_bitmap_id: None,
+            x: 0,
+            y: 0,
+            manual_x: Some(500),
+            manual_y: Some(300),
+        };
+
+        let (tl_x, tl_y, is_valid) = match (form_manual.manual_x, form_manual.manual_y) {
+            (Some(mx), Some(my)) => (mx.min(1919), my.min(1079), true),
+            _ => (0, 0, false),
+        };
+        assert!(is_valid);
+        assert_eq!((tl_x, tl_y), (500, 300));
+
+        // 2. Keyboard submission sending (0,0) without manual entry is recognized as "no pick"
+        let form_keyboard = PickRegionTopLeftForm {
+            csrf_token: "test_csrf".to_string(),
+            automation_id: None,
+            image_url: "/static/sample_screenshot.png".to_string(),
+            width: 1920,
+            height: 1080,
+            return_to: None,
+            mode: None,
+            step_id: None,
+            reference_bitmap_id: None,
+            x: 0,
+            y: 0,
+            manual_x: None,
+            manual_y: None,
+        };
+
+        let is_no_pick = form_keyboard.x == 0 && form_keyboard.y == 0 && form_keyboard.manual_x.is_none();
+        assert!(is_no_pick);
     }
 }

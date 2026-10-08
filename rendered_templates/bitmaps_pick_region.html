@@ -52,12 +52,14 @@ Region Picker - DeskDispatch
     </p>
 </div>
 
-<div class="card" style="max-width: 800px; margin: 0 auto; padding: 2rem;">
+<div class="card" style="max-width: 900px; margin: 0 auto; padding: 2rem;">
+
+
 
     <div style="margin-bottom: 1.5rem;">
         <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 1: Click Top-Left Corner</h2>
         <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
-            Click directly on the image below to set the coarse <strong>top-left corner</strong> of the selection region.
+            Click directly on the image inside the scroll container to set the <strong>top-left corner</strong> of the selection region, or type coordinates manually below.
         </p>
     </div>
 
@@ -74,8 +76,23 @@ Region Picker - DeskDispatch
 
 
 
-        <div style="position: relative; display: inline-block;">
-            <input type="image" name="click" src="/static/sample_screenshot.png" alt="Click top-left corner" style="width: 600px; height: 340px; object-fit: contain; border: 2px solid var(--color-primary); border-radius: 4px; cursor: crosshair; background: #111;">
+        <div style="max-width: 100%; max-height: 500px; overflow: auto; border: 2px solid var(--color-primary); border-radius: 4px; background: #111;">
+            <input type="image" id="picker-image-top-left" name="click" src="/static/sample_screenshot.png" alt="Click top-left corner on native image" width="1920" height="1080" style="display: block; cursor: crosshair;">
+        </div>
+
+        <div class="card" style="width: 100%; box-sizing: border-box; background: var(--color-bg-secondary); padding: 1rem; margin-top: 0.5rem;">
+            <h3 style="font-size: 0.9375rem; font-weight: 600; margin-top: 0; margin-bottom: 0.75rem;">Manual Coordinate Entry (Accessible Path)</h3>
+            <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                    <label for="manual_x_tl" style="font-weight: 600; font-size: 0.8125rem;">X Coordinate (0-1919):</label>
+                    <input type="number" id="manual_x_tl" name="manual_x" min="0" max="1919" placeholder="e.g. 100" style="padding: 0.4rem 0.6rem; border: 1px solid var(--color-border); border-radius: 4px; width: 140px; background: var(--color-bg); color: var(--color-text);">
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                    <label for="manual_y_tl" style="font-weight: 600; font-size: 0.8125rem;">Y Coordinate (0-1079):</label>
+                    <input type="number" id="manual_y_tl" name="manual_y" min="0" max="1079" placeholder="e.g. 100" style="padding: 0.4rem 0.6rem; border: 1px solid var(--color-border); border-radius: 4px; width: 140px; background: var(--color-bg); color: var(--color-text);">
+                </div>
+                <button type="submit" class="btn btn-primary" style="padding: 0.45rem 1rem; background: var(--color-primary); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">Submit Coordinates</button>
+            </div>
         </div>
 
         <div style="display: flex; gap: 1rem; width: 100%; justify-content: flex-end; margin-top: 1rem;">
