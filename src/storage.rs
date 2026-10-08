@@ -532,4 +532,85 @@ mod tests {
             .unwrap()
             .starts_with("my_key/"));
     }
+
+    #[test]
+    fn test_rewrite_url_with_public_endpoint() {
+        // 1. Matching internal endpoint with trailing slashes handling
+        let url = "http://minio.internal:9000/bucket/key.png?sig=123".to_string();
+        let rewritten = rewrite_url_with_public_endpoint(
+            url.clone(),
+            Some("http://minio.internal:9000/"),
+            Some("https://s3.public.com/"),
+        );
+        assert_eq!(
+            rewritten,
+            "https://s3.public.com/bucket/key.png?sig=123"
+        );
+
+        // 2. Missing internal or public endpoint
+        assert_eq!(
+            rewrite_url_with_public_endpoint(url.clone(), None, Some("https://s3.public.com")),
+            url
+        );
+        assert_eq!(
+            rewrite_url_with_public_endpoint(url.clone(), Some("http://minio.internal:9000"), None),
+            url
+        );
+
+        // 3. Non-matching internal endpoint URL
+        let non_matching_url = "http://other-host.internal:9000/bucket/key.png".to_string();
+        assert_eq!(
+            rewrite_url_with_public_endpoint(
+                non_matching_url.clone(),
+                Some("http://minio.internal:9000"),
+                Some("https://s3.public.com")
+            ),
+            non_matching_url
+        );
+    }
+
+    #[tokio::test]
+    async fn test_storage_service_public_endpoint_rewriting() {
+        let credentials = aws_sdk_s3::config::Credentials::new(
+            "test_access_key",
+            "test_secret_key",
+            None,
+            None,
+            "static",
+        );
+        let s3_config = aws_sdk_s3::config::Builder::new()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .credentials_provider(credentials)
+            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .endpoint_url("http://minio.internal:9000")
+            .force_path_style(true)
+            .build();
+
+        let s3_client = Client::from_conf(s3_config);
+        let storage = StorageService::new(s3_client, "test-bucket")
+            .with_credentials("key", "secret", "us-east-1", Some("http://minio.internal:9000"))
+            .with_public_endpoint(Some("https://s3.public.com"));
+
+        // GET URL rewriting
+        let get_url = storage
+            .generate_presigned_get_url("item.png", Duration::from_secs(300))
+            .await
+            .unwrap();
+        assert!(
+            get_url.starts_with("https://s3.public.com/test-bucket/item.png"),
+            "Expected GET URL to start with public endpoint, got: {}",
+            get_url
+        );
+
+        // PUT URL rewriting
+        let put_url = storage
+            .generate_presigned_put_url("item.png", Duration::from_secs(300))
+            .await
+            .unwrap();
+        assert!(
+            put_url.starts_with("https://s3.public.com/test-bucket/item.png"),
+            "Expected PUT URL to start with public endpoint, got: {}",
+            put_url
+        );
+    }
 }
