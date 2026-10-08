@@ -11,6 +11,7 @@ pub mod runs;
 pub mod schedules;
 pub mod static_assets;
 pub mod deletion_tests;
+pub mod users;
 pub mod workers;
 
 pub use account::{get_password_handler, post_password_handler};
@@ -27,4 +28,5 @@ pub use recordings::*;
 pub use runs::*;
 pub use schedules::*;
 pub use static_assets::static_asset_handler;
+pub use users::*;
 pub use workers::*;

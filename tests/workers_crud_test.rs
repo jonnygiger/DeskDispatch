@@ -60,6 +60,7 @@ fn test_worker_templates_rendering() {
         role: UserRole::Admin,
         session_id: Uuid::new_v4(),
         csrf_token: "test_csrf_token_123".to_string(),
+        must_change_password: false,
     };
 
     let worker_item = WorkerPcItem {

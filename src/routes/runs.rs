@@ -881,6 +881,7 @@ mod tests {
             role: UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "csrf".to_string(),
+            must_change_password: false,
         };
 
         let list_tmpl = RunsListTemplate {

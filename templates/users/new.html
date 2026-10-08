@@ -1,0 +1,68 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Create New User - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "users") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="margin-bottom: 1.5rem;">
+    <h1 class="dashboard-title">Create New User</h1>
+    <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Add a new user account with role-based permissions.</p>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    {% if let Some(err) = error %}
+    <div class="alert alert-danger" style="margin-bottom: 1.5rem;">
+        {{ err }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/users">
+        {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="username" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Username</label>
+            <input type="text" id="username" name="username" value="{{ username }}" required style="width: 100%; padding: 0.625rem; border: 1px solid var(--color-border); border-radius: 6px; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="display_name" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Display Name</label>
+            <input type="text" id="display_name" name="display_name" value="{{ display_name }}" required style="width: 100%; padding: 0.625rem; border: 1px solid var(--color-border); border-radius: 6px; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="role" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Role</label>
+            <select id="role" name="role" required style="width: 100%; padding: 0.625rem; border: 1px solid var(--color-border); border-radius: 6px; box-sizing: border-box;">
+                <option value="editor" {% if role == "editor" %}selected{% endif %}>Editor (Full automation/schedule edit rights)</option>
+                <option value="admin" {% if role == "admin" %}selected{% endif %}>Admin (Full administrative & user management rights)</option>
+                <option value="viewer" {% if role == "viewer" %}selected{% endif %}>Viewer (Read-only access)</option>
+            </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="password" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Password (min 8 characters)</label>
+            <input type="password" id="password" name="password" required style="width: 100%; padding: 0.625rem; border: 1px solid var(--color-border); border-radius: 6px; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="confirm_password" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Confirm Password</label>
+            <input type="password" id="confirm_password" name="confirm_password" required style="width: 100%; padding: 0.625rem; border: 1px solid var(--color-border); border-radius: 6px; box-sizing: border-box;">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" name="must_change_password" value="true" {% if must_change_password %}checked{% endif %}>
+                <span>Force password change on first login</span>
+            </label>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+            <a href="/users" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">Create User</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

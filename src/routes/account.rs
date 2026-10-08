@@ -158,7 +158,7 @@ pub async fn post_password_handler(
         }
     };
 
-    if let Err(e) = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+    if let Err(e) = sqlx::query("UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2")
         .bind(new_password_hash)
         .bind(user.id)
         .execute(&state.db)

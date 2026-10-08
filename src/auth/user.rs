@@ -141,6 +141,7 @@ pub struct AuthUser {
     pub role: UserRole,
     pub session_id: Uuid,
     pub csrf_token: String,
+    pub must_change_password: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +168,7 @@ struct SessionUserRow {
     display_name: String,
     role: String,
     session_id: Uuid,
+    must_change_password: bool,
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -188,7 +190,7 @@ impl FromRequestParts<AppState> for AuthUser {
 
         let record = sqlx::query_as::<_, SessionUserRow>(
             r#"
-            SELECT u.id, u.username, u.display_name, u.role, s.id as session_id
+            SELECT u.id, u.username, u.display_name, u.role, s.id as session_id, u.must_change_password
             FROM sessions s
             JOIN users u ON s.user_id = u.id
             WHERE s.id = $1 AND s.expires_at > now() AND u.is_active = true
@@ -210,6 +212,13 @@ impl FromRequestParts<AppState> for AuthUser {
 
         let csrf_token = super::csrf::generate_csrf_token(record.session_id, state.config.session_secret.expose_secret());
 
+        if record.must_change_password
+            && parts.uri.path() != "/account/password"
+            && parts.uri.path() != "/logout"
+        {
+            return Err(Redirect::to("/account/password").into_response());
+        }
+
         Ok(AuthUser {
             id: record.id,
             username: record.username,
@@ -217,6 +226,7 @@ impl FromRequestParts<AppState> for AuthUser {
             role,
             session_id: record.session_id,
             csrf_token,
+            must_change_password: record.must_change_password,
         })
     }
 }

@@ -8,6 +8,7 @@ use app::routes::media::DevMagnifierTemplate;
 use app::routes::recordings::*;
 use app::routes::runs::*;
 use app::routes::schedules::*;
+use app::routes::users::*;
 use app::routes::workers::*;
 use askama::Template;
 use chrono::Utc;
@@ -33,6 +34,7 @@ fn main() {
         role: UserRole::Admin,
         session_id: uuid::Uuid::new_v4(),
         csrf_token: "test_csrf_token_12345".to_string(),
+        must_change_password: false,
     };
     let sample_runs = vec![
         RecentRunItem {
@@ -479,6 +481,55 @@ fn main() {
         error: None,
     };
     fs::write("rendered_templates/schedules_form.html", schedule_form_tmpl.render().unwrap()).unwrap();
+
+    let users_idx_tmpl = UsersIndexTemplate {
+        user: user.clone(),
+        users: vec![UserListItem {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: UserRole::Admin,
+            is_active: true,
+            must_change_password: false,
+            created_at: Utc::now(),
+            last_login_at: Some(Utc::now()),
+        }],
+        error: None,
+        success: None,
+    };
+    fs::write("rendered_templates/users_index.html", users_idx_tmpl.render().unwrap()).unwrap();
+
+    let user_new_tmpl = NewUserTemplate {
+        user: user.clone(),
+        username: "jdoe".to_string(),
+        display_name: "John Doe".to_string(),
+        role: "editor".to_string(),
+        must_change_password: true,
+        error: None,
+    };
+    fs::write("rendered_templates/users_new.html", user_new_tmpl.render().unwrap()).unwrap();
+
+    let user_edit_tmpl = EditUserTemplate {
+        user: user.clone(),
+        target_user_id: 1,
+        username: "admin".to_string(),
+        display_name: "Admin User".to_string(),
+        role: "admin".to_string(),
+        is_active: true,
+        must_change_password: false,
+        error: None,
+    };
+    fs::write("rendered_templates/users_edit.html", user_edit_tmpl.render().unwrap()).unwrap();
+
+    let user_reset_tmpl = ResetPasswordTemplate {
+        user: user.clone(),
+        target_user_id: 1,
+        target_username: "admin".to_string(),
+        target_display_name: "Admin User".to_string(),
+        must_change_password: true,
+        error: None,
+    };
+    fs::write("rendered_templates/users_reset_password.html", user_reset_tmpl.render().unwrap()).unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

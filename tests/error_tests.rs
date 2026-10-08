@@ -24,6 +24,7 @@ fn test_not_found_template_rendering() {
         role: UserRole::Viewer,
         session_id: Uuid::new_v4(),
         csrf_token: "csrf_12345".to_string(),
+        must_change_password: false,
     };
 
     // 1. Without user
@@ -52,6 +53,7 @@ fn test_internal_server_error_template_rendering() {
         role: UserRole::Admin,
         session_id: Uuid::new_v4(),
         csrf_token: "csrf_67890".to_string(),
+        must_change_password: false,
     };
 
     // 1. Default message
