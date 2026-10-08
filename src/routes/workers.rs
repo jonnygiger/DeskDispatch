@@ -176,6 +176,7 @@ mod tests {
             role: crate::auth::UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "test_csrf_token".to_string(),
+            must_change_password: false,
         };
 
         let tmpl = WorkerNewTemplate {
@@ -201,6 +202,7 @@ mod tests {
             role: crate::auth::UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "test_csrf_token".to_string(),
+            must_change_password: false,
         };
 
         let worker = WorkerDetail {

@@ -918,6 +918,7 @@ mod tests {
             role: crate::auth::UserRole::Editor,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "csrf_token_test".to_string(),
+            must_change_password: false,
         };
 
         let template_with_selections = ScheduleFormTemplate {

@@ -1,0 +1,97 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}User Management - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "users") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+        <h1 class="dashboard-title" style="margin: 0;">User Management</h1>
+        <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Manage platform users, roles, permissions, and accounts.</p>
+    </div>
+    <div>
+        <a href="/users/new" class="btn btn-primary">+ Create New User</a>
+    </div>
+</div>
+
+{% if let Some(err) = error %}
+<div class="alert alert-danger" style="margin-bottom: 1.5rem;">
+    {{ err }}
+</div>
+{% endif %}
+
+{% if let Some(succ) = success %}
+<div class="alert alert-success" style="margin-bottom: 1.5rem;">
+    {{ succ }}
+</div>
+{% endif %}
+
+<div class="card" style="padding: 0; overflow: hidden;">
+    <div style="padding: 1rem 1.25rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin: 0;">Users</h2>
+    </div>
+    {% if users.is_empty() %}
+        <div style="padding: 2rem; text-align: center; color: var(--color-text-muted);">
+            No users found.
+        </div>
+    {% else %}
+        <table class="table" style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <th style="padding: 0.75rem 1rem;">Username</th>
+                    <th style="padding: 0.75rem 1rem;">Display Name</th>
+                    <th style="padding: 0.75rem 1rem;">Role</th>
+                    <th style="padding: 0.75rem 1rem;">Status</th>
+                    <th style="padding: 0.75rem 1rem;">Password Status</th>
+                    <th style="padding: 0.75rem 1rem;">Last Login</th>
+                    <th style="padding: 0.75rem 1rem; text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr style="border-bottom: 1px solid var(--color-border);">
+                    <td style="padding: 0.75rem 1rem; font-weight: 600;">
+                        {{ u.username }}
+                    </td>
+                    <td style="padding: 0.75rem 1rem;">{{ u.display_name }}</td>
+                    <td style="padding: 0.75rem 1rem;">
+                        <span class="badge {{ u.role_badge_class() }}">{{ u.role }}</span>
+                    </td>
+                    <td style="padding: 0.75rem 1rem;">
+                        <span class="badge {{ u.status_badge_class() }}">
+                            {% if u.is_active %}Active{% else %}Inactive{% endif %}
+                        </span>
+                    </td>
+                    <td style="padding: 0.75rem 1rem; font-size: 0.875rem;">
+                        {% if u.must_change_password %}
+                            <span class="badge badge-neutral" style="color: #b45309; background: #fef3c7;">Must Change</span>
+                        {% else %}
+                            <span style="color: var(--color-text-muted);">Normal</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.75rem 1rem; font-size: 0.875rem; color: var(--color-text-muted);">
+                        {{ u.formatted_last_login() }}
+                    </td>
+                    <td style="padding: 0.75rem 1rem; text-align: right;">
+                        <div style="display: inline-flex; gap: 0.5rem;">
+                            <a href="/users/{{ u.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <a href="/users/{{ u.id }}/reset-password" class="btn btn-sm btn-outline">Reset Password</a>
+                            {% if u.is_active %}
+                            <form method="post" action="/users/{{ u.id }}/deactivate" style="display: inline;" onsubmit="return confirm('Are you sure you want to deactivate user {{ u.username }}? Their active sessions will be terminated.');">
+                                {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+                                <button type="submit" class="btn btn-sm btn-danger-outline">Deactivate</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
+{% endblock %}

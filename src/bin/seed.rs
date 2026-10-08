@@ -28,8 +28,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _result = sqlx::query(
         r#"
-        INSERT INTO users (username, password_hash, display_name, role, is_active)
-        VALUES ($1, $2, $3, 'admin', true)
+        INSERT INTO users (username, password_hash, display_name, role, is_active, must_change_password)
+        VALUES ($1, $2, $3, 'admin', true, true)
         ON CONFLICT (username) DO UPDATE
         SET password_hash = EXCLUDED.password_hash,
             display_name = EXCLUDED.display_name,

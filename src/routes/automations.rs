@@ -4695,6 +4695,7 @@ mod tests {
             role: UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "test_csrf".to_string(),
+            must_change_password: false,
         };
 
         let vars = vec![
@@ -4775,6 +4776,7 @@ mod tests {
             role: UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "test_csrf".to_string(),
+            must_change_password: false,
         };
 
         let vars = vec![
@@ -4817,6 +4819,7 @@ mod tests {
             role: UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "test_csrf".to_string(),
+            must_change_password: false,
         };
 
         let vars = vec![
@@ -4951,6 +4954,7 @@ mod tests {
             role: UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "test_csrf_token".to_string(),
+            must_change_password: false,
         };
 
         let automation = AutomationDetail {
@@ -5004,6 +5008,7 @@ mod tests {
             role: UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "test_csrf".to_string(),
+            must_change_password: false,
         };
 
         let automation = AutomationDetail {

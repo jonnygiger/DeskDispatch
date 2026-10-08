@@ -134,6 +134,7 @@ fn test_top_nav_bar_role_conditional_rendering() {
         role: UserRole::Admin,
         session_id: Uuid::new_v4(),
         csrf_token: "csrf_token_admin".to_string(),
+        must_change_password: false,
     };
     let admin_tmpl = IndexTemplate {
         user: admin_user,
@@ -162,6 +163,7 @@ fn test_top_nav_bar_role_conditional_rendering() {
         role: UserRole::Editor,
         session_id: Uuid::new_v4(),
         csrf_token: "csrf_token_editor".to_string(),
+        must_change_password: false,
     };
     let editor_tmpl = IndexTemplate {
         user: editor_user,
@@ -186,6 +188,7 @@ fn test_top_nav_bar_role_conditional_rendering() {
         role: UserRole::Viewer,
         session_id: Uuid::new_v4(),
         csrf_token: "csrf_token_viewer".to_string(),
+        must_change_password: false,
     };
     let viewer_tmpl = IndexTemplate {
         user: viewer_user,

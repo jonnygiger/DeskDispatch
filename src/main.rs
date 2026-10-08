@@ -233,7 +233,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/worker-groups/new", get(get_new_worker_group_handler))
         .route("/worker-groups", post(post_create_worker_group_handler))
         .route("/worker-groups/{id}/edit", get(get_edit_worker_group_handler).post(post_edit_worker_group_handler))
-        .route("/worker-groups/{id}/delete", post(post_delete_worker_group_handler));
+        .route("/worker-groups/{id}/delete", post(post_delete_worker_group_handler))
+        .route("/users", get(get_users_handler).post(post_create_user_handler))
+        .route("/users/new", get(get_new_user_handler))
+        .route("/users/{id}", post(post_edit_user_handler))
+        .route("/users/{id}/edit", get(get_edit_user_handler))
+        .route("/users/{id}/deactivate", post(post_deactivate_user_handler))
+        .route("/users/{id}/reset-password", get(get_reset_password_handler).post(post_reset_password_handler));
 
     if !config.is_production() {
         app = app.route("/dev/magnifier-verify", get(dev_magnifier_verify_handler));
@@ -302,8 +308,8 @@ async fn create_admin_user(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error
 
     sqlx::query(
         r#"
-        INSERT INTO users (username, password_hash, display_name, role, is_active)
-        VALUES ($1, $2, $3, 'admin', true)
+        INSERT INTO users (username, password_hash, display_name, role, is_active, must_change_password)
+        VALUES ($1, $2, $3, 'admin', true, true)
         ON CONFLICT (username) DO UPDATE
         SET password_hash = EXCLUDED.password_hash,
             display_name = EXCLUDED.display_name,

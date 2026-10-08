@@ -780,6 +780,7 @@ mod tests {
             role: UserRole::Admin,
             session_id: uuid::Uuid::new_v4(),
             csrf_token: "test_csrf_token".to_string(),
+            must_change_password: false,
         };
 
         let worker = WorkerDetail {
