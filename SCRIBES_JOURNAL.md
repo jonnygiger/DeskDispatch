@@ -11,3 +11,7 @@ Action: Updated `README.md` Table of Contents, Route Map, Worker API Reference, 
 ## 2025-05-20 - Background Data Retention & Storage Cleanup Configuration
 Learning: Background maintenance jobs (session pruning, audit log pruning, step log pruning, screenshot cleanup, abandoned S3 upload cleanup, and orphan S3 object GC) in `src/retention.rs` are executed hourly in `main.rs` and configurable via environment variables, but were entirely omitted from the feature documentation.
 Action: Documented the automated retention service under `## Features & System Capabilities` with explicit details on default retention windows and S3 storage maintenance routines.
+
+## 2025-05-20 - Reverse Proxy Header Trust Configuration
+Learning: The `TRUST_PROXY_HEADERS` environment flag and corresponding `extract_client_ip` proxy header parsing logic (`X-Forwarded-For` / `X-Real-IP`) in `src/routes/auth.rs` was fully implemented but missing from `README.md`.
+Action: Documented `TRUST_PROXY_HEADERS` under `## Security & Access Control` explaining client IP extraction, rate limiting context, and anti-spoofing defaults when deployed behind reverse proxies.
