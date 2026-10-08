@@ -588,31 +588,62 @@ pub async fn get_workers_handler(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let workers_rows = match sqlx::query_as::<_, WorkerDetailRow>(
-        r#"
-        SELECT
-            w.id,
-            w.hostname,
-            w.display_name,
-            w.status,
-            w.last_heartbeat_at,
-            w.screen_width,
-            w.screen_height,
-            w.os_info,
-            w.agent_version,
-            w.created_at,
-            CASE
-                WHEN w.registration_token_expires_at > now() AND w.registration_token_hash IS NOT NULL
-                THEN '[Pending activation]'
-                ELSE NULL
-            END AS registration_token
-        FROM task_worker_pcs w
-        ORDER BY w.display_name ASC, w.id ASC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    {
+    // Bolt Optimization: Run all 4 independent queries (worker PCs, worker group memberships,
+    // worker groups, and group members) concurrently using `tokio::join!`. This roughly quarters
+    // database wait latency for worker management views from 4 sequential round-trips down to 1.
+    let (workers_res, worker_groups_mappings_res, groups_res, member_mappings_res) = tokio::join!(
+        sqlx::query_as::<_, WorkerDetailRow>(
+            r#"
+            SELECT
+                w.id,
+                w.hostname,
+                w.display_name,
+                w.status,
+                w.last_heartbeat_at,
+                w.screen_width,
+                w.screen_height,
+                w.os_info,
+                w.agent_version,
+                w.created_at,
+                CASE
+                    WHEN w.registration_token_expires_at > now() AND w.registration_token_hash IS NOT NULL
+                    THEN '[Pending activation]'
+                    ELSE NULL
+                END AS registration_token
+            FROM task_worker_pcs w
+            ORDER BY w.display_name ASC, w.id ASC
+            "#,
+        )
+        .fetch_all(&state.db),
+        sqlx::query(
+            r#"
+            SELECT m.worker_id, g.name
+            FROM worker_group_members m
+            JOIN worker_groups g ON g.id = m.group_id
+            ORDER BY g.name ASC
+            "#,
+        )
+        .fetch_all(&state.db),
+        sqlx::query_as::<_, WorkerGroupSimple>(
+            r#"
+            SELECT id, name, description
+            FROM worker_groups
+            ORDER BY name ASC
+            "#,
+        )
+        .fetch_all(&state.db),
+        sqlx::query(
+            r#"
+            SELECT m.group_id, w.display_name
+            FROM worker_group_members m
+            JOIN task_worker_pcs w ON w.id = m.worker_id
+            ORDER BY w.display_name ASC
+            "#,
+        )
+        .fetch_all(&state.db),
+    );
+
+    let workers_rows = match workers_res {
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!("Failed to fetch task_worker_pcs: {}", e);
@@ -624,20 +655,21 @@ pub async fn get_workers_handler(
         }
     };
 
-    // Optimization: Bulk-fetch worker group memberships in a single query to eliminate N+1 DB queries per worker
+    let groups_rows = match groups_res {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!("Failed to fetch worker_groups: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load worker groups",
+            )
+                .into_response();
+        }
+    };
+
     let mut worker_groups_map: std::collections::HashMap<i64, Vec<String>> =
         std::collections::HashMap::new();
-    if let Ok(group_mappings) = sqlx::query(
-        r#"
-        SELECT m.worker_id, g.name
-        FROM worker_group_members m
-        JOIN worker_groups g ON g.id = m.group_id
-        ORDER BY g.name ASC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    {
+    if let Ok(group_mappings) = worker_groups_mappings_res {
         for r in group_mappings {
             let worker_id: i64 = r.get("worker_id");
             let group_name: String = r.get("name");
@@ -664,41 +696,9 @@ pub async fn get_workers_handler(
         });
     }
 
-    let groups_rows = match sqlx::query_as::<_, WorkerGroupSimple>(
-        r#"
-        SELECT id, name, description
-        FROM worker_groups
-        ORDER BY name ASC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            tracing::error!("Failed to fetch worker_groups: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load worker groups",
-            )
-                .into_response();
-        }
-    };
-
-    // Optimization: Bulk-fetch group members in a single query to eliminate N+1 DB queries per group
     let mut group_members_map: std::collections::HashMap<i64, Vec<String>> =
         std::collections::HashMap::new();
-    if let Ok(member_mappings) = sqlx::query(
-        r#"
-        SELECT m.group_id, w.display_name
-        FROM worker_group_members m
-        JOIN task_worker_pcs w ON w.id = m.worker_id
-        ORDER BY w.display_name ASC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    {
+    if let Ok(member_mappings) = member_mappings_res {
         for r in member_mappings {
             let group_id: i64 = r.get("group_id");
             let display_name: String = r.get("display_name");
@@ -838,30 +838,30 @@ pub async fn get_edit_worker_handler(
         }
     };
 
-    let assigned_groups: Vec<WorkerGroupSimple> = sqlx::query_as::<_, WorkerGroupSimple>(
-        r#"
-        SELECT g.id, g.name, g.description
-        FROM worker_groups g
-        JOIN worker_group_members m ON g.id = m.group_id
-        WHERE m.worker_id = $1
-        ORDER BY g.name ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let (assigned_groups_res, all_groups_res) = tokio::join!(
+        sqlx::query_as::<_, WorkerGroupSimple>(
+            r#"
+            SELECT g.id, g.name, g.description
+            FROM worker_groups g
+            JOIN worker_group_members m ON g.id = m.group_id
+            WHERE m.worker_id = $1
+            ORDER BY g.name ASC
+            "#,
+        )
+        .bind(id)
+        .fetch_all(&state.db),
+        sqlx::query_as::<_, WorkerGroupSimple>(
+            r#"
+            SELECT id, name, description
+            FROM worker_groups
+            ORDER BY name ASC
+            "#,
+        )
+        .fetch_all(&state.db),
+    );
 
-    let all_groups: Vec<WorkerGroupSimple> = sqlx::query_as::<_, WorkerGroupSimple>(
-        r#"
-        SELECT id, name, description
-        FROM worker_groups
-        ORDER BY name ASC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let assigned_groups = assigned_groups_res.unwrap_or_default();
+    let all_groups = all_groups_res.unwrap_or_default();
 
     let worker = WorkerDetail {
         id: row.id,
@@ -1154,24 +1154,24 @@ pub async fn get_edit_worker_group_handler(
         }
     };
 
-    let member_worker_ids: Vec<i64> = sqlx::query_scalar::<_, i64>(
-        "SELECT worker_id FROM worker_group_members WHERE group_id = $1",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let (member_ids_res, all_workers_res) = tokio::join!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT worker_id FROM worker_group_members WHERE group_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&state.db),
+        sqlx::query_as::<_, WorkerSimple>(
+            r#"
+            SELECT id, hostname, display_name
+            FROM task_worker_pcs
+            ORDER BY display_name ASC
+            "#,
+        )
+        .fetch_all(&state.db),
+    );
 
-    let all_workers: Vec<WorkerSimple> = sqlx::query_as::<_, WorkerSimple>(
-        r#"
-        SELECT id, hostname, display_name
-        FROM task_worker_pcs
-        ORDER BY display_name ASC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let member_worker_ids = member_ids_res.unwrap_or_default();
+    let all_workers = all_workers_res.unwrap_or_default();
 
     HtmlTemplate(WorkerGroupFormTemplate {
         user,
