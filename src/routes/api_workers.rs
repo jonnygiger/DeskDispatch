@@ -387,6 +387,8 @@ pub async fn fetch_full_automation_json_with_overrides(
                     step_json["x"] = serde_json::json!(r.get::<i32, _>("x"));
                     step_json["y"] = serde_json::json!(r.get::<i32, _>("y"));
                     step_json["output_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_variable_id"));
+                    step_json["timeout_ms"] = serde_json::json!(5000);
+                    step_json["retry_interval_ms"] = serde_json::json!(250);
                 }
             }
             "find_bitmap" => {
@@ -401,6 +403,8 @@ pub async fn fetch_full_automation_json_with_overrides(
                     step_json["output_found_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_found_variable_id"));
                     step_json["output_x_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_x_variable_id"));
                     step_json["output_y_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_y_variable_id"));
+                    step_json["timeout_ms"] = serde_json::json!(5000);
+                    step_json["retry_interval_ms"] = serde_json::json!(250);
                 }
             }
             "branch" => {
@@ -419,6 +423,8 @@ pub async fn fetch_full_automation_json_with_overrides(
                             "expected_b": exp_b,
                             "expected_rgb": [exp_r, exp_g, exp_b],
                             "tolerance": r.get::<Option<i16>, _>("tolerance").unwrap_or(0),
+                            "timeout_ms": 5000,
+                            "retry_interval_ms": 250
                         })
                     } else {
                         serde_json::json!({
@@ -430,12 +436,16 @@ pub async fn fetch_full_automation_json_with_overrides(
                             "search_width": r.get::<Option<i32>, _>("search_width"),
                             "search_height": r.get::<Option<i32>, _>("search_height"),
                             "match_threshold": r.get::<Option<f32>, _>("match_threshold"),
+                            "timeout_ms": 5000,
+                            "retry_interval_ms": 250
                         })
                     };
 
                     step_json["condition"] = condition_obj;
                     step_json["on_match_step_id"] = serde_json::json!(r.get::<Option<i64>, _>("on_match_step_id"));
                     step_json["on_no_match_step_id"] = serde_json::json!(r.get::<Option<i64>, _>("on_no_match_step_id"));
+                    step_json["timeout_ms"] = serde_json::json!(5000);
+                    step_json["retry_interval_ms"] = serde_json::json!(250);
                 }
             }
             _ => {}
@@ -753,6 +763,59 @@ pub async fn post_step_result_handler(
                 .into_response();
         }
     };
+
+    // Enforce max step execution count limit (1000 steps per task run)
+    let step_count: i64 = match sqlx::query_scalar(
+        "SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1",
+    )
+    .bind(task_run_id)
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(cnt) => cnt,
+        Err(e) => {
+            tracing::error!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                "Error checking step execution count: {}",
+                e
+            );
+            let _ = tx.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Database error checking step count".to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if step_count >= 1000 {
+        let _ = sqlx::query(
+            "UPDATE task_runs SET status = 'failed', completed_at = now(), error_message = $1 WHERE id = $2",
+        )
+        .bind("Exceeded maximum allowed step count limit (1000 steps)")
+        .bind(task_run_id)
+        .execute(&mut *tx)
+        .await;
+
+        let _ = tx.commit().await;
+        tracing::warn!(
+            worker_id = worker.id,
+            task_run_id = task_run_id,
+            step_count = step_count,
+            "Failing task run due to exceeding max step count limit (1000 steps)"
+        );
+
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Exceeded maximum allowed step count limit (1000 steps)".to_string(),
+            }),
+        )
+            .into_response();
+    }
 
     // Validate step_id belongs to this task run's automation
     let step_valid: Option<i64> = match sqlx::query_scalar(
@@ -1189,6 +1252,25 @@ pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::E
     let count = result.rows_affected();
     if count > 0 {
         tracing::info!(count = count, "Swept stalled task runs with silent heartbeats to lost status");
+    }
+
+    let timed_out_result = sqlx::query(
+        r#"
+        UPDATE task_runs
+        SET status = 'failed',
+            completed_at = now(),
+            error_message = COALESCE(error_message, 'Task run exceeded maximum execution timeout (3600 seconds)')
+        WHERE status IN ('running', 'cancelling')
+          AND started_at IS NOT NULL
+          AND started_at < now() - INTERVAL '3600 seconds'
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    let timeout_count = timed_out_result.rows_affected();
+    if timeout_count > 0 {
+        tracing::info!(count = timeout_count, "Swept timed out task runs (>3600s) to failed status");
     }
 
     let rec_result = sqlx::query(

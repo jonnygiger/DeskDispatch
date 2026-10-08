@@ -1922,9 +1922,31 @@ pub async fn post_automation_edit_handler(
     }
 
     let description = form.description.unwrap_or_default().trim().to_string();
-    let status = match form.status.as_str() {
-        "active" | "archived" | "draft" => form.status,
-        _ => "draft".to_string(),
+    let requested_status = form.status.as_str();
+
+    let final_status = if requested_status == "active" {
+        if let Err(lint_errors) = crate::validation::validate_automation_for_activation(&state.db, id).await {
+            let error_msgs: Vec<String> = lint_errors.iter().map(|e| e.to_string()).collect();
+            let combined_err = format!("Cannot activate automation due to validation errors: {}", error_msgs.join("; "));
+            tracing::warn!(automation_id = id, errors = %combined_err, "Refusing activation due to lint errors");
+
+            let flash = crate::auth::FlashMessage::error(combined_err);
+            let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+            return (
+                [
+                    (axum::http::header::SET_COOKIE, c1),
+                    (axum::http::header::SET_COOKIE, c2),
+                ],
+                Redirect::to(&format!("/automations/{}", id)),
+            )
+                .into_response();
+        }
+        "active".to_string()
+    } else {
+        match requested_status {
+            "archived" | "draft" => requested_status.to_string(),
+            _ => "draft".to_string(),
+        }
     };
 
     let res = sqlx::query(
@@ -1932,7 +1954,7 @@ pub async fn post_automation_edit_handler(
     )
     .bind(name)
     .bind(&description)
-    .bind(&status)
+    .bind(&final_status)
     .bind(id)
     .execute(&state.db)
     .await;
@@ -1944,7 +1966,7 @@ pub async fn post_automation_edit_handler(
             "update_automation",
             "automation",
             Some(id),
-            Some(serde_json::json!({ "name": name, "description": description, "status": status })),
+            Some(serde_json::json!({ "name": name, "description": description, "status": final_status })),
         )
         .await;
     }
@@ -2071,6 +2093,23 @@ pub async fn post_run_now_automation_handler(
             "Refusing Run Now trigger for non-active automation"
         );
         let flash = crate::auth::FlashMessage::error("Cannot run non-active automation.");
+        let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+        return (
+            [
+                (axum::http::header::SET_COOKIE, c1),
+                (axum::http::header::SET_COOKIE, c2),
+            ],
+            Redirect::to(&format!("/automations/{}", id)),
+        )
+            .into_response();
+    }
+
+    if let Err(lint_errors) = crate::validation::validate_automation_for_activation(&state.db, id).await {
+        let error_msgs: Vec<String> = lint_errors.iter().map(|e| e.to_string()).collect();
+        let combined_err = format!("Cannot run automation due to validation errors: {}", error_msgs.join("; "));
+        tracing::warn!(automation_id = id, errors = %combined_err, "Refusing Run Now trigger due to lint errors");
+
+        let flash = crate::auth::FlashMessage::error(combined_err);
         let (c1, c2) = crate::auth::build_flash_cookie(&flash);
         return (
             [

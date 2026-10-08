@@ -6,6 +6,7 @@ pub mod picker;
 pub mod retention;
 pub mod routes;
 pub mod storage;
+pub mod validation;
 
 use config::Config;
 use secrecy::ExposeSecret;
