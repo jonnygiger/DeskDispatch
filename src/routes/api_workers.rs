@@ -168,6 +168,15 @@ pub async fn fetch_full_automation_json(
     conn: &mut sqlx::PgConnection,
     automation_id: i64,
 ) -> Result<serde_json::Value, sqlx::Error> {
+    fetch_full_automation_json_with_overrides(conn, automation_id, None).await
+}
+
+#[tracing::instrument(skip(conn))]
+pub async fn fetch_full_automation_json_with_overrides(
+    conn: &mut sqlx::PgConnection,
+    automation_id: i64,
+    overrides: Option<&std::collections::HashMap<String, String>>,
+) -> Result<serde_json::Value, sqlx::Error> {
     let auto_row = sqlx::query(
         "SELECT id, name, description, status FROM automations WHERE id = $1",
     )
@@ -200,7 +209,12 @@ pub async fn fetch_full_automation_json(
     for p in param_rows {
         let pname: String = p.get("name");
         let ptype: String = p.get("param_type");
-        let pval_str: String = p.get("default_value");
+        let default_val_str: String = p.get("default_value");
+
+        let pval_str = overrides
+            .and_then(|o| o.get(&pname))
+            .cloned()
+            .unwrap_or(default_val_str);
 
         let val = match ptype.as_str() {
             "int" => pval_str.parse::<i64>().map(serde_json::Value::from).unwrap_or(serde_json::Value::String(pval_str)),

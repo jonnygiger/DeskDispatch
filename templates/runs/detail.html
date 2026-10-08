@@ -60,6 +60,36 @@
     </div>
 </div>
 
+{% if !parameters.is_empty() %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Execution Parameters</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Parameter Name</th>
+                <th>Value</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for param in parameters %}
+            <tr>
+                <td><strong>{{ param.name }}</strong></td>
+                <td><code style="background: rgba(0,0,0,0.05); padding: 0.2rem 0.4rem; border-radius: 4px;">{{ param.value }}</code></td>
+                <td>
+                    {% if param.is_override %}
+                        <span class="badge badge-warning">Override</span>
+                    {% else %}
+                        <span class="badge badge-neutral">Default</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 {% if !variable_values.is_empty() %}
 <div class="card" style="margin-bottom: 1.5rem;">
     <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Captured Variable Values</h2>

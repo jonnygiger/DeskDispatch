@@ -130,6 +130,18 @@ impl StepViewItem {
     }
 }
 
+#[derive(Debug, Clone, serde::Deserialize, sqlx::FromRow)]
+pub struct WorkerGroupOption {
+    pub id: i64,
+    pub name: String,
+}
+
+impl WorkerGroupOption {
+    pub fn is_selected(&self, selected_id: &Option<i64>) -> bool {
+        *selected_id == Some(self.id)
+    }
+}
+
 #[derive(Template)]
 #[template(path = "automations/detail.html")]
 pub struct AutomationDetailTemplate {
@@ -137,6 +149,8 @@ pub struct AutomationDetailTemplate {
     pub csrf_token: String,
     pub automation: AutomationDetail,
     pub steps: Vec<StepViewItem>,
+    pub worker_groups: Vec<WorkerGroupOption>,
+    pub parameters: Vec<AutomationParameterItem>,
     pub active_tab: String,
     pub error: Option<String>,
     pub success: Option<String>,
@@ -153,6 +167,8 @@ pub struct EditAutomationForm {
 pub struct RunNowForm {
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub worker_group_id: Option<i64>,
+    #[serde(default)]
+    pub parameters: std::collections::HashMap<String, String>,
 }
 
 #[derive(Template)]
@@ -1595,11 +1611,20 @@ pub async fn get_automation_detail_handler(
         });
     }
 
+    let (worker_groups_res, parameters_res) = tokio::join!(
+        sqlx::query_as::<_, WorkerGroupOption>("SELECT id, name FROM worker_groups ORDER BY name ASC").fetch_all(&state.db),
+        sqlx::query_as::<_, AutomationParameterItem>("SELECT id, automation_id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC, id ASC").bind(id).fetch_all(&state.db)
+    );
+    let worker_groups = worker_groups_res.unwrap_or_default();
+    let parameters = parameters_res.unwrap_or_default();
+
     HtmlTemplate(AutomationDetailTemplate {
         user,
         csrf_token,
         automation,
         steps,
+        worker_groups,
+        parameters,
         active_tab: "steps".to_string(),
         error: None,
         success: None,
@@ -2100,66 +2125,140 @@ pub async fn post_run_now_automation_handler(
 
     let target_worker_group_id = form.worker_group_id;
 
+    // Fetch defined parameters for type validation & filtering overrides
+    let defined_params = sqlx::query_as::<_, AutomationParameterItem>(
+        "SELECT id, automation_id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let mut clean_overrides = std::collections::HashMap::new();
+    for param in &defined_params {
+        if let Some(val) = form.parameters.get(&param.name) {
+            let val_trimmed = val.trim();
+            if !val_trimmed.is_empty() {
+                if let Err(e) = validate_parameter_default_value(&param.param_type, val_trimmed) {
+                    tracing::warn!(automation_id = id, error = %e, "Invalid parameter override value");
+                    let flash = crate::auth::FlashMessage::error(e);
+                    let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+                    return (
+                        [
+                            (axum::http::header::SET_COOKIE, c1),
+                            (axum::http::header::SET_COOKIE, c2),
+                        ],
+                        Redirect::to(&format!("/automations/{}", id)),
+                    )
+                        .into_response();
+                }
+                clean_overrides.insert(param.name.clone(), val_trimmed.to_string());
+            }
+        }
+    }
+
+    let parameter_overrides_json = if clean_overrides.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!(clean_overrides))
+    };
+
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            tracing::error!("Failed to begin transaction for run now: {}", e);
+            let flash = crate::auth::FlashMessage::error("Database error.");
+            let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+            return (
+                [
+                    (axum::http::header::SET_COOKIE, c1),
+                    (axum::http::header::SET_COOKIE, c2),
+                ],
+                Redirect::to(&format!("/automations/{}", id)),
+            )
+                .into_response();
+        }
+    };
+
     let run_res = sqlx::query(
         r#"
-        INSERT INTO task_runs (automation_id, schedule_id, worker_id, target_worker_group_id, status, triggered_by_user_id, queued_at)
-        VALUES ($1, NULL, NULL, $2, 'queued', $3, now())
+        INSERT INTO task_runs (automation_id, schedule_id, worker_id, target_worker_group_id, parameter_overrides, status, triggered_by_user_id, queued_at)
+        VALUES ($1, NULL, NULL, $2, $3, 'queued', $4, now())
         RETURNING id
         "#,
     )
     .bind(id)
     .bind(target_worker_group_id)
+    .bind(&parameter_overrides_json)
     .bind(user.id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await;
 
-    match run_res {
-        Ok(row) => {
-            let task_run_id: i64 = row.get("id");
-            tracing::info!(
-                task_run_id = task_run_id,
-                automation_id = id,
-                target_worker_group_id = ?target_worker_group_id,
-                "Manually queued task run for automation"
-            );
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "trigger_run_now",
-                "task_run",
-                Some(task_run_id),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "target_worker_group_id": target_worker_group_id,
-                })),
-            )
-            .await;
-
-            let flash = crate::auth::FlashMessage::success(format!("Run #{} queued successfully.", task_run_id));
-            let (c1, c2) = crate::auth::build_flash_cookie(&flash);
-            (
-                [
-                    (axum::http::header::SET_COOKIE, c1),
-                    (axum::http::header::SET_COOKIE, c2),
-                ],
-                Redirect::to(&format!("/automations/{}", id)),
-            )
-                .into_response()
-        }
+    let task_run_id: i64 = match run_res {
+        Ok(row) => row.get("id"),
         Err(e) => {
             tracing::error!("Failed to queue manual task run for automation {}: {}", id, e);
+            let _ = tx.rollback().await;
             let flash = crate::auth::FlashMessage::error("Failed to queue run.");
             let (c1, c2) = crate::auth::build_flash_cookie(&flash);
-            (
+            return (
                 [
                     (axum::http::header::SET_COOKIE, c1),
                     (axum::http::header::SET_COOKIE, c2),
                 ],
                 Redirect::to(&format!("/automations/{}", id)),
             )
-                .into_response()
+                .into_response();
         }
+    };
+
+    // Pre-snapshot full automation payload incorporating parameter overrides
+    let overrides_ref = if clean_overrides.is_empty() { None } else { Some(&clean_overrides) };
+    if let Ok(automation_json) = crate::routes::api_workers::fetch_full_automation_json_with_overrides(&mut *tx, id, overrides_ref).await {
+        let _ = sqlx::query(
+            "UPDATE task_runs SET dispatched_automation_json = $1 WHERE id = $2",
+        )
+        .bind(&automation_json)
+        .bind(task_run_id)
+        .execute(&mut *tx)
+        .await;
     }
+
+    if let Err(e) = tx.commit().await {
+        tracing::error!("Failed to commit transaction for task run {}: {}", task_run_id, e);
+    }
+
+    tracing::info!(
+        task_run_id = task_run_id,
+        automation_id = id,
+        target_worker_group_id = ?target_worker_group_id,
+        "Manually queued task run for automation"
+    );
+
+    let _ = log_audit(
+        &state.db,
+        Some(user.id),
+        "trigger_run_now",
+        "task_run",
+        Some(task_run_id),
+        Some(serde_json::json!({
+            "automation_id": id,
+            "target_worker_group_id": target_worker_group_id,
+            "parameter_overrides": clean_overrides,
+        })),
+    )
+    .await;
+
+    let flash = crate::auth::FlashMessage::success(format!("Run #{} queued successfully.", task_run_id));
+    let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+    (
+        [
+            (axum::http::header::SET_COOKIE, c1),
+            (axum::http::header::SET_COOKIE, c2),
+        ],
+        Redirect::to(&format!("/runs/{}", task_run_id)),
+    )
+        .into_response()
 }
 
 /// GET /automations/{id}/steps/new
@@ -4840,6 +4939,8 @@ mod tests {
             csrf_token: "test_csrf_token".to_string(),
             automation,
             steps,
+            worker_groups: vec![],
+            parameters: vec![],
             active_tab: "steps".to_string(),
             error: None,
             success: None,
@@ -4882,6 +4983,8 @@ mod tests {
             csrf_token: "test_csrf".to_string(),
             automation: automation.clone(),
             steps: vec![],
+            worker_groups: vec![],
+            parameters: vec![],
             active_tab: "steps".to_string(),
             error: None,
             success: None,
