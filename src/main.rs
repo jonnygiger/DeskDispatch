@@ -1,23 +1,15 @@
-use app::{
-    auth::{csrf_middleware, security_headers_middleware, LoginRateLimiter},
+use deskdispatch::{
+    auth::LoginRateLimiter,
+    build_router,
     config::Config,
     routes::*,
     AppState,
 };
 use secrecy::ExposeSecret;
 use argon2::{Argon2, PasswordHasher};
-use axum::{
-    extract::State,
-    http::StatusCode,
-    middleware,
-    response::IntoResponse,
-    routing::{get, post},
-    Router,
-};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::net::SocketAddr;
-use tower_http::compression::CompressionLayer;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -136,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Run retention jobs every 1 hour (120 * 30s)
             if retention_counter == 0 {
-                app::retention::run_all_retention_jobs(
+                deskdispatch::retention::run_all_retention_jobs(
                     &db_pool,
                     &retention_s3_client,
                     &retention_config,
@@ -147,116 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let mut app = Router::new()
-        .route("/livez", get(livez_handler))
-        .route("/readyz", get(readyz_handler))
-        .route("/healthz", get(readyz_handler))
-        .route("/static/{*path}", get(static_asset_handler))
-        .route("/login", get(get_login_handler).post(post_login_handler))
-        .route("/logout", post(post_logout_handler))
-        .route(
-            "/account/password",
-            get(get_password_handler).post(post_password_handler),
-        )
-        .route("/", get(get_index_handler))
-        .route("/automations", get(get_automations_handler).post(post_automations_handler))
-        .route("/automations/new", get(get_new_automation_handler))
-        .route("/automations/{id}", get(get_automation_detail_handler).post(post_automation_edit_handler))
-        .route("/automations/{id}/run-now", post(post_run_now_automation_handler))
-        .route("/automations/{id}/delete", get(get_automation_delete_handler).post(post_automation_delete_handler))
-        .route("/automations/{id}/variables", get(get_automation_variables_handler).post(post_create_automation_variable_handler))
-        .route("/automations/{id}/variables/{vid}", post(post_update_automation_variable_handler))
-        .route("/automations/{id}/variables/{vid}/delete", post(post_delete_automation_variable_handler))
-        .route("/automations/{id}/parameters", get(get_automation_parameters_handler).post(post_create_automation_parameter_handler))
-        .route("/automations/{id}/parameters/{pid}", post(post_update_automation_parameter_handler))
-        .route("/automations/{id}/parameters/{pid}/delete", post(post_delete_automation_parameter_handler))
-        .route("/automations/{id}/steps/new", get(get_step_type_picker_handler))
-        .route("/automations/{id}/steps/new/key_press", get(get_new_key_press_step_handler))
-        .route("/automations/{id}/steps/new/mouse_click", get(get_new_mouse_click_step_handler))
-        .route("/automations/{id}/steps/new/find_pixel_rgb", get(get_new_find_pixel_rgb_step_handler))
-        .route("/automations/{id}/steps/new/find_bitmap", get(get_new_find_bitmap_step_handler))
-        .route("/automations/{id}/steps/new/branch", get(get_new_branch_step_handler))
-        .route("/automations/{id}/steps", post(post_create_step_handler))
-        .route("/automations/{id}/steps/{sid}/edit", get(get_edit_step_handler))
-        .route("/automations/{id}/steps/{sid}", post(post_edit_step_handler))
-        .route("/automations/{id}/steps/{sid}/move-up", post(post_move_step_up_handler))
-        .route("/automations/{id}/steps/{sid}/move-down", post(post_move_step_down_handler))
-        .route("/automations/{id}/steps/{sid}/delete", post(post_delete_step_handler))
-        .route("/bitmaps", get(get_bitmaps_handler).post(post_bitmaps_handler))
-        .route("/bitmaps/{id}/delete", post(post_delete_bitmap_handler))
-        .route("/automations/{id}/bitmaps", get(get_automation_bitmaps_handler).post(post_automation_bitmaps_handler))
-        .route("/automations/{id}/bitmaps/{bid}/delete", post(post_automation_delete_bitmap_handler))
-        .route("/bitmaps/commit", get(get_bitmap_commit_handler).post(post_bitmap_commit_handler))
-        .route("/bitmaps/pick-region", get(get_pick_region_handler).post(post_pick_region_top_left_handler))
-        .route("/bitmaps/pick-region/bottom-right", post(post_pick_region_bottom_right_handler))
-        .route("/bitmaps/pick-region/confirm", post(post_pick_region_confirm_handler))
-        .route("/automations/{id}/bitmaps/pick-region", get(get_automation_pick_region_handler).post(post_automation_pick_region_top_left_handler))
-        .route("/automations/{id}/bitmaps/pick-region/bottom-right", post(post_automation_pick_region_bottom_right_handler))
-        .route("/automations/{id}/bitmaps/pick-region/confirm", post(post_automation_pick_region_confirm_handler))
-        .route("/media/screenshots/{id}", get(get_media_screenshot_handler))
-        .route("/media/bitmaps/{id}", get(get_media_bitmap_handler))
-        .route("/schedules", get(get_schedules_handler).post(post_create_schedule_handler))
-        .route("/schedules/new", get(get_new_schedule_handler))
-        .route("/schedules/{id}/edit", get(get_edit_schedule_handler))
-        .route("/schedules/{id}", post(post_edit_schedule_handler))
-        .route("/schedules/{id}/toggle", post(post_toggle_schedule_handler))
-        .route("/schedules/{id}/delete", post(post_delete_schedule_handler))
-        .route("/api/v1/workers/register", post(post_register_worker_handler))
-        .route("/api/v1/workers/heartbeat", post(post_heartbeat_handler))
-        .route("/api/v1/workers/next-assignment", get(get_next_assignment_handler))
-        .route("/api/v1/workers/task-runs/{id}", get(get_task_run_handler))
-        .route("/api/v1/workers/task-runs/{id}/step-result", post(post_step_result_handler))
-        .route("/api/v1/workers/task-runs/{id}/complete", post(post_complete_task_run_handler))
-        .route("/api/v1/workers/task-runs/{id}/screenshot-upload-url", get(get_task_run_screenshot_upload_url_handler))
-        .route("/api/v1/workers/task-runs/{id}/screenshots/commit", post(post_task_run_screenshot_commit_handler))
-        .route("/api/v1/workers/recordings/{id}/events", post(post_recording_events_handler))
-        .route("/api/v1/workers/recordings/{id}/screenshot-upload-url", get(get_recording_screenshot_upload_url_handler))
-        .route("/api/v1/workers/recordings/{id}/stop", post(post_worker_stop_recording_handler))
-        .route("/workers/{id}/record", get(get_worker_record_start_handler))
-        .route("/workers/{id}/record/start", post(post_worker_record_start_handler))
-        .route("/recordings/{id}", get(get_recording_status_handler))
-        .route("/recordings/{id}/stop", post(post_recording_stop_handler))
-        .route("/recordings/{id}/review", get(get_recording_review_handler))
-        .route("/recordings/{id}/discard", post(post_recording_discard_handler))
-        .route("/recordings/{id}/convert", post(post_recording_convert_handler))
-        .route("/runs", get(get_runs_handler))
-        .route("/runs/{id}", get(get_run_detail_handler))
-        .route("/runs/{id}/status-frame", get(get_run_status_frame_handler))
-        .route("/runs/{id}/cancel", post(post_cancel_run_handler))
-        .route("/workers", get(get_workers_handler).post(post_create_worker_handler))
-        .route("/workers/new", get(get_new_worker_handler))
-        .route("/workers/{id}", get(get_worker_detail_handler))
-        .route("/workers/{id}/edit", get(get_edit_worker_handler).post(post_edit_worker_handler))
-        .route("/workers/{id}/delete", post(post_delete_worker_handler))
-        .route("/workers/{id}/deactivate", post(post_deactivate_worker_handler))
-        .route("/workers/{id}/rotate-key", post(post_rotate_worker_key_handler))
-        .route("/worker-groups/new", get(get_new_worker_group_handler))
-        .route("/worker-groups", post(post_create_worker_group_handler))
-        .route("/worker-groups/{id}/edit", get(get_edit_worker_group_handler).post(post_edit_worker_group_handler))
-        .route("/worker-groups/{id}/delete", post(post_delete_worker_group_handler))
-        .route("/users", get(get_users_handler).post(post_create_user_handler))
-        .route("/users/new", get(get_new_user_handler))
-        .route("/users/{id}", post(post_edit_user_handler))
-        .route("/users/{id}/edit", get(get_edit_user_handler))
-        .route("/users/{id}/deactivate", post(post_deactivate_user_handler))
-        .route("/users/{id}/reset-password", get(get_reset_password_handler).post(post_reset_password_handler));
-
-    if !config.is_production() {
-        app = app.route("/dev/magnifier-verify", get(dev_magnifier_verify_handler));
-    }
-
-    let app = app
-        .fallback(not_found_handler)
-        .layer(CompressionLayer::new())
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            csrf_middleware,
-        ))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            security_headers_middleware,
-        ))
-        .with_state(state);
+    let app = build_router(state);
 
     let addr: SocketAddr = config.bind_address.parse().expect("Invalid BIND_ADDRESS");
     info!("Listening on {}", addr);
@@ -422,16 +305,16 @@ fn init_tracing(config: &Config) {
     }
 }
 
-async fn livez_handler() -> impl IntoResponse {
-    (StatusCode::OK, "OK")
+pub async fn livez_handler() -> impl axum::response::IntoResponse {
+    (axum::http::StatusCode::OK, "OK")
 }
 
-async fn readyz_handler(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn readyz_handler(axum::extract::State(state): axum::extract::State<AppState>) -> impl axum::response::IntoResponse {
     match sqlx::query("SELECT 1").execute(&state.db).await {
-        Ok(_) => (StatusCode::OK, "OK"),
+        Ok(_) => (axum::http::StatusCode::OK, "OK"),
         Err(err) => {
-            error!("Readyz check failed: {}", err);
-            (StatusCode::SERVICE_UNAVAILABLE, "Database connection error")
+            tracing::error!("Readyz check failed: {}", err);
+            (axum::http::StatusCode::SERVICE_UNAVAILABLE, "Database connection error")
         }
     }
 }

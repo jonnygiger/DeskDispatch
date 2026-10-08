@@ -2,8 +2,16 @@ use axum::{
     extract::Path,
     http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
+    routing::get,
+    Router,
 };
 use rust_embed::RustEmbed;
+
+use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new().route("/static/{*path}", get(static_asset_handler))
+}
 
 #[derive(RustEmbed)]
 #[folder = "static/"]

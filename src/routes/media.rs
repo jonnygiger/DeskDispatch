@@ -11,7 +11,16 @@ use sqlx::Row;
 use crate::auth::AuthUser;
 use crate::magnifier::ImageMagnifier;
 use crate::routes::auth::HtmlTemplate;
+use axum::routing::get;
+use axum::Router;
+
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/media/screenshots/{id}", get(get_media_screenshot_handler))
+        .route("/media/bitmaps/{id}", get(get_media_bitmap_handler))
+}
 
 #[derive(Debug, Deserialize)]
 pub struct DevMagnifierQuery {

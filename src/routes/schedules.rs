@@ -12,7 +12,20 @@ use std::str::FromStr;
 
 use super::auth::HtmlTemplate;
 use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
+use axum::routing::{get, post};
+use axum::Router;
+
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/schedules", get(get_schedules_handler).post(post_create_schedule_handler))
+        .route("/schedules/new", get(get_new_schedule_handler))
+        .route("/schedules/{id}/edit", get(get_edit_schedule_handler))
+        .route("/schedules/{id}", post(post_edit_schedule_handler))
+        .route("/schedules/{id}/toggle", post(post_toggle_schedule_handler))
+        .route("/schedules/{id}/delete", post(post_delete_schedule_handler))
+}
 
 #[derive(Debug, Clone)]
 pub struct ScheduleItem {

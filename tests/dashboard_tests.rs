@@ -1,7 +1,7 @@
-use app::auth::LoginRateLimiter;
-use app::config::Config;
-use app::routes::get_index_handler;
-use app::AppState;
+use deskdispatch::auth::LoginRateLimiter;
+use deskdispatch::config::Config;
+use deskdispatch::routes::get_index_handler;
+use deskdispatch::AppState;
 use argon2::{PasswordHasher, Argon2};
 use axum::{
     body::Body,
@@ -129,13 +129,7 @@ async fn test_dashboard_stats_tiles() {
         task_queue_notifier: tx_notify,
     };
 
-    let app = Router::new()
-        .route("/", get(get_index_handler))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            app::auth::csrf_middleware,
-        ))
-        .with_state(state);
+    let app = deskdispatch::build_router(state);
 
     let cookie_header = format!("session_id={}", session_id);
     let req = Request::builder()

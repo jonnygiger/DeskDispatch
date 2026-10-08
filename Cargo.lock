@@ -72,40 +72,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "askama",
- "aws-config",
- "aws-sdk-s3",
- "axum",
- "base64 0.23.1",
- "chrono",
- "chrono-tz",
- "croner",
- "dotenvy",
- "hex",
- "hmac 0.13.0",
- "image",
- "mime_guess",
- "rust-embed",
- "secrecy",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sha2 0.11.0",
- "sqlx",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1319,6 +1285,50 @@ checksum = "ab63b0e2bf4d5928aff72e83a7dace85d7bba5fe12dcc3c5a572d78caffd3f3c"
 dependencies = [
  "derive_builder_core",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "deskdispatch"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "askama",
+ "aws-config",
+ "aws-sdk-s3",
+ "axum",
+ "base64 0.23.1",
+ "chrono",
+ "chrono-tz",
+ "croner",
+ "deskdispatch-protocol",
+ "dotenvy",
+ "hex",
+ "hmac 0.13.0",
+ "image",
+ "mime_guess",
+ "rust-embed",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2 0.11.0",
+ "sqlx",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "deskdispatch-protocol"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

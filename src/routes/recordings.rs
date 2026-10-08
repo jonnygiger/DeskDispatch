@@ -12,7 +12,21 @@ use super::auth::HtmlTemplate;
 use super::workers::WorkerDetail;
 use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
 use crate::magnifier::ImageMagnifier;
+use axum::routing::{get, post};
+use axum::Router;
+
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/workers/{id}/record", get(get_worker_record_start_handler))
+        .route("/workers/{id}/record/start", post(post_worker_record_start_handler))
+        .route("/recordings/{id}", get(get_recording_status_handler))
+        .route("/recordings/{id}/stop", post(post_recording_stop_handler))
+        .route("/recordings/{id}/review", get(get_recording_review_handler))
+        .route("/recordings/{id}/discard", post(post_recording_discard_handler))
+        .route("/recordings/{id}/convert", post(post_recording_convert_handler))
+}
 
 #[derive(Debug, Clone)]
 pub struct RecordingSessionDetail {

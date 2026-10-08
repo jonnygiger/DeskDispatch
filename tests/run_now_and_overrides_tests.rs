@@ -1,4 +1,4 @@
-use app::{
+use deskdispatch::{
     config::Config,
     routes::*,
     AppState,
@@ -63,7 +63,7 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -75,12 +75,12 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
         .route("/runs/{id}/cancel", axum::routing::post(post_cancel_run_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("run_now_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
-    let csrf_token = app::auth::generate_csrf_token(
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );

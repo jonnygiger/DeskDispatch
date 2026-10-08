@@ -1,4 +1,4 @@
-use app::{
+use deskdispatch::{
     config::Config,
     routes::*,
     AppState,
@@ -63,7 +63,7 @@ async fn test_automations_crud_and_steps_ordering() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -83,12 +83,12 @@ async fn test_automations_crud_and_steps_ordering() {
         .route("/automations/{id}/steps/{sid}/delete", axum::routing::post(post_delete_step_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("auto_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
-    let csrf_token = app::auth::generate_csrf_token(
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
@@ -234,7 +234,7 @@ async fn test_mouse_click_step_crud_and_validation() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -247,12 +247,12 @@ async fn test_mouse_click_step_crud_and_validation() {
         .route("/automations/{id}/steps/{sid}", axum::routing::post(post_edit_step_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("mc_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
-    let csrf_token = app::auth::generate_csrf_token(
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
@@ -425,7 +425,7 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -438,12 +438,12 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
         .route("/automations/{id}/steps/{sid}", axum::routing::post(post_edit_step_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("fp_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
-    let csrf_token = app::auth::generate_csrf_token(
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
@@ -610,7 +610,7 @@ async fn test_step_type_picker_interface() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -618,7 +618,7 @@ async fn test_step_type_picker_interface() {
         .route("/automations/{id}/steps/new", axum::routing::get(get_step_type_picker_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
@@ -668,7 +668,7 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -681,12 +681,12 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         .route("/automations/{id}/steps/{sid}", axum::routing::post(post_edit_step_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("branch_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
-    let csrf_token = app::auth::generate_csrf_token(
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
@@ -868,7 +868,7 @@ async fn test_automation_parameters_crud_and_validation() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -879,12 +879,12 @@ async fn test_automation_parameters_crud_and_validation() {
         .route("/automations/{id}/parameters/{pid}/delete", axum::routing::post(post_delete_automation_parameter_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
     let (_admin_id, admin_session) = create_test_user(&pool, &format!("param_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
-    let csrf_token = app::auth::generate_csrf_token(
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );

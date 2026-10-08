@@ -1,6 +1,6 @@
-use app::auth::WorkerAuth;
-use app::config::Config;
-use app::AppState;
+use deskdispatch::auth::WorkerAuth;
+use deskdispatch::config::Config;
+use deskdispatch::AppState;
 use axum::{
     body::Body,
     http::{header::AUTHORIZATION, Request, StatusCode},
@@ -75,7 +75,7 @@ async fn test_worker_auth_extractor_integration() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 

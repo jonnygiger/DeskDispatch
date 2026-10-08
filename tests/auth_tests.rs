@@ -1,14 +1,14 @@
-use app::auth::{
+use deskdispatch::auth::{
     clear_session_cookie, create_session_cookie, generate_csrf_token,
     validate_csrf_token, LoginRateLimiter, UserRole,
 };
 use secrecy::ExposeSecret;
-use app::config::Config;
-use app::routes::{
+use deskdispatch::config::Config;
+use deskdispatch::routes::{
     get_index_handler, get_login_handler, get_password_handler, post_login_handler,
     post_logout_handler, post_password_handler,
 };
-use app::AppState;
+use deskdispatch::AppState;
 use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
@@ -122,8 +122,8 @@ fn test_session_cookie_formatting() {
 
 #[test]
 fn test_top_nav_bar_role_conditional_rendering() {
-    use app::auth::AuthUser;
-    use app::routes::home::IndexTemplate;
+    use deskdispatch::auth::AuthUser;
+    use deskdispatch::routes::home::IndexTemplate;
     use askama::Template;
 
     // 1. Admin role: "Users" link should be present in top nav
@@ -314,7 +314,7 @@ async fn test_full_auth_and_password_workflow() {
         .route("/", get(get_index_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
@@ -370,7 +370,7 @@ async fn test_full_auth_and_password_workflow() {
     assert!(html.contains("Change Password"));
 
     // Extract session ID and generate CSRF token
-    let session_id = app::auth::session::extract_session_id(&cookie_header).unwrap();
+    let session_id = deskdispatch::auth::session::extract_session_id(&cookie_header).unwrap();
     let csrf_token = generate_csrf_token(session_id, config.session_secret.expose_secret());
 
     // 4. POST /account/password with wrong current password

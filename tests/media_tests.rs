@@ -1,4 +1,4 @@
-use app::{
+use deskdispatch::{
     config::Config,
     routes::*,
     AppState,
@@ -66,18 +66,11 @@ async fn test_media_screenshot_redirects() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tx,
     };
 
-    let app = Router::new()
-        .route("/media/screenshots/{id}", axum::routing::get(get_media_screenshot_handler))
-        .route("/media/bitmaps/{id}", axum::routing::get(get_media_bitmap_handler))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            app::auth::csrf_middleware,
-        ))
-        .with_state(state);
+    let app = deskdispatch::build_router(state);
 
     let (user_id, session) = create_test_user(&pool, &format!("media_user_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
 

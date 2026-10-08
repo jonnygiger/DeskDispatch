@@ -10,7 +10,18 @@ use std::time::Duration;
 use super::auth::HtmlTemplate;
 use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
 use crate::magnifier::ImageMagnifier;
+use axum::routing::{get, post};
+use axum::Router;
+
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/runs", get(get_runs_handler))
+        .route("/runs/{id}", get(get_run_detail_handler))
+        .route("/runs/{id}/status-frame", get(get_run_status_frame_handler))
+        .route("/runs/{id}/cancel", post(post_cancel_run_handler))
+}
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct RunsFilterQuery {

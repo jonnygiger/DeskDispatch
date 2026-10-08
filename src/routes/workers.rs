@@ -11,7 +11,25 @@ use sqlx::{FromRow, Row};
 use super::auth::HtmlTemplate;
 use crate::auth::worker::{generate_registration_token, hash_token};
 use crate::auth::{log_audit, CsrfForm, RequireAdmin};
+use axum::routing::{get, post};
+use axum::Router;
+
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/workers", get(get_workers_handler).post(post_create_worker_handler))
+        .route("/workers/new", get(get_new_worker_handler))
+        .route("/workers/{id}", get(get_worker_detail_handler))
+        .route("/workers/{id}/edit", get(get_edit_worker_handler).post(post_edit_worker_handler))
+        .route("/workers/{id}/delete", post(post_delete_worker_handler))
+        .route("/workers/{id}/deactivate", post(post_deactivate_worker_handler))
+        .route("/workers/{id}/rotate-key", post(post_rotate_worker_key_handler))
+        .route("/worker-groups/new", get(get_new_worker_group_handler))
+        .route("/worker-groups", post(post_create_worker_group_handler))
+        .route("/worker-groups/{id}/edit", get(get_edit_worker_group_handler).post(post_edit_worker_group_handler))
+        .route("/worker-groups/{id}/delete", post(post_delete_worker_group_handler))
+}
 
 #[derive(Debug, Clone)]
 pub struct WorkerPcItem {
