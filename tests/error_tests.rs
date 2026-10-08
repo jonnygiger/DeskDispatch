@@ -1,10 +1,10 @@
-use app::auth::{AuthUser, LoginRateLimiter, UserRole};
-use app::config::Config;
-use app::routes::{
+use deskdispatch::auth::{AuthUser, LoginRateLimiter, UserRole};
+use deskdispatch::config::Config;
+use deskdispatch::routes::{
     get_index_handler, get_login_handler, not_found_handler, InternalServerErrorTemplate,
     NotFoundTemplate,
 };
-use app::AppState;
+use deskdispatch::AppState;
 use askama::Template;
 use axum::{
     body::Body,

@@ -2,9 +2,16 @@ use askama::Template;
 use axum::{extract::State, response::IntoResponse};
 use chrono::{DateTime, Utc};
 
+use axum::routing::get;
+use axum::Router;
+
 use super::auth::HtmlTemplate;
 use crate::auth::AuthUser;
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new().route("/", get(get_index_handler))
+}
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct RecentRunItem {

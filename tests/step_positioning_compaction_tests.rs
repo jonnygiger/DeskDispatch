@@ -1,4 +1,4 @@
-use app::routes::automations::{check_and_compact_positions, compact_positions, reorder_step};
+use deskdispatch::routes::automations::{check_and_compact_positions, compact_positions, reorder_step};
 use sqlx::PgPool;
 
 async fn get_test_pool() -> Option<PgPool> {

@@ -13,7 +13,20 @@ use super::auth::HtmlTemplate;
 use crate::auth::{
     hash_password_async, log_audit, AuthUser, CsrfForm, RequireAdmin, UserRole,
 };
+use axum::routing::{get, post};
+use axum::Router;
+
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/users", get(get_users_handler).post(post_create_user_handler))
+        .route("/users/new", get(get_new_user_handler))
+        .route("/users/{id}", post(post_edit_user_handler))
+        .route("/users/{id}/edit", get(get_edit_user_handler))
+        .route("/users/{id}/deactivate", post(post_deactivate_user_handler))
+        .route("/users/{id}/reset-password", get(get_reset_password_handler).post(post_reset_password_handler))
+}
 
 #[derive(Debug, Clone)]
 pub struct UserListItem {

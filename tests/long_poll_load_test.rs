@@ -1,4 +1,4 @@
-use app::{
+use deskdispatch::{
     auth::WorkerAuth,
     config::Config,
     routes::api_workers::get_next_assignment_handler,
@@ -74,7 +74,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
                 .build(),
         ),
         config,
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tx_notify.clone(),
     };
 

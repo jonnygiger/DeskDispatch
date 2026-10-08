@@ -1,4 +1,4 @@
-use app::routes::static_asset_handler;
+use deskdispatch::routes::static_asset_handler;
 use axum::{
     body::to_bytes,
     extract::Path,

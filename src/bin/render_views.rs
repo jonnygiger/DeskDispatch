@@ -1,15 +1,15 @@
-use app::auth::UserRole;
-use app::routes::account::AccountPasswordTemplate;
-use app::routes::auth::LoginTemplate;
-use app::routes::bitmaps::{BitmapListItem, BitmapsConfirmTemplate, BitmapsListTemplate, BitmapsUploadTemplate, RegionPickerTopLeftTemplate};
-use app::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
-use app::routes::home::{IndexTemplate, RecentRunItem};
-use app::routes::media::DevMagnifierTemplate;
-use app::routes::recordings::*;
-use app::routes::runs::*;
-use app::routes::schedules::*;
-use app::routes::users::*;
-use app::routes::workers::*;
+use deskdispatch::auth::UserRole;
+use deskdispatch::routes::account::AccountPasswordTemplate;
+use deskdispatch::routes::auth::LoginTemplate;
+use deskdispatch::routes::bitmaps::{BitmapListItem, BitmapsConfirmTemplate, BitmapsListTemplate, BitmapsUploadTemplate, RegionPickerTopLeftTemplate};
+use deskdispatch::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
+use deskdispatch::routes::home::{IndexTemplate, RecentRunItem};
+use deskdispatch::routes::media::DevMagnifierTemplate;
+use deskdispatch::routes::recordings::*;
+use deskdispatch::routes::runs::*;
+use deskdispatch::routes::schedules::*;
+use deskdispatch::routes::users::*;
+use deskdispatch::routes::workers::*;
 use askama::Template;
 use chrono::Utc;
 use std::fs;
@@ -27,7 +27,7 @@ fn main() {
     };
     fs::write("rendered_templates/account_password.html", pwd_tmpl.render().unwrap()).unwrap();
 
-    let user = app::auth::AuthUser {
+    let user = deskdispatch::auth::AuthUser {
         id: 1,
         username: "admin".to_string(),
         display_name: "Admin User".to_string(),
@@ -97,14 +97,14 @@ fn main() {
     )
     .unwrap();
 
-    let mag = app::magnifier::ImageMagnifier::new(
+    let mag = deskdispatch::magnifier::ImageMagnifier::new(
         "https://via.placeholder.com/800x600.png",
         800,
         600,
         Some(100),
         Some(150),
     );
-    let mag_tmpl = app::magnifier::ImageMagnifierTemplate { magnifier: &mag };
+    let mag_tmpl = deskdispatch::magnifier::ImageMagnifierTemplate { magnifier: &mag };
     let mag_html = format!(
         "<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"../static/style.css\"></head><body><div style=\"padding:2rem;\">{}</div></body></html>",
         mag_tmpl.render().unwrap()
@@ -127,7 +127,7 @@ fn main() {
         created_by: 1,
         created_by_name: "Admin User".to_string(),
         created_at: Utc::now(),
-        magnifier: app::magnifier::ImageMagnifier::new(
+        magnifier: deskdispatch::magnifier::ImageMagnifier::new(
             "/media/bitmaps/1",
             120,
             40,
@@ -185,7 +185,7 @@ fn main() {
         bottom_right_y: None,
         click_x: None,
         click_y: None,
-        magnifier: app::magnifier::ImageMagnifier::new(
+        magnifier: deskdispatch::magnifier::ImageMagnifier::new(
             "/static/sample_screenshot.png",
             1920,
             1080,
@@ -214,7 +214,7 @@ fn main() {
         bottom_right_y: Some(200),
         click_x: Some(250),
         click_y: Some(200),
-        magnifier: app::magnifier::ImageMagnifier::new(
+        magnifier: deskdispatch::magnifier::ImageMagnifier::new(
             "/static/sample_screenshot.png",
             1920,
             1080,
@@ -229,7 +229,7 @@ fn main() {
     };
     fs::write("rendered_templates/bitmaps_pick_region_stage3.html", pick_region_stage3_tmpl.render().unwrap()).unwrap();
 
-    let step_picker_tmpl = app::routes::automations::StepTypePickerTemplate {
+    let step_picker_tmpl = deskdispatch::routes::automations::StepTypePickerTemplate {
         user: user.clone(),
         automation_id: 1,
     };

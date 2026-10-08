@@ -1,15 +1,15 @@
-use app::auth::{
+use deskdispatch::auth::{
     generate_csrf_token, UserRole,
 };
 use secrecy::ExposeSecret;
-use app::config::Config;
-use app::routes::{
+use deskdispatch::config::Config;
+use deskdispatch::routes::{
     get_edit_user_handler, get_new_user_handler, get_password_handler, get_reset_password_handler,
     get_users_handler, post_create_user_handler, post_deactivate_user_handler,
     post_edit_user_handler, post_login_handler, post_password_handler,
     post_reset_password_handler, UserListItem,
 };
-use app::AppState;
+use deskdispatch::AppState;
 use argon2::{
     password_hash::PasswordHasher,
     Argon2,
@@ -82,12 +82,12 @@ fn build_test_app(pool: sqlx::PgPool, config: Config) -> Router {
         db: pool,
         s3_client,
         config,
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tx_notify,
     };
 
     Router::new()
-        .route("/login", get(app::routes::get_login_handler).post(post_login_handler))
+        .route("/login", get(deskdispatch::routes::get_login_handler).post(post_login_handler))
         .route("/account/password", get(get_password_handler).post(post_password_handler))
         .route("/users", get(get_users_handler).post(post_create_user_handler))
         .route("/users/new", get(get_new_user_handler))
@@ -97,7 +97,7 @@ fn build_test_app(pool: sqlx::PgPool, config: Config) -> Router {
         .route("/users/{id}/reset-password", get(get_reset_password_handler).post(post_reset_password_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state)
 }
@@ -203,7 +203,7 @@ async fn test_full_user_crud_and_last_admin_protection() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
     let cookie_header = response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap().to_string();
-    let session_id = app::auth::session::extract_session_id(&cookie_header).unwrap();
+    let session_id = deskdispatch::auth::session::extract_session_id(&cookie_header).unwrap();
     let csrf_token = generate_csrf_token(session_id, config.session_secret.expose_secret());
 
     // 2. GET /users list
@@ -409,7 +409,7 @@ async fn test_forced_password_change_redirect() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // Update password via POST /account/password
-    let session_id = app::auth::session::extract_session_id(&cookie_header).unwrap();
+    let session_id = deskdispatch::auth::session::extract_session_id(&cookie_header).unwrap();
     let csrf_token = generate_csrf_token(session_id, config.session_secret.expose_secret());
 
     let pwd_form = format!(

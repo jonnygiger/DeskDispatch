@@ -1,9 +1,13 @@
 [package]
-name = "app"
+name = "deskdispatch"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = [".", "crates/deskdispatch-protocol"]
+
 [dependencies]
+deskdispatch-protocol = { path = "crates/deskdispatch-protocol" }
 argon2 = "0.6"
 askama = "0.16"
 base64 = "0.23"

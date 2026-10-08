@@ -12,7 +12,16 @@ use crate::auth::{
     clear_session_cookie, create_session, create_session_cookie, delete_session, log_audit,
     session::extract_session_id, verify_password_async, OptionalAuthUser,
 };
+use axum::routing::{get, post};
+use axum::Router;
+
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/login", get(get_login_handler).post(post_login_handler))
+        .route("/logout", post(post_logout_handler))
+}
 
 pub struct HtmlTemplate<T>(pub T);
 

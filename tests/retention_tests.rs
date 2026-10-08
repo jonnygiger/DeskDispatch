@@ -1,4 +1,4 @@
-use app::retention::*;
+use deskdispatch::retention::*;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::time::Duration;

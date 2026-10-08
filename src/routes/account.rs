@@ -12,7 +12,17 @@ use crate::auth::{
     hash_password_async, log_audit, revoke_user_sessions_except, verify_password_async, AuthUser,
     CsrfForm,
 };
+use axum::routing::get;
+use axum::Router;
+
 use crate::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new().route(
+        "/account/password",
+        get(get_password_handler).post(post_password_handler),
+    )
+}
 
 #[derive(Template)]
 #[template(path = "account_password.html")]

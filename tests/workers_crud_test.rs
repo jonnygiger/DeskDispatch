@@ -1,8 +1,8 @@
-use app::auth::{generate_csrf_token, AuthUser, UserRole};
-use app::config::Config;
+use deskdispatch::auth::{generate_csrf_token, AuthUser, UserRole};
+use deskdispatch::config::Config;
 use secrecy::ExposeSecret;
-use app::routes::workers::*;
-use app::AppState;
+use deskdispatch::routes::workers::*;
+use deskdispatch::AppState;
 use askama::Template;
 use axum::{
     body::Body,
@@ -260,33 +260,11 @@ async fn test_admin_workers_crud_and_rbac() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
-    let app = Router::new()
-        .route("/workers", get(get_workers_handler))
-        .route("/workers/{id}", get(get_worker_detail_handler))
-        .route(
-            "/workers/{id}/edit",
-            get(get_edit_worker_handler).post(post_edit_worker_handler),
-        )
-        .route("/workers/{id}/delete", post(post_delete_worker_handler))
-        .route("/worker-groups/new", get(get_new_worker_group_handler))
-        .route("/worker-groups", post(post_create_worker_group_handler))
-        .route(
-            "/worker-groups/{id}/edit",
-            get(get_edit_worker_group_handler).post(post_edit_worker_group_handler),
-        )
-        .route(
-            "/worker-groups/{id}/delete",
-            post(post_delete_worker_group_handler),
-        )
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            app::auth::csrf_middleware,
-        ))
-        .with_state(state);
+    let app = deskdispatch::build_router(state);
 
     // --- RBAC Test: Non-admin editor user attempts to access /workers ---
     let req = Request::builder()

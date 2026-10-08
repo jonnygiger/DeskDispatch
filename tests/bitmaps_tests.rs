@@ -1,4 +1,4 @@
-use app::{
+use deskdispatch::{
     config::Config,
     routes::*,
     AppState,
@@ -65,7 +65,7 @@ async fn test_bitmaps_list_routes() {
         db: pool.clone(),
         s3_client: s3_client.clone(),
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -74,7 +74,7 @@ async fn test_bitmaps_list_routes() {
         .route("/automations/{id}/bitmaps", axum::routing::get(get_automation_bitmaps_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
@@ -199,7 +199,7 @@ async fn test_bitmap_upload_flow() {
         db: pool.clone(),
         s3_client: s3_client.clone(),
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -209,7 +209,7 @@ async fn test_bitmap_upload_flow() {
         .route("/bitmaps/commit", axum::routing::get(get_bitmap_commit_handler).post(post_bitmap_commit_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
@@ -218,11 +218,11 @@ async fn test_bitmap_upload_flow() {
 
     // Extract CSRF token for admin session
     let session_uuid = uuid::Uuid::parse_str(&admin_session).unwrap();
-    let admin_csrf = app::auth::generate_csrf_token(session_uuid, config.session_secret.expose_secret());
+    let admin_csrf = deskdispatch::auth::generate_csrf_token(session_uuid, config.session_secret.expose_secret());
 
     // Extract CSRF token for viewer session
     let viewer_session_uuid = uuid::Uuid::parse_str(&viewer_session).unwrap();
-    let viewer_csrf = app::auth::generate_csrf_token(viewer_session_uuid, config.session_secret.expose_secret());
+    let viewer_csrf = deskdispatch::auth::generate_csrf_token(viewer_session_uuid, config.session_secret.expose_secret());
 
     // 1. Viewer attempt to POST /bitmaps -> 403 Forbidden
     let req_viewer = Request::builder()
@@ -357,7 +357,7 @@ async fn test_bitmap_deletion_flow() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -366,7 +366,7 @@ async fn test_bitmap_deletion_flow() {
         .route("/automations/{id}/bitmaps/{bid}/delete", axum::routing::post(post_automation_delete_bitmap_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
@@ -374,9 +374,9 @@ async fn test_bitmap_deletion_flow() {
     let (editor_id, editor_session) = create_test_user(&pool, &format!("editor_del_{}", uuid::Uuid::new_v4().simple()), "editor").await;
     let (admin_id, admin_session) = create_test_user(&pool, &format!("admin_del_{}", uuid::Uuid::new_v4().simple()), "admin").await;
 
-    let viewer_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), config.session_secret.expose_secret());
-    let editor_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), config.session_secret.expose_secret());
-    let admin_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&admin_session).unwrap(), config.session_secret.expose_secret());
+    let viewer_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), config.session_secret.expose_secret());
+    let editor_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), config.session_secret.expose_secret());
+    let admin_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&admin_session).unwrap(), config.session_secret.expose_secret());
 
     // Insert a test bitmap record
     let key1 = format!("bitmaps/del_test_1_{}.png", uuid::Uuid::new_v4().simple());
@@ -510,7 +510,7 @@ async fn test_region_picker_top_left_flow() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -519,12 +519,12 @@ async fn test_region_picker_top_left_flow() {
         .route("/automations/{id}/bitmaps/pick-region", axum::routing::get(get_automation_pick_region_handler).post(post_automation_pick_region_top_left_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
     let (_user_id, session) = create_test_user(&pool, &format!("region_user_{}", uuid::Uuid::new_v4().simple()), "editor").await;
-    let csrf_token = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&session).unwrap(), config.session_secret.expose_secret());
+    let csrf_token = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&session).unwrap(), config.session_secret.expose_secret());
 
     // 1. GET /bitmaps/pick-region
     let req_get = Request::builder()
@@ -586,7 +586,7 @@ async fn test_region_picker_confirm_crop_flow() {
         db: pool.clone(),
         s3_client,
         config: config.clone(),
-        rate_limiter: app::auth::LoginRateLimiter::default(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
     };
 
@@ -596,15 +596,15 @@ async fn test_region_picker_confirm_crop_flow() {
         .route("/automations/{id}/bitmaps/pick-region/confirm", axum::routing::post(post_automation_pick_region_confirm_handler))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            app::auth::csrf_middleware,
+            deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
     let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_confirm_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
     let (editor_id, editor_session) = create_test_user(&pool, &format!("editor_confirm_{}", uuid::Uuid::new_v4().simple()), "editor").await;
 
-    let viewer_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), config.session_secret.expose_secret());
-    let editor_csrf = app::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), config.session_secret.expose_secret());
+    let viewer_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), config.session_secret.expose_secret());
+    let editor_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), config.session_secret.expose_secret());
 
     // 1. Editor POST /bitmaps/pick-region/bottom-right -> Stage 3 HTML with Step 3 Confirm Crop Preview
     let br_post_body = format!(

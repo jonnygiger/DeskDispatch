@@ -1,4 +1,4 @@
-use app::routes::api_workers::sweep_stalled_task_runs;
+use deskdispatch::routes::api_workers::sweep_stalled_task_runs;
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use tokio::task::JoinSet;
