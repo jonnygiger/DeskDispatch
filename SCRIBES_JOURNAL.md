@@ -7,3 +7,7 @@ Action: Added clear explanation under `## Features & System Capabilities` detail
 ## 2025-05-20 - Final QA Pass & Project Documentation Audit
 Learning: All web operator interface routes, worker API endpoints, background tasks, and implementation roadmap items across Phases 12–15 have been fully implemented and verified in code and tests. `README.md` contained lingering `[TODO]` markers from earlier roadmap drafts.
 Action: Updated `README.md` Table of Contents, Route Map, Worker API Reference, Features & System Capabilities, and Implementation Roadmap to accurately reflect 100% completion status.
+
+## 2025-05-20 - Background Data Retention & Storage Cleanup Configuration
+Learning: Background maintenance jobs (session pruning, audit log pruning, step log pruning, screenshot cleanup, abandoned S3 upload cleanup, and orphan S3 object GC) in `src/retention.rs` are executed hourly in `main.rs` and configurable via environment variables, but were entirely omitted from the feature documentation.
+Action: Documented the automated retention service under `## Features & System Capabilities` with explicit details on default retention windows and S3 storage maintenance routines.
