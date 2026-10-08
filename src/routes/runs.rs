@@ -21,6 +21,11 @@ pub struct RunsFilterQuery {
     pub before_id: Option<i64>,
 }
 
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct StatusFrameQuery {
+    pub paused: Option<bool>,
+}
+
 #[derive(serde::Deserialize)]
 pub struct CancelRunForm {
     pub csrf_token: String,
@@ -241,6 +246,7 @@ pub struct RunStatusFrameTemplate {
     pub csrf_token: String,
     pub run: TaskRunListItem,
     pub auto_refresh: bool,
+    pub paused: bool,
 }
 
 #[tracing::instrument(skip(state, user))]
@@ -375,6 +381,7 @@ pub async fn get_run_status_frame_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
+    Query(query): Query<StatusFrameQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
@@ -428,13 +435,15 @@ pub async fn get_run_status_frame_handler(
         error_message: run_row.get("error_message"),
     };
 
-    let auto_refresh = run_item.status == "queued" || run_item.status == "running" || run_item.status == "cancelling";
+    let paused = query.paused.unwrap_or(false);
+    let auto_refresh = (run_item.status == "queued" || run_item.status == "running" || run_item.status == "cancelling") && !paused;
 
     HtmlTemplate(RunStatusFrameTemplate {
         user,
         csrf_token,
         run: run_item,
         auto_refresh,
+        paused,
     })
     .into_response()
 }

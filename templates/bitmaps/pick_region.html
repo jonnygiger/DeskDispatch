@@ -17,12 +17,18 @@ Region Picker - DeskDispatch
     </p>
 </div>
 
-<div class="card" style="max-width: 800px; margin: 0 auto; padding: 2rem;">
+<div class="card" style="max-width: 900px; margin: 0 auto; padding: 2rem;">
+    {% if let Some(err) = error_msg %}
+    <div class="alert alert-danger" style="margin-bottom: 1.5rem; padding: 0.75rem 1rem; background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 4px;" role="alert">
+        {{ err }}
+    </div>
+    {% endif %}
+
     {% if step_stage == 1 %}
     <div style="margin-bottom: 1.5rem;">
         <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 1: Click Top-Left Corner</h2>
         <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
-            Click directly on the image below to set the coarse <strong>top-left corner</strong> of the selection region.
+            Click directly on the image inside the scroll container to set the <strong>top-left corner</strong> of the selection region, or type coordinates manually below.
         </p>
     </div>
 
@@ -51,8 +57,23 @@ Region Picker - DeskDispatch
         <input type="hidden" name="reference_bitmap_id" value="{{ ref_id }}">
         {% endif %}
 
-        <div style="position: relative; display: inline-block;">
-            <input type="image" name="click" src="{{ image_url }}" alt="Click top-left corner" style="width: 600px; height: 340px; object-fit: contain; border: 2px solid var(--color-primary); border-radius: 4px; cursor: crosshair; background: #111;">
+        <div style="max-width: 100%; max-height: 500px; overflow: auto; border: 2px solid var(--color-primary); border-radius: 4px; background: #111;">
+            <input type="image" id="picker-image-top-left" name="click" src="{{ image_url }}" alt="Click top-left corner on native image" width="{{ width }}" height="{{ height }}" style="display: block; cursor: crosshair;">
+        </div>
+
+        <div class="card" style="width: 100%; box-sizing: border-box; background: var(--color-bg-secondary); padding: 1rem; margin-top: 0.5rem;">
+            <h3 style="font-size: 0.9375rem; font-weight: 600; margin-top: 0; margin-bottom: 0.75rem;">Manual Coordinate Entry (Accessible Path)</h3>
+            <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                    <label for="manual_x_tl" style="font-weight: 600; font-size: 0.8125rem;">X Coordinate (0-{{ width - 1 }}):</label>
+                    <input type="number" id="manual_x_tl" name="manual_x" min="0" max="{{ width - 1 }}" placeholder="e.g. 100" style="padding: 0.4rem 0.6rem; border: 1px solid var(--color-border); border-radius: 4px; width: 140px; background: var(--color-bg); color: var(--color-text);">
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                    <label for="manual_y_tl" style="font-weight: 600; font-size: 0.8125rem;">Y Coordinate (0-{{ height - 1 }}):</label>
+                    <input type="number" id="manual_y_tl" name="manual_y" min="0" max="{{ height - 1 }}" placeholder="e.g. 100" style="padding: 0.4rem 0.6rem; border: 1px solid var(--color-border); border-radius: 4px; width: 140px; background: var(--color-bg); color: var(--color-text);">
+                </div>
+                <button type="submit" class="btn btn-primary" style="padding: 0.45rem 1rem; background: var(--color-primary); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">Submit Coordinates</button>
+            </div>
         </div>
 
         <div style="display: flex; gap: 1rem; width: 100%; justify-content: flex-end; margin-top: 1rem;">
@@ -70,7 +91,7 @@ Region Picker - DeskDispatch
         <h2 style="font-size: 1.25rem; margin-top: 0; margin-bottom: 0.5rem;">Step 2: Select Bottom-Right Corner</h2>
         <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0;">
             Top-Left Corner: <strong>({{ top_left_x.unwrap() }}, {{ top_left_y.unwrap() }})</strong>.
-            Click the precise <strong>bottom-right corner</strong> using the 20× grid view below, or click on the full image.
+            Click the precise <strong>bottom-right corner</strong> using the 20× grid view or scrollable image below, or type coordinates manually.
         </p>
     </div>
 
@@ -103,12 +124,29 @@ Region Picker - DeskDispatch
 
         <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
             <p style="font-weight: 600; font-size: 0.875rem; margin: 0;">High-Precision Grid Panel View (20× Zoom):</p>
-            <input type="image" name="grid_click" src="{{ image_url }}" alt="Click bottom-right on grid panel" style="{{ magnifier.grid_style() }} width: 320px; height: 320px; image-rendering: pixelated; border: 2px solid var(--color-primary); border-radius: 4px; cursor: crosshair;">
+            <input type="image" id="picker-grid-bottom-right" name="grid_click" src="{{ image_url }}" alt="Click bottom-right on grid panel" style="{{ magnifier.grid_style() }} width: 320px; height: 320px; image-rendering: pixelated; border: 2px solid var(--color-primary); border-radius: 4px; cursor: crosshair;">
         </div>
 
         <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem; width: 100%;">
-            <p style="font-weight: 600; font-size: 0.875rem; margin: 0;">Coarse Display View:</p>
-            <input type="image" name="coarse_click" src="{{ image_url }}" alt="Click bottom-right on coarse view" style="width: 600px; height: 340px; object-fit: contain; border: 1px solid var(--color-border); border-radius: 4px; cursor: crosshair; background: #111;">
+            <p style="font-weight: 600; font-size: 0.875rem; margin: 0;">Full Display View (Scrollable):</p>
+            <div style="max-width: 100%; max-height: 500px; overflow: auto; border: 1px solid var(--color-border); border-radius: 4px; background: #111;">
+                <input type="image" id="picker-coarse-bottom-right" name="coarse_click" src="{{ image_url }}" alt="Click bottom-right on coarse view" width="{{ width }}" height="{{ height }}" style="display: block; cursor: crosshair;">
+            </div>
+        </div>
+
+        <div class="card" style="width: 100%; box-sizing: border-box; background: var(--color-bg-secondary); padding: 1rem; margin-top: 0.5rem;">
+            <h3 style="font-size: 0.9375rem; font-weight: 600; margin-top: 0; margin-bottom: 0.75rem;">Manual Coordinate Entry (Accessible Path)</h3>
+            <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                    <label for="manual_x_br" style="font-weight: 600; font-size: 0.8125rem;">Bottom-Right X (0-{{ width - 1 }}):</label>
+                    <input type="number" id="manual_x_br" name="manual_x" min="0" max="{{ width - 1 }}" placeholder="e.g. 300" style="padding: 0.4rem 0.6rem; border: 1px solid var(--color-border); border-radius: 4px; width: 140px; background: var(--color-bg); color: var(--color-text);">
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                    <label for="manual_y_br" style="font-weight: 600; font-size: 0.8125rem;">Bottom-Right Y (0-{{ height - 1 }}):</label>
+                    <input type="number" id="manual_y_br" name="manual_y" min="0" max="{{ height - 1 }}" placeholder="e.g. 300" style="padding: 0.4rem 0.6rem; border: 1px solid var(--color-border); border-radius: 4px; width: 140px; background: var(--color-bg); color: var(--color-text);">
+                </div>
+                <button type="submit" class="btn btn-primary" style="padding: 0.45rem 1rem; background: var(--color-primary); color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">Submit Coordinates</button>
+            </div>
         </div>
 
         <div style="display: flex; gap: 1rem; width: 100%; justify-content: flex-end; margin-top: 1rem;">

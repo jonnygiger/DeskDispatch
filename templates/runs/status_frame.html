@@ -31,6 +31,13 @@
             <span class="badge {{ run.status_badge_class() }}" style="font-size: 0.875rem; padding: 0.25rem 0.6rem;">
                 {{ run.status }}
             </span>
+            {% if run.status == "queued" || run.status == "running" || run.status == "cancelling" %}
+                {% if paused %}
+                <a href="/runs/{{ run.id }}/status-frame?paused=false" style="font-size: 0.8125rem; color: var(--color-primary); margin-left: 0.5rem;" title="Resume 3-second status auto-refresh">Resume Auto-Refresh</a>
+                {% else %}
+                <a href="/runs/{{ run.id }}/status-frame?paused=true" style="font-size: 0.8125rem; color: var(--color-primary); margin-left: 0.5rem;" title="Pause 3-second status auto-refresh">Pause Auto-Refresh</a>
+                {% endif %}
+            {% endif %}
         </div>
 
         {% if user.role.can_edit() %}

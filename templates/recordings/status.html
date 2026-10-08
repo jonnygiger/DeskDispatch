@@ -4,7 +4,7 @@
 {% block title %}Recording Session #{{ session.id }} - DeskDispatch{% endblock %}
 
 {% block head %}
-{% if session.status == "recording" %}
+{% if session.status == "recording" && !paused %}
 <meta http-equiv="refresh" content="3">
 {% endif %}
 {% endblock %}
@@ -54,7 +54,14 @@
         {% if session.status == "recording" %}
         <div style="background: rgba(240, 173, 78, 0.1); border: 1px solid var(--color-warning); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
             <div>
-                <div style="font-size: 1.125rem; font-weight: 600; color: #8a6d3b;">Recording in progress...</div>
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                    <div style="font-size: 1.125rem; font-weight: 600; color: #8a6d3b;">Recording in progress...</div>
+                    {% if paused %}
+                    <a href="/recordings/{{ session.id }}?paused=false" style="font-size: 0.8125rem; color: var(--color-primary);" title="Resume 3-second status auto-refresh">Resume Auto-Refresh</a>
+                    {% else %}
+                    <a href="/recordings/{{ session.id }}?paused=true" style="font-size: 0.8125rem; color: var(--color-primary);" title="Pause 3-second status auto-refresh">Pause Auto-Refresh</a>
+                    {% endif %}
+                </div>
                 <div style="font-size: 0.875rem; color: var(--color-text-muted); margin-top: 0.25rem;">
                     This page automatically reloads every 3 seconds to show captured desktop events.
                 </div>

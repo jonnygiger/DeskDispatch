@@ -99,6 +99,11 @@ pub struct RecordingStartTemplate {
     pub error: Option<String>,
 }
 
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct RecordingStatusQuery {
+    pub paused: Option<bool>,
+}
+
 #[derive(Template)]
 #[template(path = "recordings/status.html")]
 pub struct RecordingStatusTemplate {
@@ -106,6 +111,7 @@ pub struct RecordingStatusTemplate {
     pub session: RecordingSessionDetail,
     pub event_count: i64,
     pub error: Option<String>,
+    pub paused: bool,
 }
 
 #[derive(Template)]
@@ -284,6 +290,7 @@ pub async fn get_recording_status_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     user: AuthUser,
+    axum::extract::Query(query): axum::extract::Query<RecordingStatusQuery>,
 ) -> impl IntoResponse {
     let session = match fetch_recording_session_detail(&state.db, id).await {
         Ok(Some(s)) => s,
@@ -298,11 +305,14 @@ pub async fn get_recording_status_handler(
     .await
     .unwrap_or(0);
 
+    let paused = query.paused.unwrap_or(false);
+
     HtmlTemplate(RecordingStatusTemplate {
         user,
         session,
         event_count,
         error: None,
+        paused,
     })
     .into_response()
 }
@@ -826,6 +836,7 @@ mod tests {
             session: session.clone(),
             event_count: 7,
             error: None,
+            paused: false,
         };
         let status_html = status_tmpl.render().expect("Status template should render");
         assert!(status_html.contains("Recording Session #42"));
