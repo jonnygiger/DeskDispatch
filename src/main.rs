@@ -56,9 +56,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Full setup completed successfully.");
             return Ok(());
         }
+        Some("healthcheck") => {
+            let addr: SocketAddr = config.bind_address.parse().unwrap_or_else(|_| "127.0.0.1:3000".parse().expect("Valid socket address"));
+            match check_health(&addr).await {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("Healthcheck failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         Some(cmd) => {
             error!("Unknown subcommand: {}", cmd);
-            eprintln!("Usage: deskdispatch [migrate|create-admin|init-s3|setup]");
+            eprintln!("Usage: deskdispatch [migrate|create-admin|init-s3|setup|healthcheck]");
             std::process::exit(1);
         }
         None => {}
@@ -304,6 +314,25 @@ fn init_tracing(config: &Config) {
             .with(env_filter)
             .with(tracing_subscriber::fmt::layer().pretty())
             .init();
+    }
+}
+
+async fn check_health(addr: &SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    let mut stream = TcpStream::connect(addr).await?;
+    let request = format!("GET /livez HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", addr);
+    stream.write_all(request.as_bytes()).await?;
+
+    let mut buffer = [0u8; 1024];
+    let n = stream.read(&mut buffer).await?;
+    let response = String::from_utf8_lossy(&buffer[..n]);
+
+    if response.contains("200 OK") || response.contains("HTTP/1.1 200") {
+        Ok(())
+    } else {
+        Err(format!("Non-200 response: {}", response).into())
     }
 }
 
