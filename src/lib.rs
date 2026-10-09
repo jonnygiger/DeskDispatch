@@ -90,7 +90,7 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .layer(TraceLayer::new_for_http())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
-        .layer(TimeoutLayer::new(std::time::Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, std::time::Duration::from_secs(30)))
         .layer(CatchPanicLayer::new())
         .with_state(state)
 }

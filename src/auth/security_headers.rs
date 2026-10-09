@@ -89,6 +89,7 @@ mod tests {
             audit_log_retention_days: 90,
             task_run_step_retention_days: 30,
             screenshot_retention_days: 30,
+            metrics_bind_address: None,
         };
 
         let pool = sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/deskdispatch").unwrap();

@@ -61,6 +61,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         audit_log_retention_days: 90,
         task_run_step_retention_days: 30,
         screenshot_retention_days: 30,
+        metrics_bind_address: None,
     });
     config.worker_long_poll_timeout_secs = 2; // Short timeout for fast test execution
 

@@ -15,7 +15,15 @@ use tower::ServiceExt;
 async fn get_test_pool() -> Option<PgPool> {
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
-    PgPool::connect(&db_url).await.ok()
+    let connect_opts = db_url
+        .parse::<sqlx::postgres::PgConnectOptions>()
+        .ok()?
+        .options([("connect_timeout", "1")]);
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
+        .connect_with(connect_opts)
+        .await
+        .ok()
 }
 
 async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, String) {

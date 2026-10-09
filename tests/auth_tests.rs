@@ -209,7 +209,15 @@ fn test_top_nav_bar_role_conditional_rendering() {
 async fn get_test_pool() -> Option<sqlx::PgPool> {
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
-    sqlx::PgPool::connect(&db_url).await.ok()
+    let connect_opts = db_url
+        .parse::<sqlx::postgres::PgConnectOptions>()
+        .ok()?
+        .options([("connect_timeout", "1")]);
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
+        .connect_with(connect_opts)
+        .await
+        .ok()
 }
 
 #[tokio::test]
