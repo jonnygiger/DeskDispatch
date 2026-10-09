@@ -7,9 +7,6 @@ use askama::Template;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
-    middleware,
-    routing::{get, post},
-    Router,
 };
 use chrono::Utc;
 use tower::ServiceExt;

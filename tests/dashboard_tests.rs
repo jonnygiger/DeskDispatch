@@ -1,14 +1,10 @@
 use deskdispatch::auth::LoginRateLimiter;
 use deskdispatch::config::Config;
-use deskdispatch::routes::get_index_handler;
 use deskdispatch::AppState;
 use argon2::{PasswordHasher, Argon2};
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
-    middleware,
-    routing::get,
-    Router,
 };
 use sqlx::Row;
 use tower::ServiceExt;
@@ -17,7 +13,11 @@ use uuid::Uuid;
 async fn get_test_pool() -> Option<sqlx::PgPool> {
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
-    sqlx::PgPool::connect(&db_url).await.ok()
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
+        .connect(&db_url)
+        .await
+        .ok()
 }
 
 #[tokio::test]

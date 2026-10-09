@@ -96,7 +96,7 @@ async fn test_sparse_position_assignment_and_reordering() {
     assert_eq!(step_ids, vec![step1_id, step_mid_id, step2_id]);
 
     // 3. Test check_and_compact_positions when gap is wide (10.0, 15.0, 20.0 - min gap 5.0 >= 0.0001)
-    check_and_compact_positions(&pool, auto_id).await;
+    let _ = check_and_compact_positions(&pool, auto_id).await;
 
     let positions_before: Vec<f64> = sqlx::query_scalar(
         "SELECT position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
@@ -109,7 +109,7 @@ async fn test_sparse_position_assignment_and_reordering() {
     assert_eq!(positions_before, vec![10.0, 15.0, 20.0]);
 
     // 4. Test explicit compaction resets positions to clean 10.0 increments
-    compact_positions(&pool, auto_id).await;
+    let _ = compact_positions(&pool, auto_id).await;
 
     let positions_after: Vec<f64> = sqlx::query_scalar(
         "SELECT position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
