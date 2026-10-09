@@ -185,6 +185,269 @@ pub fn generate_branch_summary(
     }
 }
 
+/// Bulk fetch and format all step view items for an automation.
+/// Optimization: Bulk-loads steps and all step subtype tables concurrently in O(1) database
+/// queries using `tokio::join!`, avoiding N+1 database queries per step on automation views.
+pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec<StepViewItem> {
+    let raw_steps = match sqlx::query(
+        "SELECT id, step_type, label, post_delay_ms, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!("Error fetching steps for automation {}: {}", automation_id, e);
+            return Vec::new();
+        }
+    };
+
+    if raw_steps.is_empty() {
+        return Vec::new();
+    }
+
+    // Build target step label map in memory (step_id -> "Step N (label/type)")
+    let mut step_target_map: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    for (idx, row) in raw_steps.iter().enumerate() {
+        let step_id: i64 = row.get("id");
+        let step_num = idx + 1;
+        let step_type: String = row.get("step_type");
+        let label: Option<String> = row.get("label");
+
+        let target_str = match label {
+            Some(lbl) if !lbl.trim().is_empty() => format!("Step {} ({})", step_num, lbl.trim()),
+            _ => format!("Step {} ({})", step_num, step_type),
+        };
+        step_target_map.insert(step_id, target_str);
+    }
+
+    // Run 5 bulk subtype queries concurrently across PgPool connections using tokio::join!
+    let (
+        kp_res,
+        mc_res,
+        fp_res,
+        fb_res,
+        br_res,
+    ) = tokio::join!(
+        sqlx::query(
+            r#"
+            SELECT skp.step_id, skp.key_combo
+            FROM step_key_presses skp
+            JOIN automation_steps s ON skp.step_id = s.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query(
+            r#"
+            SELECT mc.step_id, mc.x, mc.y, mc.button, mc.click_type, vx.name AS x_var_name, vy.name AS y_var_name
+            FROM step_mouse_clicks mc
+            JOIN automation_steps s ON mc.step_id = s.id
+            LEFT JOIN automation_variables vx ON mc.x_variable_id = vx.id
+            LEFT JOIN automation_variables vy ON mc.y_variable_id = vy.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query(
+            r#"
+            SELECT fp.step_id, fp.x, fp.y, v.name AS var_name
+            FROM step_find_pixel_rgb fp
+            JOIN automation_steps s ON fp.step_id = s.id
+            LEFT JOIN automation_variables v ON fp.output_variable_id = v.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query(
+            r#"
+            SELECT fb.step_id, b.name AS bitmap_name, v.name AS var_name
+            FROM step_find_bitmap fb
+            JOIN automation_steps s ON fb.step_id = s.id
+            JOIN bitmaps b ON fb.reference_bitmap_id = b.id
+            LEFT JOIN automation_variables v ON fb.output_found_variable_id = v.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query(
+            r#"
+            SELECT
+                sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
+                b.name AS bitmap_name, sb.on_match_step_id, sb.on_no_match_step_id
+            FROM step_branches sb
+            JOIN automation_steps s ON sb.step_id = s.id
+            LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+    );
+
+    let key_presses_map: std::collections::HashMap<i64, String> = kp_res
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| {
+            let step_id: i64 = r.get("step_id");
+            let key_combo: String = r.get("key_combo");
+            (step_id, key_combo)
+        })
+        .collect();
+
+    let mouse_clicks_map: std::collections::HashMap<i64, (Option<i32>, Option<i32>, Option<String>, Option<String>, String, String)> = mc_res
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| {
+            let step_id: i64 = r.get("step_id");
+            let x: Option<i32> = r.get("x");
+            let y: Option<i32> = r.get("y");
+            let x_var_name: Option<String> = r.get("x_var_name");
+            let y_var_name: Option<String> = r.get("y_var_name");
+            let button: String = r.get("button");
+            let click_type: String = r.get("click_type");
+            (step_id, (x, y, x_var_name, y_var_name, button, click_type))
+        })
+        .collect();
+
+    let find_pixel_map: std::collections::HashMap<i64, (i32, i32, Option<String>)> = fp_res
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| {
+            let step_id: i64 = r.get("step_id");
+            let x: i32 = r.get("x");
+            let y: i32 = r.get("y");
+            let var_name: Option<String> = r.get("var_name");
+            (step_id, (x, y, var_name))
+        })
+        .collect();
+
+    let find_bitmap_map: std::collections::HashMap<i64, (String, Option<String>)> = fb_res
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| {
+            let step_id: i64 = r.get("step_id");
+            let bitmap_name: String = r.get("bitmap_name");
+            let var_name: Option<String> = r.get("var_name");
+            (step_id, (bitmap_name, var_name))
+        })
+        .collect();
+
+    let branch_map: std::collections::HashMap<i64, (String, Option<i32>, Option<i32>, Option<i16>, Option<i16>, Option<i16>, Option<i16>, Option<String>, Option<i64>, Option<i64>)> = br_res
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| {
+            let step_id: i64 = r.get("step_id");
+            let condition_type: String = r.get("condition_type");
+            let x: Option<i32> = r.get("x");
+            let y: Option<i32> = r.get("y");
+            let expected_r: Option<i16> = r.get("expected_r");
+            let expected_g: Option<i16> = r.get("expected_g");
+            let expected_b: Option<i16> = r.get("expected_b");
+            let tolerance: Option<i16> = r.get("tolerance");
+            let bitmap_name: Option<String> = r.get("bitmap_name");
+            let on_match_step_id: Option<i64> = r.get("on_match_step_id");
+            let on_no_match_step_id: Option<i64> = r.get("on_no_match_step_id");
+            (step_id, (condition_type, x, y, expected_r, expected_g, expected_b, tolerance, bitmap_name, on_match_step_id, on_no_match_step_id))
+        })
+        .collect();
+
+    let mut steps = Vec::with_capacity(raw_steps.len());
+    for (idx, row) in raw_steps.into_iter().enumerate() {
+        let step_id: i64 = row.get("id");
+        let step_type: String = row.get("step_type");
+        let label: Option<String> = row.get("label");
+        let post_delay_ms: i32 = row.get("post_delay_ms");
+        let position: f64 = row.get("position");
+
+        let description = match step_type.as_str() {
+            "key_press" => {
+                if let Some(combo) = key_presses_map.get(&step_id) {
+                    format!("Press {}", combo)
+                } else {
+                    "Press key".to_string()
+                }
+            }
+            "mouse_click" => {
+                if let Some((x, y, x_var_name, y_var_name, button, click_type)) = mouse_clicks_map.get(&step_id) {
+                    generate_mouse_click_summary(
+                        *x,
+                        *y,
+                        x_var_name.as_deref(),
+                        y_var_name.as_deref(),
+                        button,
+                        click_type,
+                    )
+                } else {
+                    "Click mouse".to_string()
+                }
+            }
+            "find_pixel_rgb" => {
+                if let Some((x, y, var_name)) = find_pixel_map.get(&step_id) {
+                    generate_find_pixel_rgb_summary(*x, *y, var_name.as_deref())
+                } else {
+                    "Read pixel at coordinate".to_string()
+                }
+            }
+            "find_bitmap" => {
+                if let Some((bitmap_name, var_name)) = find_bitmap_map.get(&step_id) {
+                    generate_find_bitmap_summary(bitmap_name, var_name.as_deref())
+                } else {
+                    "Search for bitmap on screen".to_string()
+                }
+            }
+            "branch" => {
+                if let Some((condition_type, x, y, expected_r, expected_g, expected_b, tolerance, bitmap_name, match_id, no_match_id)) = branch_map.get(&step_id) {
+                    let match_target_str = match_id
+                        .and_then(|m_id| step_target_map.get(&m_id).cloned())
+                        .unwrap_or_else(|| "Next Step".to_string());
+
+                    let no_match_target_str = no_match_id
+                        .and_then(|n_id| step_target_map.get(&n_id).cloned())
+                        .unwrap_or_else(|| "Next Step".to_string());
+
+                    generate_branch_summary(
+                        condition_type,
+                        *x,
+                        *y,
+                        *expected_r,
+                        *expected_g,
+                        *expected_b,
+                        *tolerance,
+                        bitmap_name.as_deref(),
+                        Some(&match_target_str),
+                        Some(&no_match_target_str),
+                    )
+                } else {
+                    "BRANCH evaluation".to_string()
+                }
+            }
+            _ => "Unknown step".to_string(),
+        };
+
+        steps.push(StepViewItem {
+            id: step_id,
+            step_number: idx + 1,
+            step_type,
+            label,
+            post_delay_ms,
+            position,
+            description,
+        });
+    }
+
+    steps
+}
+
 pub async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> String {
     match step_type {
         "key_press" => {

@@ -9,3 +9,7 @@
 ## 2025-03-10 - [Concurrent worker management queries with tokio::join!]
 **Learning:** `get_workers_handler` in `src/routes/workers.rs` sequentially executed 4 independent queries (`task_worker_pcs`, `worker_group_members` mappings, `worker_groups`, and member display names) across 4 database round-trips before building worker and group list items.
 **Action:** Use `tokio::join!` to execute independent worker list and membership option queries concurrently across PgPool connections, reducing DB wait latency for worker management views by ~75%.
+
+## 2025-03-10 - [Eliminating N+1 database queries on automation detail view]
+**Learning:** `get_automation_detail_handler` in `src/routes/automations/detail.rs` previously ran `fetch_step_description` sequentially for every step in an automation, triggering per-step subtype and target label database queries and resulting in 4 + 3N sequential DB round trips per request.
+**Action:** Create a bulk step view helper `fetch_automation_step_views` in `src/routes/automations/steps.rs` that bulk-fetches active step subtype details into HashMaps concurrently with `tokio::join!` and resolves branch step labels in memory. Execute step views, worker groups, and parameter options concurrently using `tokio::join!`, reducing database round trips to 3 fixed calls regardless of step count.
