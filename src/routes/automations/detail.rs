@@ -5,7 +5,7 @@ use axum::{
 use sqlx::Row;
 
 use super::parameters::validate_parameter_default_value;
-use super::steps::fetch_step_description;
+use super::steps::fetch_automation_step_views;
 use super::types::*;
 use crate::auth::{log_audit, AuthUser, CsrfForm};
 use crate::routes::auth::HtmlTemplate;
@@ -35,42 +35,10 @@ pub async fn get_automation_detail_handler(
         }
     };
 
-    let raw_steps = match sqlx::query(
-            "SELECT id, step_type, label, post_delay_ms, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            tracing::error!("Error fetching steps: {}", e);
-            Vec::new()
-        }
-    };
-
-    let mut steps = Vec::new();
-    for (idx, row) in raw_steps.iter().enumerate() {
-        let step_id: i64 = row.get("id");
-        let step_type: String = row.get("step_type");
-        let label: Option<String> = row.get("label");
-        let post_delay_ms: i32 = row.get("post_delay_ms");
-        let position: f64 = row.get("position");
-
-        let description = fetch_step_description(&state.db, step_id, &step_type).await;
-
-        steps.push(StepViewItem {
-            id: step_id,
-            step_number: idx + 1,
-            step_type,
-            label,
-            post_delay_ms,
-            position,
-            description,
-        });
-    }
-
-    let (worker_groups_res, parameters_res) = tokio::join!(
+    // Optimization: Run step views, worker groups, and parameter option queries concurrently using `tokio::join!`.
+    // Steps are bulk-loaded in O(1) queries using `fetch_automation_step_views`, eliminating per-step N+1 database queries.
+    let (steps, worker_groups_res, parameters_res) = tokio::join!(
+        fetch_automation_step_views(&state.db, id),
         sqlx::query_as::<_, WorkerGroupOption>("SELECT id, name FROM worker_groups ORDER BY name ASC").fetch_all(&state.db),
         sqlx::query_as::<_, AutomationParameterItem>("SELECT id, automation_id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC, id ASC").bind(id).fetch_all(&state.db)
     );
