@@ -120,6 +120,7 @@ DATABASE_URL=postgres://postgres:postgrespassword@localhost:5432/deskdispatch
 
 # Object Storage (S3 / RustFS)
 S3_ENDPOINT=http://localhost:9000
+S3_PUBLIC_ENDPOINT=http://localhost:9000
 S3_BUCKET=deskdispatch-bucket
 S3_ACCESS_KEY=rustfsadmin
 S3_SECRET_KEY=rustfsadminpassword
@@ -131,6 +132,9 @@ BIND_ADDRESS=0.0.0.0:3000
 APP_ENV=development
 MIN_AGENT_VERSION=1.0.0
 ```
+
+### Public S3 Endpoint URL Rewriting (`S3_PUBLIC_ENDPOINT`)
+When DeskDispatch runs inside a Docker network or behind a private infrastructure network, `S3_ENDPOINT` typically points to an internal container address (e.g., `http://rustfs:9000`). However, operator browsers and external task-worker PCs need to access presigned GET/PUT URLs and POST policies using a publicly reachable host. By setting `S3_PUBLIC_ENDPOINT` (e.g., `https://s3.example.com`), the task server automatically rewrites generated presigned object storage URLs from the internal endpoint to the public endpoint, allowing external clients to upload screenshots and download reference bitmaps directly without exposing internal network routing.
 
 ---
 
