@@ -674,7 +674,7 @@ pub async fn post_create_step_handler(
             )
             .bind(step_id)
             .bind(id)
-            .bind(form.reference_bitmap_id.unwrap())
+            .bind(form.reference_bitmap_id.unwrap_or(0))
             .bind(form.search_x)
             .bind(form.search_y)
             .bind(form.search_width)
@@ -812,8 +812,8 @@ pub async fn post_create_step_handler(
             "INSERT INTO step_find_pixel_rgb (step_id, x, y, output_variable_id) VALUES ($1, $2, $3, $4)",
         )
         .bind(step_id)
-        .bind(final_x.unwrap())
-        .bind(final_y.unwrap())
+        .bind(final_x.unwrap_or(0))
+        .bind(final_y.unwrap_or(0))
         .bind(form.output_variable_id)
         .execute(&mut *tx)
         .await;
@@ -1772,7 +1772,7 @@ pub async fn post_edit_step_handler(
                 WHERE step_id = $10
                 "#,
             )
-            .bind(form.reference_bitmap_id.unwrap())
+            .bind(form.reference_bitmap_id.unwrap_or(0))
             .bind(form.search_x)
             .bind(form.search_y)
             .bind(form.search_width)
@@ -1887,8 +1887,8 @@ pub async fn post_edit_step_handler(
         let _ = sqlx::query(
             "UPDATE step_find_pixel_rgb SET x = $1, y = $2, output_variable_id = $3 WHERE step_id = $4",
         )
-        .bind(final_x.unwrap())
-        .bind(final_y.unwrap())
+        .bind(final_x.unwrap_or(0))
+        .bind(final_y.unwrap_or(0))
         .bind(form.output_variable_id)
         .bind(sid)
         .execute(&mut *tx)

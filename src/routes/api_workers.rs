@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
     response::IntoResponse,
     Json,
 };
@@ -14,6 +13,8 @@ use axum::routing::{get, post};
 use axum::Router;
 
 use crate::auth::worker::{generate_worker_api_key, hash_token};
+use crate::domain::{StepResultStatus, WorkerStatus};
+use crate::error::AppError;
 use crate::{auth::AuthWorker, AppState};
 
 pub fn router() -> Router<AppState> {
@@ -118,10 +119,6 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(&mut *conn)
     .await?;
-
-    // Bolt Optimization: Batch fetch step subtype details to resolve N+1 query bottleneck.
-    // Bulk-fetch all step subtype details for this automation into HashMaps in fixed O(1) bulk queries
-    // instead of issuing O(N) database queries in a loop.
 
     let mouse_clicks_rows = sqlx::query(
         r#"
@@ -337,8 +334,7 @@ pub async fn fetch_full_automation_json_with_overrides(
 pub async fn get_next_assignment_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    // Fold heartbeat into next-assignment call to update worker's last_heartbeat_at
+) -> Result<impl IntoResponse, AppError> {
     if let Err(e) = sqlx::query("UPDATE task_worker_pcs SET last_heartbeat_at = now() WHERE id = $1")
         .bind(worker.id)
         .execute(&state.db)
@@ -352,55 +348,25 @@ pub async fn get_next_assignment_handler(
     let mut rx_notify = state.task_queue_notifier.subscribe();
 
     loop {
-        let mut tx = match state.db.begin().await {
-            Ok(tx) => tx,
-            Err(e) => {
-                tracing::error!(worker_id = worker.id, "Failed to begin transaction for next assignment: {}", e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Database error".to_string(),
-                    }),
-                )
-                    .into_response();
-            }
-        };
+        let mut tx = state.db.begin().await?;
 
-        let active_recording: Option<i64> = match sqlx::query_scalar(
+        let active_recording: Option<i64> = sqlx::query_scalar(
             "SELECT id FROM recording_sessions WHERE worker_id = $1 AND status = 'recording' ORDER BY id ASC LIMIT 1",
         )
         .bind(worker.id)
         .fetch_optional(&mut *tx)
-        .await
-        {
-            Ok(rec) => rec,
-            Err(e) => {
-                tracing::error!(worker_id = worker.id, "Error checking active recording sessions: {}", e);
-                let _ = tx.rollback().await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Database error checking recording sessions".to_string(),
-                    }),
-                )
-                    .into_response();
-            }
-        };
+        .await?;
 
         if let Some(recording_session_id) = active_recording {
-            let _ = tx.commit().await;
+            tx.commit().await?;
             tracing::info!(
                 worker_id = worker.id,
                 recording_session_id = recording_session_id,
                 "Dispatched start_recording instruction to worker"
             );
-            return (
-                StatusCode::OK,
-                Json(NextAssignmentResponse::StartRecording {
-                    recording_session_id,
-                }),
-            )
-                .into_response();
+            return Ok(Json(NextAssignmentResponse::StartRecording {
+                recording_session_id,
+            }));
         }
 
         let select_res = sqlx::query(
@@ -423,132 +389,61 @@ pub async fn get_next_assignment_handler(
         )
         .bind(worker.id)
         .fetch_optional(&mut *tx)
-        .await;
+        .await?;
 
-        match select_res {
-            Ok(Some(row)) => {
-                let task_run_id: i64 = row.get("task_run_id");
-                let automation_id: i64 = row.get("automation_id");
+        if let Some(row) = select_res {
+            let task_run_id: i64 = row.get("task_run_id");
+            let automation_id: i64 = row.get("automation_id");
 
-                let automation_json = match fetch_full_automation_json(&mut *tx, automation_id).await {
-                    Ok(json) => json,
-                    Err(e) => {
-                        tracing::error!(
-                            worker_id = worker.id,
-                            automation_id = automation_id,
-                            "Failed to fetch automation json payload: {}",
-                            e
-                        );
-                        let _ = tx.rollback().await;
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ErrorResponse {
-                                error: "Failed to load automation details".to_string(),
-                            }),
-                        )
-                            .into_response();
-                    }
-                };
+            let automation_json = fetch_full_automation_json(&mut *tx, automation_id).await?;
 
-                let update_res = sqlx::query(
-                    r#"
-                    UPDATE task_runs
-                    SET status = 'running',
-                        worker_id = $1,
-                        started_at = now(),
-                        dispatched_automation_json = $2
-                    WHERE id = $3
-                    "#,
-                )
-                .bind(worker.id)
-                .bind(&automation_json)
-                .bind(task_run_id)
-                .execute(&mut *tx)
-                .await;
+            sqlx::query(
+                r#"
+                UPDATE task_runs
+                SET status = 'running',
+                    worker_id = $1,
+                    started_at = now(),
+                    dispatched_automation_json = $2
+                WHERE id = $3
+                "#,
+            )
+            .bind(worker.id)
+            .bind(&automation_json)
+            .bind(task_run_id)
+            .execute(&mut *tx)
+            .await?;
 
-                if let Err(e) = update_res {
-                    tracing::error!(
-                        worker_id = worker.id,
-                        task_run_id = task_run_id,
-                        "Failed to update task run status to running: {}",
-                        e
-                    );
-                    let _ = tx.rollback().await;
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: "Failed to claim task run".to_string(),
-                        }),
-                    )
-                        .into_response();
-                }
+            tx.commit().await?;
 
-                if let Err(e) = tx.commit().await {
-                    tracing::error!(
-                        worker_id = worker.id,
-                        task_run_id = task_run_id,
-                        "Failed to commit transaction claiming task run: {}",
-                        e
-                    );
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: "Failed to commit task run claim".to_string(),
-                        }),
-                    )
-                        .into_response();
-                }
+            tracing::info!(
+                worker_id = worker.id,
+                task_run_id = task_run_id,
+                automation_id = automation_id,
+                "Claimed queued task run for worker"
+            );
 
-                tracing::info!(
-                    worker_id = worker.id,
-                    task_run_id = task_run_id,
-                    automation_id = automation_id,
-                    "Claimed queued task run for worker"
-                );
-
-                return (
-                    StatusCode::OK,
-                    Json(NextAssignmentResponse::ExecuteAutomation {
-                        task_run_id,
-                        automation: automation_json,
-                    }),
-                )
-                    .into_response();
+            return Ok(Json(NextAssignmentResponse::ExecuteAutomation {
+                task_run_id,
+                automation: automation_json,
+            }));
+        } else {
+            tx.commit().await?;
+            let elapsed = start_time.elapsed();
+            if elapsed >= timeout_duration {
+                return Ok(Json(NextAssignmentResponse::None));
             }
-            Ok(None) => {
-                let _ = tx.commit().await;
-                // No assignment available; check if long polling timeout reached or wait for notification
-                let elapsed = start_time.elapsed();
-                if elapsed >= timeout_duration {
-                    return (StatusCode::OK, Json(NextAssignmentResponse::None)).into_response();
-                }
 
-                let remaining = timeout_duration - elapsed;
-                tokio::select! {
-                    _ = rx_notify.recv() => {},
-                    _ = tokio::time::sleep(remaining) => {},
-                }
-            }
-            Err(e) => {
-                tracing::error!(worker_id = worker.id, "Error fetching next task run assignment: {}", e);
-                let _ = tx.rollback().await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Database error querying next assignment".to_string(),
-                    }),
-                )
-                    .into_response();
+            let remaining = timeout_duration - elapsed;
+            tokio::select! {
+                _ = rx_notify.recv() => {},
+                _ = tokio::time::sleep(remaining) => {},
             }
         }
     }
 }
 
 pub fn is_valid_step_result(result: &str) -> bool {
-    matches!(
-        result,
-        "success" | "failed" | "branch_matched" | "branch_not_matched"
-    )
+    result.parse::<StepResultStatus>().is_ok()
 }
 
 #[tracing::instrument(skip(worker, state, payload))]
@@ -557,118 +452,52 @@ pub async fn post_step_result_handler(
     State(state): State<AppState>,
     Path(task_run_id): Path<i64>,
     Json(payload): Json<StepResultRequest>,
-) -> impl IntoResponse {
-    let result_str = payload.result.trim();
-    if !is_valid_step_result(result_str) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: format!(
-                    "Invalid step result '{}'. Expected one of: success, failed, branch_matched, branch_not_matched",
-                    payload.result
-                ),
-            }),
-        )
-            .into_response();
-    }
+) -> Result<impl IntoResponse, AppError> {
+    let result_status: StepResultStatus = payload.result.trim().parse().map_err(|_| {
+        AppError::BadRequest(format!(
+            "Invalid step result '{}'. Expected one of: success, failed, branch_matched, branch_not_matched",
+            payload.result
+        ))
+    })?;
+    let result_str = result_status.to_string();
 
-    let mut tx = match state.db.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Failed to begin transaction for step-result: {}",
-                e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    let mut tx = state.db.begin().await?;
 
-    let run_info: Option<(i64, String, i64)> = match sqlx::query_as(
+    let run_info: Option<(i64, String, i64)> = sqlx::query_as(
         "SELECT id, status, automation_id FROM task_runs WHERE id = $1 AND worker_id = $2 AND status IN ('running', 'cancelling')",
     )
     .bind(task_run_id)
     .bind(worker.id)
     .fetch_optional(&mut *tx)
-    .await
-    {
-        Ok(res) => res,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Error checking task run ownership: {}",
-                e
-            );
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error checking task run".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    .await?;
 
     let (_run_id, _status, automation_id) = match run_info {
         Some(info) => info,
         None => {
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("Running task run {} not found for this worker", task_run_id),
-                }),
-            )
-                .into_response();
+            return Err(AppError::NotFound(format!(
+                "Running task run {} not found for this worker",
+                task_run_id
+            )));
         }
     };
 
-    // Enforce max step execution count limit (1000 steps per task run)
-    let step_count: i64 = match sqlx::query_scalar(
+    let step_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1",
     )
     .bind(task_run_id)
     .fetch_one(&mut *tx)
-    .await
-    {
-        Ok(cnt) => cnt,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Error checking step execution count: {}",
-                e
-            );
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error checking step count".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    .await?;
 
     if step_count >= 1000 {
-        let _ = sqlx::query(
+        sqlx::query(
             "UPDATE task_runs SET status = 'failed', completed_at = now(), error_message = $1 WHERE id = $2",
         )
         .bind("Exceeded maximum allowed step count limit (1000 steps)")
         .bind(task_run_id)
         .execute(&mut *tx)
-        .await;
+        .await?;
 
-        let _ = tx.commit().await;
+        tx.commit().await?;
         tracing::warn!(
             worker_id = worker.id,
             task_run_id = task_run_id,
@@ -676,101 +505,39 @@ pub async fn post_step_result_handler(
             "Failing task run due to exceeding max step count limit (1000 steps)"
         );
 
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Exceeded maximum allowed step count limit (1000 steps)".to_string(),
-            }),
-        )
-            .into_response();
+        return Err(AppError::BadRequest("Exceeded maximum allowed step count limit (1000 steps)".to_string()));
     }
 
-    // Validate step_id belongs to this task run's automation
-    let step_valid: Option<i64> = match sqlx::query_scalar(
+    let step_valid: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM automation_steps WHERE id = $1 AND automation_id = $2",
     )
     .bind(payload.step_id)
     .bind(automation_id)
     .fetch_optional(&mut *tx)
-    .await
-    {
-        Ok(res) => res,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                step_id = payload.step_id,
-                "Error validating step_id: {}",
-                e
-            );
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error validating step".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    .await?;
 
     if step_valid.is_none() {
-        let _ = tx.rollback().await;
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: format!(
-                    "Step {} does not belong to automation {}",
-                    payload.step_id, automation_id
-                ),
-            }),
-        )
-            .into_response();
+        return Err(AppError::BadRequest(format!(
+            "Step {} does not belong to automation {}",
+            payload.step_id, automation_id
+        )));
     }
 
-    // Validate variable_updates variable_ids belong to this task run's automation
     if let Some(ref updates) = payload.variable_updates {
         for item in updates {
-            let var_valid: Option<i64> = match sqlx::query_scalar(
+            let var_valid: Option<i64> = sqlx::query_scalar(
                 "SELECT id FROM automation_variables WHERE id = $1 AND automation_id = $2",
             )
             .bind(item.variable_id)
             .bind(automation_id)
             .fetch_optional(&mut *tx)
-            .await
-            {
-                Ok(res) => res,
-                Err(e) => {
-                    tracing::error!(
-                        worker_id = worker.id,
-                        task_run_id = task_run_id,
-                        variable_id = item.variable_id,
-                        "Error validating variable_id: {}",
-                        e
-                    );
-                    let _ = tx.rollback().await;
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: "Database error validating variable".to_string(),
-                        }),
-                    )
-                        .into_response();
-                }
-            };
+            .await?;
 
             if var_valid.is_none() {
-                let _ = tx.rollback().await;
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        error: format!(
-                            "Variable {} does not belong to automation {}",
-                            item.variable_id, automation_id
-                        ),
-                    }),
-                )
-                    .into_response();
+                return Err(AppError::BadRequest(format!(
+                    "Variable {} does not belong to automation {}",
+                    item.variable_id, automation_id
+                )));
             }
         }
     }
@@ -813,7 +580,7 @@ pub async fn post_step_result_handler(
         .unwrap_or_else(chrono::Utc::now);
     let started_at = payload.started_at.unwrap_or(completed_at);
 
-    let step_result_opt: Option<i64> = match sqlx::query_scalar(
+    let step_result_opt: Option<i64> = sqlx::query_scalar(
         r#"
         INSERT INTO task_run_steps (
             task_run_id, seq, step_id, started_at, completed_at, result,
@@ -830,7 +597,7 @@ pub async fn post_step_result_handler(
     .bind(payload.step_id)
     .bind(started_at)
     .bind(completed_at)
-    .bind(result_str)
+    .bind(&result_str)
     .bind(captured_r)
     .bind(captured_g)
     .bind(captured_b)
@@ -839,109 +606,40 @@ pub async fn post_step_result_handler(
     .bind(captured_y)
     .bind(payload.screenshot_object_key.as_deref())
     .fetch_optional(&mut *tx)
-    .await
-    {
-        Ok(opt_id) => opt_id,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                step_id = payload.step_id,
-                "Failed to insert task_run_steps: {}",
-                e
-            );
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to record step result".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    .await?;
 
     let step_result_id = match step_result_opt {
         Some(id) => id,
         None => {
-            // Conflict occurred due to duplicate seq for this task run. Retrieve existing step_result_id.
             if let Some(seq_num) = payload.seq {
-                let existing_id: Option<i64> = match sqlx::query_scalar(
+                let existing_id: Option<i64> = sqlx::query_scalar(
                     "SELECT id FROM task_run_steps WHERE task_run_id = $1 AND seq = $2",
                 )
                 .bind(task_run_id)
                 .bind(seq_num)
                 .fetch_optional(&mut *tx)
-                .await
-                {
-                    Ok(id) => id,
-                    Err(e) => {
-                        tracing::error!(
-                            worker_id = worker.id,
-                            task_run_id = task_run_id,
-                            seq = seq_num,
-                            "Error querying existing step_result_id for duplicate seq: {}",
-                            e
-                        );
-                        let _ = tx.rollback().await;
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ErrorResponse {
-                                error: "Database error handling duplicate step result".to_string(),
-                            }),
-                        )
-                            .into_response();
-                    }
-                };
+                .await?;
 
                 if let Some(id) = existing_id {
-                    let _ = tx.commit().await;
-                    return (
-                        StatusCode::OK,
-                        Json(StepResultResponse {
-                            status: "success".to_string(),
-                            step_result_id: id,
-                        }),
-                    )
-                        .into_response();
+                    tx.commit().await?;
+                    return Ok(Json(StepResultResponse {
+                        status: "success".to_string(),
+                        step_result_id: id,
+                    }));
                 }
             }
 
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to record step result".to_string(),
-                }),
-            )
-                .into_response();
+            return Err(AppError::Internal("Failed to record step result".to_string()));
         }
     };
 
-    if let Err(e) = sqlx::query(
+    sqlx::query(
         "UPDATE task_runs SET current_step_id = $1 WHERE id = $2",
     )
     .bind(payload.step_id)
     .bind(task_run_id)
     .execute(&mut *tx)
-    .await
-    {
-        tracing::error!(
-            worker_id = worker.id,
-            task_run_id = task_run_id,
-            step_id = payload.step_id,
-            "Failed to update task_runs current_step_id: {}",
-            e
-        );
-        let _ = tx.rollback().await;
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to update current step on task run".to_string(),
-            }),
-        )
-            .into_response();
-    }
+    .await?;
 
     if let Some(updates) = payload.variable_updates {
         if !updates.is_empty() {
@@ -954,7 +652,7 @@ pub async fn post_step_result_handler(
                 })
                 .collect();
 
-            if let Err(e) = sqlx::query(
+            sqlx::query(
                 r#"
                 INSERT INTO task_run_variable_values (task_run_id, variable_id, value, set_at_step_id, set_at)
                 SELECT $1, u.variable_id, u.value, $2, now()
@@ -970,50 +668,16 @@ pub async fn post_step_result_handler(
             .bind(&var_ids)
             .bind(&var_vals)
             .execute(&mut *tx)
-            .await
-            {
-                tracing::error!(
-                    worker_id = worker.id,
-                    task_run_id = task_run_id,
-                    "Failed to batch upsert variable values: {}",
-                    e
-                );
-                let _ = tx.rollback().await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to record variable updates".to_string(),
-                    }),
-                )
-                    .into_response();
-            }
+            .await?;
         }
     }
 
-    if let Err(e) = tx.commit().await {
-        tracing::error!(
-            worker_id = worker.id,
-            task_run_id = task_run_id,
-            "Failed to commit transaction for step-result: {}",
-            e
-        );
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to commit step result".to_string(),
-            }),
-        )
-            .into_response();
-    }
+    tx.commit().await?;
 
-    (
-        StatusCode::OK,
-        Json(StepResultResponse {
-            status: "success".to_string(),
-            step_result_id,
-        }),
-    )
-        .into_response()
+    Ok(Json(StepResultResponse {
+        status: "success".to_string(),
+        step_result_id,
+    }))
 }
 
 #[tracing::instrument(skip(worker, state, payload))]
@@ -1022,19 +686,13 @@ pub async fn post_complete_task_run_handler(
     State(state): State<AppState>,
     Path(task_run_id): Path<i64>,
     Json(payload): Json<CompleteTaskRunRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, AppError> {
     let final_status = payload.status.trim();
     if final_status != "succeeded" && final_status != "failed" {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: format!(
-                    "Invalid completion status '{}'. Expected 'succeeded' or 'failed'",
-                    payload.status
-                ),
-            }),
-        )
-            .into_response();
+        return Err(AppError::BadRequest(format!(
+            "Invalid completion status '{}'. Expected 'succeeded' or 'failed'",
+            payload.status
+        )));
     }
 
     let update_res = sqlx::query(
@@ -1052,46 +710,24 @@ pub async fn post_complete_task_run_handler(
     .bind(task_run_id)
     .bind(worker.id)
     .fetch_optional(&state.db)
-    .await;
+    .await?;
 
     match update_res {
-        Ok(Some(_)) => {
+        Some(_) => {
             tracing::info!(
                 worker_id = worker.id,
                 task_run_id = task_run_id,
                 status = final_status,
                 "Task run completed"
             );
-            (
-                StatusCode::OK,
-                Json(CompleteTaskRunResponse {
-                    status: "success".to_string(),
-                }),
-            )
-                .into_response()
+            Ok(Json(CompleteTaskRunResponse {
+                status: "success".to_string(),
+            }))
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Running task run {} not found for this worker", task_run_id),
-            }),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Failed to update task run completion status: {}",
-                e
-            );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error completing task run".to_string(),
-                }),
-            )
-                .into_response()
-        }
+        None => Err(AppError::NotFound(format!(
+            "Running task run {} not found for this worker",
+            task_run_id
+        ))),
     }
 }
 
@@ -1169,74 +805,34 @@ pub async fn get_task_run_screenshot_upload_url_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
     Path(task_run_id): Path<i64>,
-) -> impl IntoResponse {
-    let run_exists: Option<i64> = match sqlx::query_scalar(
+) -> Result<impl IntoResponse, AppError> {
+    let run_exists: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM task_runs WHERE id = $1 AND worker_id = $2",
     )
     .bind(task_run_id)
     .bind(worker.id)
     .fetch_optional(&state.db)
-    .await
-    {
-        Ok(res) => res,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Error checking task run for screenshot upload URL: {}",
-                e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    .await?;
 
     if run_exists.is_none() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Running task run {} not found for this worker", task_run_id),
-            }),
-        )
-            .into_response();
+        return Err(AppError::NotFound(format!(
+            "Running task run {} not found for this worker",
+            task_run_id
+        )));
     }
 
     let object_key = format!("runs/{}/step_{}.png", task_run_id, Uuid::new_v4());
     let storage = state.storage_service();
 
-    match storage
+    let upload_url = storage
         .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
         .await
-    {
-        Ok(upload_url) => (
-            StatusCode::OK,
-            Json(ScreenshotUploadUrlResponse {
-                upload_url,
-                object_key,
-            }),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Failed to generate presigned upload URL: {}",
-                e
-            );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to generate upload URL".to_string(),
-                }),
-            )
-                .into_response()
-        }
-    }
+        .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
+
+    Ok(Json(ScreenshotUploadUrlResponse {
+        upload_url,
+        object_key,
+    }))
 }
 
 #[tracing::instrument(skip(worker, state, payload))]
@@ -1245,64 +841,24 @@ pub async fn post_recording_events_handler(
     State(state): State<AppState>,
     Path(session_id): Path<i64>,
     Json(payload): Json<PostRecordingEventsRequest>,
-) -> impl IntoResponse {
-    let mut tx = match state.db.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                session_id = session_id,
-                "Failed to begin transaction for recording events: {}",
-                e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+) -> Result<impl IntoResponse, AppError> {
+    let mut tx = state.db.begin().await?;
 
-    let session_row: Option<(String,)> = match sqlx::query_as(
+    let session_row: Option<(String,)> = sqlx::query_as(
         "SELECT status FROM recording_sessions WHERE id = $1 AND worker_id = $2",
     )
     .bind(session_id)
     .bind(worker.id)
     .fetch_optional(&mut *tx)
-    .await
-    {
-        Ok(res) => res,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                session_id = session_id,
-                "Error querying recording session: {}",
-                e
-            );
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error checking recording session".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    .await?;
 
     let session_status = match session_row {
         Some((status,)) => status,
         None => {
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("Recording session {} not found for this worker", session_id),
-                }),
-            )
-                .into_response();
+            return Err(AppError::NotFound(format!(
+                "Recording session {} not found for this worker",
+                session_id
+            )));
         }
     };
 
@@ -1312,7 +868,7 @@ pub async fn post_recording_events_handler(
         let captured_at = event.captured_at.unwrap_or_else(chrono::Utc::now);
         let event_type = event.event_type.trim();
 
-        if let Err(e) = sqlx::query(
+        sqlx::query(
             r#"
             INSERT INTO recording_events (
                 recording_session_id, sequence_number, event_type,
@@ -1339,53 +895,18 @@ pub async fn post_recording_events_handler(
         .bind(event.screenshot_object_key.as_deref())
         .bind(captured_at)
         .execute(&mut *tx)
-        .await
-        {
-            tracing::error!(
-                worker_id = worker.id,
-                session_id = session_id,
-                sequence_number = event.sequence_number,
-                "Failed to insert recording event: {}",
-                e
-            );
-            let _ = tx.rollback().await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to persist recording events".to_string(),
-                }),
-            )
-                .into_response();
-        }
+        .await?;
     }
 
-    if let Err(e) = tx.commit().await {
-        tracing::error!(
-            worker_id = worker.id,
-            session_id = session_id,
-            "Failed to commit recording events: {}",
-            e
-        );
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to commit recording events".to_string(),
-            }),
-        )
-            .into_response();
-    }
+    tx.commit().await?;
 
     let stop_requested = session_status != "recording";
 
-    (
-        StatusCode::OK,
-        Json(PostRecordingEventsResponse {
-            status: "success".to_string(),
-            count,
-            stop_requested,
-        }),
-    )
-        .into_response()
+    Ok(Json(PostRecordingEventsResponse {
+        status: "success".to_string(),
+        count,
+        stop_requested,
+    }))
 }
 
 #[tracing::instrument(skip(worker, state))]
@@ -1393,74 +914,34 @@ pub async fn get_recording_screenshot_upload_url_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
     Path(session_id): Path<i64>,
-) -> impl IntoResponse {
-    let session_exists: Option<i64> = match sqlx::query_scalar(
+) -> Result<impl IntoResponse, AppError> {
+    let session_exists: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM recording_sessions WHERE id = $1 AND worker_id = $2",
     )
     .bind(session_id)
     .bind(worker.id)
     .fetch_optional(&state.db)
-    .await
-    {
-        Ok(res) => res,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                session_id = session_id,
-                "Error checking recording session for upload URL: {}",
-                e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    .await?;
 
     if session_exists.is_none() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Recording session {} not found for this worker", session_id),
-            }),
-        )
-            .into_response();
+        return Err(AppError::NotFound(format!(
+            "Recording session {} not found for this worker",
+            session_id
+        )));
     }
 
     let object_key = format!("recordings/{}/event_{}.png", session_id, Uuid::new_v4());
     let storage = state.storage_service();
 
-    match storage
+    let upload_url = storage
         .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
         .await
-    {
-        Ok(upload_url) => (
-            StatusCode::OK,
-            Json(ScreenshotUploadUrlResponse {
-                upload_url,
-                object_key,
-            }),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                session_id = session_id,
-                "Failed to generate presigned upload URL for recording: {}",
-                e
-            );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to generate upload URL".to_string(),
-                }),
-            )
-                .into_response()
-        }
-    }
+        .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
+
+    Ok(Json(ScreenshotUploadUrlResponse {
+        upload_url,
+        object_key,
+    }))
 }
 
 #[tracing::instrument(skip(worker, state))]
@@ -1468,7 +949,7 @@ pub async fn post_worker_stop_recording_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
     Path(session_id): Path<i64>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, AppError> {
     let update_res = sqlx::query(
         r#"
         UPDATE recording_sessions
@@ -1481,45 +962,23 @@ pub async fn post_worker_stop_recording_handler(
     .bind(session_id)
     .bind(worker.id)
     .fetch_optional(&state.db)
-    .await;
+    .await?;
 
     match update_res {
-        Ok(Some(_)) => {
+        Some(_) => {
             tracing::info!(
                 worker_id = worker.id,
                 session_id = session_id,
                 "Recording session finalized by worker"
             );
-            (
-                StatusCode::OK,
-                Json(WorkerStopRecordingResponse {
-                    status: "success".to_string(),
-                }),
-            )
-                .into_response()
+            Ok(Json(WorkerStopRecordingResponse {
+                status: "success".to_string(),
+            }))
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Recording session {} not found for this worker", session_id),
-            }),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                session_id = session_id,
-                "Failed to update recording session status: {}",
-                e
-            );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error stopping recording session".to_string(),
-                }),
-            )
-                .into_response()
-        }
+        None => Err(AppError::NotFound(format!(
+            "Recording session {} not found for this worker",
+            session_id
+        ))),
     }
 }
 
@@ -1529,7 +988,7 @@ pub async fn post_task_run_screenshot_commit_handler(
     State(state): State<AppState>,
     Path(task_run_id): Path<i64>,
     payload: Option<Json<CommitScreenshotRequest>>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, AppError> {
     let req = payload.map(|Json(p)| p).unwrap_or(CommitScreenshotRequest {
         step_id: None,
         object_key: None,
@@ -1537,46 +996,25 @@ pub async fn post_task_run_screenshot_commit_handler(
         height: None,
     });
 
-    let run_exists: Option<i64> = match sqlx::query_scalar(
+    let run_exists: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM task_runs WHERE id = $1 AND worker_id = $2",
     )
     .bind(task_run_id)
     .bind(worker.id)
     .fetch_optional(&state.db)
-    .await
-    {
-        Ok(res) => res,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Error checking task run for screenshot commit: {}",
-                e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+    .await?;
 
     if run_exists.is_none() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Task run {} not found for this worker", task_run_id),
-            }),
-        )
-            .into_response();
+        return Err(AppError::NotFound(format!(
+            "Task run {} not found for this worker",
+            task_run_id
+        )));
     }
 
     let object_key = req.object_key.unwrap_or_else(|| format!("runs/{}/step.png", task_run_id));
 
     if let Some(step_id) = req.step_id {
-        let update_res = sqlx::query(
+        if let Err(e) = sqlx::query(
             r#"
             UPDATE task_run_steps
             SET screenshot_object_key = $1
@@ -1587,9 +1025,8 @@ pub async fn post_task_run_screenshot_commit_handler(
         .bind(task_run_id)
         .bind(step_id)
         .execute(&state.db)
-        .await;
-
-        if let Err(e) = update_res {
+        .await
+        {
             tracing::error!(
                 worker_id = worker.id,
                 task_run_id = task_run_id,
@@ -1599,8 +1036,7 @@ pub async fn post_task_run_screenshot_commit_handler(
             );
         }
     } else {
-        // Update the most recently recorded step for this task run if step_id not explicitly provided
-        let update_res = sqlx::query(
+        if let Err(e) = sqlx::query(
             r#"
             UPDATE task_run_steps
             SET screenshot_object_key = $1
@@ -1615,9 +1051,8 @@ pub async fn post_task_run_screenshot_commit_handler(
         .bind(&object_key)
         .bind(task_run_id)
         .execute(&state.db)
-        .await;
-
-        if let Err(e) = update_res {
+        .await
+        {
             tracing::error!(
                 worker_id = worker.id,
                 task_run_id = task_run_id,
@@ -1627,50 +1062,29 @@ pub async fn post_task_run_screenshot_commit_handler(
         }
     }
 
-    (
-        StatusCode::OK,
-        Json(CommitScreenshotResponse {
-            status: "success".to_string(),
-            object_key,
-        }),
-    )
-        .into_response()
+    Ok(Json(CommitScreenshotResponse {
+        status: "success".to_string(),
+        object_key,
+    }))
 }
 
-#[tracing::instrument(skip(worker, state))]
+#[tracing::instrument(skip(_worker, state))]
 pub async fn get_task_run_handler(
-    worker: AuthWorker,
+    _worker: AuthWorker,
     State(state): State<AppState>,
     Path(task_run_id): Path<i64>,
-) -> impl IntoResponse {
-    let mut conn = match state.db.acquire().await {
-        Ok(conn) => conn,
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Failed to acquire db connection for get_task_run: {}",
-                e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
+) -> Result<impl IntoResponse, AppError> {
+    let mut conn = state.db.acquire().await?;
 
     let row = sqlx::query(
         "SELECT id, automation_id, status, dispatched_automation_json FROM task_runs WHERE id = $1",
     )
     .bind(task_run_id)
     .fetch_optional(&mut *conn)
-    .await;
+    .await?;
 
     match row {
-        Ok(Some(row)) => {
+        Some(row) => {
             let id: i64 = row.get("id");
             let automation_id: i64 = row.get("automation_id");
             let status: String = row.get("status");
@@ -1678,64 +1092,21 @@ pub async fn get_task_run_handler(
 
             let automation_json = match dispatched_json {
                 Some(json) => json,
-                None => match fetch_full_automation_json(&mut *conn, automation_id).await {
-                    Ok(json) => json,
-                    Err(e) => {
-                        tracing::error!(
-                            worker_id = worker.id,
-                            automation_id = automation_id,
-                            task_run_id = task_run_id,
-                            "Failed to fetch automation json payload for task run: {}",
-                            e
-                        );
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ErrorResponse {
-                                error: "Failed to load automation details".to_string(),
-                            }),
-                        )
-                            .into_response();
-                    }
-                },
+                None => fetch_full_automation_json(&mut *conn, automation_id).await?,
             };
 
-            (
-                StatusCode::OK,
-                Json(TaskRunResponse {
-                    task_run_id: id,
-                    status,
-                    automation: automation_json,
-                }),
-            )
-                .into_response()
+            Ok(Json(TaskRunResponse {
+                task_run_id: id,
+                status,
+                automation: automation_json,
+            }))
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Task run {} not found", task_run_id),
-            }),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                "Error querying task run: {}",
-                e
-            );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error querying task run".to_string(),
-                }),
-            )
-                .into_response()
-        }
+        None => Err(AppError::NotFound(format!("Task run {} not found", task_run_id))),
     }
 }
 
 pub fn is_valid_worker_status(status: &str) -> bool {
-    matches!(status, "offline" | "online" | "busy" | "error")
+    status.parse::<WorkerStatus>().is_ok()
 }
 
 pub fn is_agent_version_outdated(agent_version: Option<&str>, min_version: Option<&str>) -> bool {
@@ -1746,7 +1117,7 @@ pub fn is_agent_version_outdated(agent_version: Option<&str>, min_version: Optio
 
     let agent_ver = match agent_version {
         Some(v) if !v.trim().is_empty() => v.trim(),
-        _ => return true, // Outdated if minimum version is required but agent provides no version
+        _ => return true,
     };
 
     let parse_version = |v: &str| -> Vec<u64> {
@@ -1767,46 +1138,36 @@ pub async fn post_heartbeat_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
     Json(payload): Json<HeartbeatRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, AppError> {
     if is_agent_version_outdated(
         payload.agent_version.as_deref(),
         state.config.min_agent_version.as_deref(),
     ) {
         let min_ver = state.config.min_agent_version.as_deref().unwrap_or("1.0.0");
         let provided = payload.agent_version.as_deref().unwrap_or("none");
-        return (
-            StatusCode::UPGRADE_REQUIRED,
-            Json(ErrorResponse {
-                error: format!(
-                    "Outdated agent version '{}'. Minimum required agent version is '{}'",
-                    provided, min_ver
-                ),
-            }),
-        )
-            .into_response();
+        return Err(AppError::UpgradeRequired(format!(
+            "Outdated agent version '{}'. Minimum required agent version is '{}'",
+            provided, min_ver
+        )));
     }
 
     let new_status = if let Some(ref status_str) = payload.status {
-        let trimmed = status_str.trim();
-        if !is_valid_worker_status(trimmed) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: format!("Invalid status '{}'. Expected one of: offline, online, busy, error", status_str),
-                }),
-            )
-                .into_response();
-        }
-        trimmed.to_string()
+        let status: WorkerStatus = status_str.trim().parse().map_err(|_| {
+            AppError::BadRequest(format!(
+                "Invalid status '{}'. Expected one of: offline, online, busy, error",
+                status_str
+            ))
+        })?;
+        status.to_string()
     } else {
         if is_valid_worker_status(&worker.status) {
             worker.status.clone()
         } else {
-            "online".to_string()
+            WorkerStatus::Online.to_string()
         }
     };
 
-    let update_result = sqlx::query(
+    sqlx::query(
         r#"
         UPDATE task_worker_pcs
         SET
@@ -1826,18 +1187,7 @@ pub async fn post_heartbeat_handler(
     .bind(payload.agent_version.as_deref())
     .bind(worker.id)
     .execute(&state.db)
-    .await;
-
-    if let Err(e) = update_result {
-        tracing::error!(worker_id = worker.id, "Failed to update heartbeat: {}", e);
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Database error during heartbeat".to_string(),
-            }),
-        )
-            .into_response();
-    }
+    .await?;
 
     let mut cancel_requested = false;
 
@@ -1859,7 +1209,6 @@ pub async fn post_heartbeat_handler(
                 }
             }
             Ok(None) => {
-                // If run doesn't exist or isn't assigned to this worker, flag cancellation
                 cancel_requested = true;
             }
             Err(e) => {
@@ -1873,23 +1222,19 @@ pub async fn post_heartbeat_handler(
         }
     }
 
-    (
-        StatusCode::OK,
-        Json(HeartbeatResponse {
-            status: "success".to_string(),
-            cancel_requested,
-            poll_interval_secs: state.config.worker_poll_interval_secs,
-            heartbeat_interval_secs: state.config.worker_heartbeat_interval_secs,
-        }),
-    )
-        .into_response()
+    Ok(Json(HeartbeatResponse {
+        status: "success".to_string(),
+        cancel_requested,
+        poll_interval_secs: state.config.worker_poll_interval_secs,
+        heartbeat_interval_secs: state.config.worker_heartbeat_interval_secs,
+    }))
 }
 
 #[tracing::instrument(skip(state, payload))]
 pub async fn post_register_worker_handler(
     State(state): State<AppState>,
     Json(payload): Json<RegisterWorkerRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, AppError> {
     let token = payload
         .registration_token
         .or(payload.token)
@@ -1897,13 +1242,7 @@ pub async fn post_register_worker_handler(
         .unwrap_or_default();
 
     if token.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "registration_token is required".to_string(),
-            }),
-        )
-            .into_response();
+        return Err(AppError::BadRequest("registration_token is required".to_string()));
     }
 
     let token_hash = hash_token(&token);
@@ -1924,10 +1263,10 @@ pub async fn post_register_worker_handler(
     .bind(&api_key_hash)
     .bind(&token_hash)
     .fetch_optional(&state.db)
-    .await;
+    .await?;
 
     match row_result {
-        Ok(Some(row)) => {
+        Some(row) => {
             let worker_id: i64 = row.get("id");
             let hostname: String = row.get("hostname");
             let display_name: String = row.get("display_name");
@@ -1938,35 +1277,15 @@ pub async fn post_register_worker_handler(
                 "Task worker PC registered successfully"
             );
 
-            (
-                StatusCode::OK,
-                Json(RegisterWorkerResponse {
-                    status: "success".to_string(),
-                    worker_id,
-                    hostname,
-                    display_name,
-                    api_key,
-                }),
-            )
-                .into_response()
+            Ok(Json(RegisterWorkerResponse {
+                status: "success".to_string(),
+                worker_id,
+                hostname,
+                display_name,
+                api_key,
+            }))
         }
-        Ok(None) => (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Invalid or expired registration token".to_string(),
-            }),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to register worker PC: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Database error during registration".to_string(),
-                }),
-            )
-                .into_response()
-        }
+        None => Err(AppError::Unauthorized("Invalid or expired registration token".to_string())),
     }
 }
 
@@ -1993,7 +1312,7 @@ mod tests {
     fn test_api_key_generation_and_sha256_hash() {
         let api_key = generate_worker_api_key();
         assert!(api_key.starts_with("dd_pk_"));
-        assert_eq!(api_key.len(), 70); // "dd_pk_" (6) + 64 hex chars = 70
+        assert_eq!(api_key.len(), 70);
 
         let hash = hash_token(&api_key);
         assert_eq!(hash.len(), 32);

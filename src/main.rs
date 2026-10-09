@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use deskdispatch::{
     auth::LoginRateLimiter,
     build_router,

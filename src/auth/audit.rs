@@ -1,14 +1,17 @@
-use sqlx::PgPool;
+use sqlx::{Executor, Postgres};
 
-#[tracing::instrument(skip(pool))]
-pub async fn log_audit(
-    pool: &PgPool,
+#[tracing::instrument(skip(exec))]
+pub async fn log_audit<'e, E>(
+    exec: E,
     user_id: Option<i64>,
     action: &str,
     entity_type: &str,
     entity_id: Option<i64>,
     details: Option<serde_json::Value>,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query(
         r#"
         INSERT INTO audit_log (user_id, action, entity_type, entity_id, details)
@@ -20,7 +23,7 @@ pub async fn log_audit(
     .bind(entity_type)
     .bind(entity_id)
     .bind(details)
-    .execute(pool)
+    .execute(exec)
     .await?;
 
     Ok(())

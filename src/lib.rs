@@ -1,6 +1,10 @@
+#![forbid(unsafe_code)]
+
 pub mod auth;
 pub mod config;
 pub mod de;
+pub mod domain;
+pub mod error;
 pub mod magnifier;
 pub mod picker;
 pub mod retention;
