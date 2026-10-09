@@ -414,6 +414,7 @@ DeskDispatch implements strict multi-layer security controls:
 3. **CSRF Protection:** Server-generated per-session CSRF tokens injected into Askama forms via macros and verified on every non-GET HTTP request.
 4. **Rate Limiting:** IP- and username-based login rate limiting to mitigate brute-force credential attacks.
 5. **Worker API Security:** Machine API keys are high-entropy 256-bit random tokens hashed with SHA-256 at rest in `task_worker_pcs.api_key_hash`.
+6. **Reverse Proxy Header Trust (`TRUST_PROXY_HEADERS`):** When deployed behind a reverse proxy or load balancer (e.g., NGINX or AWS ALB), setting `TRUST_PROXY_HEADERS=true` enables parsing of `X-Forwarded-For` and `X-Real-IP` HTTP request headers to identify actual client IP addresses for login rate limiting and session audit logs. By default (`false`), proxy headers are ignored to prevent IP spoofing attacks when the application receives direct client connections. This mechanism ensures accurate rate-limiting enforcement and security logging across containerized and cloud proxy deployments.
 
 ---
 
