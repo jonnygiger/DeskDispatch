@@ -20,7 +20,13 @@ use axum::{
     routing::get,
     Router,
 };
-use tower_http::compression::CompressionLayer;
+use tower_http::{
+    catch_panic::CatchPanicLayer,
+    compression::CompressionLayer,
+    request_id::{MakeRequestUuid, SetRequestIdLayer},
+    timeout::TimeoutLayer,
+    trace::TraceLayer,
+};
 
 use auth::{csrf_middleware, security_headers_middleware};
 use routes::{
@@ -82,5 +88,9 @@ pub fn build_router(state: AppState) -> Router {
             state.clone(),
             security_headers_middleware,
         ))
+        .layer(TraceLayer::new_for_http())
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(TimeoutLayer::new(std::time::Duration::from_secs(30)))
+        .layer(CatchPanicLayer::new())
         .with_state(state)
 }

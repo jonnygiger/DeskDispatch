@@ -90,34 +90,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         task_queue_notifier: tx_notify.clone(),
     };
 
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let mut tasks = tokio::task::JoinSet::new();
+
     // Spawn PgListener task for LISTEN/NOTIFY task_queue_changed
     let listener_db_url = config.database_url.clone();
     let listener_tx = tx_notify.clone();
-    tokio::spawn(async move {
+    let listener_cancel = cancel_token.clone();
+    tasks.spawn(async move {
         loop {
-            match sqlx::postgres::PgListener::connect(&listener_db_url).await {
-                Ok(mut listener) => {
-                    if let Err(e) = listener.listen("task_queue_changed").await {
-                        error!("PgListener failed to listen on 'task_queue_changed': {}", e);
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-                    info!("PgListener connected and listening on 'task_queue_changed'");
-                    loop {
-                        match listener.recv().await {
-                            Ok(_notification) => {
-                                let _ = listener_tx.send(());
+            tokio::select! {
+                _ = listener_cancel.cancelled() => {
+                    info!("PgListener background task stopping...");
+                    break;
+                }
+                conn_res = sqlx::postgres::PgListener::connect(&listener_db_url) => {
+                    match conn_res {
+                        Ok(mut listener) => {
+                            if let Err(e) = listener.listen("task_queue_changed").await {
+                                error!("PgListener failed to listen on 'task_queue_changed': {}", e);
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                continue;
                             }
-                            Err(e) => {
-                                error!("PgListener recv error: {}", e);
-                                break;
+                            info!("PgListener connected and listening on 'task_queue_changed'");
+                            loop {
+                                tokio::select! {
+                                    _ = listener_cancel.cancelled() => break,
+                                    recv_res = listener.recv() => {
+                                        match recv_res {
+                                            Ok(_notification) => {
+                                                let _ = listener_tx.send(());
+                                            }
+                                            Err(e) => {
+                                                error!("PgListener recv error: {}", e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
+                        Err(e) => {
+                            error!("PgListener connection error: {}", e);
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
                     }
-                }
-                Err(e) => {
-                    error!("PgListener connection error: {}", e);
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }
             }
         }
@@ -126,30 +143,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = state.db.clone();
     let retention_s3_client = state.s3_client.clone();
     let retention_config = config.clone();
-    tokio::spawn(async move {
+    let periodic_cancel = cancel_token.clone();
+    tasks.spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut retention_counter: u32 = 0;
         loop {
-            interval.tick().await;
-            if let Err(e) = sweep_stalled_task_runs(&db_pool).await {
-                tracing::error!("Error sweeping stalled task runs: {}", e);
-            }
-            if let Err(e) = process_due_schedules(&db_pool).await {
-                tracing::error!("Error processing due schedules: {}", e);
-            }
+            tokio::select! {
+                _ = periodic_cancel.cancelled() => {
+                    info!("Periodic background sweeper/scheduler task stopping...");
+                    break;
+                }
+                _ = interval.tick() => {
+                    let sweep_res = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        sweep_stalled_task_runs(&db_pool)
+                    ).await;
+                    if let Ok(Err(e)) = sweep_res {
+                        tracing::error!("Error sweeping stalled task runs: {}", e);
+                    } else if sweep_res.is_err() {
+                        tracing::error!("Timed out sweeping stalled task runs");
+                    }
 
-            // Run retention jobs every 1 hour (120 * 30s)
-            if retention_counter == 0 {
-                deskdispatch::retention::run_all_retention_jobs(
-                    &db_pool,
-                    &retention_s3_client,
-                    &retention_config,
-                )
-                .await;
+                    let sched_res = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        process_due_schedules(&db_pool)
+                    ).await;
+                    if let Ok(Err(e)) = sched_res {
+                        tracing::error!("Error processing due schedules: {}", e);
+                    } else if sched_res.is_err() {
+                        tracing::error!("Timed out processing due schedules");
+                    }
+
+                    // Run retention jobs every 1 hour (120 * 30s)
+                    if retention_counter == 0 {
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(60),
+                            deskdispatch::retention::run_all_retention_jobs(
+                                &db_pool,
+                                &retention_s3_client,
+                                &retention_config,
+                            )
+                        ).await;
+                    }
+                    retention_counter = (retention_counter + 1) % 120;
+                }
             }
-            retention_counter = (retention_counter + 1) % 120;
         }
     });
+
+    // Optional separate Prometheus metrics listener
+    if let Some(metrics_addr_str) = &config.metrics_bind_address {
+        if let Ok(metrics_addr) = metrics_addr_str.parse::<SocketAddr>() {
+            let metrics_app = axum::Router::new().route("/metrics", axum::routing::get(metrics_handler));
+            let metrics_cancel = cancel_token.clone();
+            tasks.spawn(async move {
+                if let Ok(metrics_listener) = tokio::net::TcpListener::bind(metrics_addr).await {
+                    info!("Metrics server listening on {}", metrics_addr);
+                    let _ = axum::serve(metrics_listener, metrics_app)
+                        .with_graceful_shutdown(async move {
+                            metrics_cancel.cancelled().await;
+                        })
+                        .await;
+                }
+            });
+        }
+    }
 
     let app = build_router(state);
 
@@ -157,13 +216,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    let shutdown_token = cancel_token.clone();
+
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        shutdown_token.cancel();
+    })
     .await?;
 
+    info!("Main server shutdown complete. Waiting for background tasks to finish...");
+    while let Some(res) = tasks.join_next().await {
+        if let Err(e) = res {
+            tracing::warn!("Background task join error: {}", e);
+        }
+    }
+
+    info!("All tasks stopped cleanly.");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
+        },
+        _ = terminate => {
+            info!("Received SIGTERM, initiating graceful shutdown");
+        },
+    }
+}
+
+pub async fn metrics_handler() -> impl axum::response::IntoResponse {
+    let metrics = "# HELP deskdispatch_up Process uptime status\n# TYPE deskdispatch_up gauge\ndeskdispatch_up 1\n";
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        metrics,
+    )
 }
 
 async fn connect_db(config: &Config) -> Result<sqlx::PgPool, Box<dyn std::error::Error>> {
@@ -302,7 +411,7 @@ async fn ensure_s3_bucket(
 
 fn init_tracing(config: &Config) {
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,app=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info"));
 
     if config.is_production() {
         tracing_subscriber::registry()
