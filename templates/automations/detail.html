@@ -37,8 +37,8 @@
 
         <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
             <div style="flex: 1; min-width: 200px;">
-                <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Target Worker Group</label>
-                <select name="worker_group_id" class="form-control" style="width: 100%;">
+                <label for="run_now_worker_group_id" style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Target Worker Group</label>
+                <select id="run_now_worker_group_id" name="worker_group_id" class="form-control" style="width: 100%;">
                     <option value="">Any Worker Group</option>
                     {% for group in worker_groups %}
                         <option value="{{ group.id }}">{{ group.name }}</option>
@@ -78,16 +78,16 @@
     <form method="post" action="/automations/{{ automation.id }}" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
         {% call macros::csrf_field(csrf_token) %}{% endcall %}
         <div style="flex: 2; min-width: 200px;">
-            <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
-            <input type="text" name="name" value="{{ automation.name }}" required class="form-control" style="width: 100%;">
+            <label for="edit_automation_name" style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
+            <input type="text" id="edit_automation_name" name="name" value="{{ automation.name }}" required class="form-control" style="width: 100%;">
         </div>
         <div style="flex: 3; min-width: 200px;">
-            <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Description</label>
-            <input type="text" name="description" value="{{ automation.description }}" class="form-control" style="width: 100%;">
+            <label for="edit_automation_desc" style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Description</label>
+            <input type="text" id="edit_automation_desc" name="description" value="{{ automation.description }}" class="form-control" style="width: 100%;">
         </div>
         <div style="flex: 1; min-width: 120px;">
-            <label style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Status</label>
-            <select name="status" class="form-control" style="width: 100%;">
+            <label for="edit_automation_status" style="display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 0.25rem;">Status</label>
+            <select id="edit_automation_status" name="status" class="form-control" style="width: 100%;">
                 <option value="draft"{% if automation.status == "draft" %} selected{% endif %}>Draft</option>
                 <option value="active"{% if automation.status == "active" %} selected{% endif %}>Active</option>
                 <option value="archived"{% if automation.status == "archived" %} selected{% endif %}>Archived</option>

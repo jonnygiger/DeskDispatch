@@ -20,10 +20,10 @@
 <div class="card" style="margin-bottom: 1.5rem;">
     <form method="get" action="/automations" style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
         <div style="flex: 1; min-width: 200px;">
-            <input type="text" name="q" value="{{ search_query }}" placeholder="Search automations..." class="form-control" style="width: 100%;">
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search automations..." class="form-control" style="width: 100%;" aria-label="Search automations">
         </div>
         <div style="width: 150px;">
-            <select name="status" class="form-control" onchange="this.form.submit()">
+            <select name="status" class="form-control" onchange="this.form.submit()" aria-label="Filter by status">
                 <option value="all"{% if status_filter == "all" %} selected{% endif %}>All Statuses</option>
                 <option value="draft"{% if status_filter == "draft" %} selected{% endif %}>Draft</option>
                 <option value="active"{% if status_filter == "active" %} selected{% endif %}>Active</option>
