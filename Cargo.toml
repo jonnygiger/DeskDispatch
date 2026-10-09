@@ -31,13 +31,14 @@ serde_urlencoded = "0.7"
 sqlx = { version = "0.9", features = ["postgres", "runtime-tokio", "tls-rustls", "macros", "uuid", "chrono"] }
 thiserror = "2.0"
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["compression-gzip", "compression-deflate", "compression-br"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "compression-deflate", "compression-br", "trace", "request-id", "timeout", "catch-panic"] }
 mime_guess = "2.0"
 rust-embed = "8.12"
 secrecy = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-uuid = { version = "1.27", features = ["v4", "serde"] }
+uuid = { version = "1.13", features = ["v4", "serde"] }
 image = "0.25"
 urlencoding = "2.1"

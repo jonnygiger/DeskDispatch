@@ -25,6 +25,7 @@ pub struct Config {
     pub audit_log_retention_days: u32,
     pub task_run_step_retention_days: u32,
     pub screenshot_retention_days: u32,
+    pub metrics_bind_address: Option<String>,
 }
 
 impl Config {
@@ -119,6 +120,10 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(30);
 
+        let metrics_bind_address = env::var("METRICS_BIND_ADDRESS")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
+
         let config = Self {
             database_url,
             public_base_url,
@@ -142,6 +147,7 @@ impl Config {
             audit_log_retention_days,
             task_run_step_retention_days,
             screenshot_retention_days,
+            metrics_bind_address,
         };
 
         config.validate()?;
@@ -207,6 +213,7 @@ mod tests {
             audit_log_retention_days: 90,
             task_run_step_retention_days: 30,
             screenshot_retention_days: 30,
+            metrics_bind_address: None,
         }
     }
 
