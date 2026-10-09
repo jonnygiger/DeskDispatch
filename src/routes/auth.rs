@@ -269,7 +269,7 @@ pub fn extract_client_ip(
         return addr.ip();
     }
 
-    "127.0.0.1".parse().unwrap()
+    IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
 }
 
 #[cfg(test)]

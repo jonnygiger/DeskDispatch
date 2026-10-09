@@ -627,22 +627,26 @@ pub async fn validate_automation_for_activation(
                 HashSet::new()
             } else {
                 let mut iter = predecessors.iter();
-                let first = iter.next().unwrap();
-                let mut set = step_initialized_vars.get(first).cloned().unwrap_or_default();
-                add_step_writes(*first, &mut set, &fp_map, &fb_map);
+                if let Some(first) = iter.next() {
+                    let mut set = step_initialized_vars.get(first).cloned().unwrap_or_default();
+                    add_step_writes(*first, &mut set, &fp_map, &fb_map);
 
-                for p in iter {
-                    let mut p_set = step_initialized_vars.get(p).cloned().unwrap_or_default();
-                    add_step_writes(*p, &mut p_set, &fp_map, &fb_map);
-                    set = set.intersection(&p_set).copied().collect();
+                    for p in iter {
+                        let mut p_set = step_initialized_vars.get(p).cloned().unwrap_or_default();
+                        add_step_writes(*p, &mut p_set, &fp_map, &fb_map);
+                        set = set.intersection(&p_set).copied().collect();
+                    }
+                    set
+                } else {
+                    HashSet::new()
                 }
-                set
             };
 
-            let current_inits = step_initialized_vars.get_mut(&sid).unwrap();
-            if *current_inits != incoming_inits {
-                *current_inits = incoming_inits;
-                changed = true;
+            if let Some(current_inits) = step_initialized_vars.get_mut(&sid) {
+                if *current_inits != incoming_inits {
+                    *current_inits = incoming_inits;
+                    changed = true;
+                }
             }
         }
     }
