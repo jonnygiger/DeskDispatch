@@ -497,3 +497,220 @@ pub struct MouseClickStepForm {
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub on_no_match_step_id: Option<i64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn test_automation_list_item_status_badge_class() {
+        let item = |status: &str| AutomationListItem {
+            id: 1,
+            name: "Test".to_string(),
+            description: "".to_string(),
+            status: status.to_string(),
+            step_count: 5,
+            updated_at: Utc::now(),
+            last_run_id: None,
+            last_run_status: None,
+            last_run_at: None,
+        };
+
+        assert_eq!(item("active").status_badge_class(), "badge-success");
+        assert_eq!(item("archived").status_badge_class(), "badge-neutral");
+        assert_eq!(item("draft").status_badge_class(), "badge-warning");
+        assert_eq!(item("unknown").status_badge_class(), "badge-neutral");
+        assert_eq!(item("").status_badge_class(), "badge-neutral");
+    }
+
+    #[test]
+    fn test_automation_list_item_last_run_status_badge_class() {
+        let item = |last_status: Option<&str>| AutomationListItem {
+            id: 1,
+            name: "Test".to_string(),
+            description: "".to_string(),
+            status: "active".to_string(),
+            step_count: 5,
+            updated_at: Utc::now(),
+            last_run_id: Some(10),
+            last_run_status: last_status.map(|s| s.to_string()),
+            last_run_at: None,
+        };
+
+        assert_eq!(item(Some("succeeded")).last_run_status_badge_class(), "badge-success");
+        assert_eq!(item(Some("failed")).last_run_status_badge_class(), "badge-danger");
+        assert_eq!(item(Some("lost")).last_run_status_badge_class(), "badge-danger");
+        assert_eq!(item(Some("running")).last_run_status_badge_class(), "badge-warning");
+        assert_eq!(item(Some("cancelling")).last_run_status_badge_class(), "badge-warning");
+        assert_eq!(item(Some("other")).last_run_status_badge_class(), "badge-neutral");
+        assert_eq!(item(None).last_run_status_badge_class(), "badge-neutral");
+    }
+
+    #[test]
+    fn test_automation_list_item_formatted_dates() {
+        let dt = Utc.with_ymd_and_hms(2025, 3, 10, 14, 30, 45).unwrap();
+        let item = AutomationListItem {
+            id: 1,
+            name: "Test".to_string(),
+            description: "".to_string(),
+            status: "active".to_string(),
+            step_count: 5,
+            updated_at: dt,
+            last_run_id: Some(10),
+            last_run_status: Some("succeeded".to_string()),
+            last_run_at: Some(dt),
+        };
+
+        assert_eq!(item.formatted_updated_at(), "2025-03-10 14:30:45");
+        assert_eq!(item.formatted_last_run_at(), "2025-03-10 14:30:45");
+
+        let item_no_last_run = AutomationListItem {
+            id: 1,
+            name: "Test".to_string(),
+            description: "".to_string(),
+            status: "active".to_string(),
+            step_count: 0,
+            updated_at: dt,
+            last_run_id: None,
+            last_run_status: None,
+            last_run_at: None,
+        };
+        assert_eq!(item_no_last_run.formatted_last_run_at(), "-");
+    }
+
+    #[test]
+    fn test_automation_detail_status_badge_class() {
+        let detail = |status: &str| AutomationDetail {
+            id: 1,
+            name: "Test".to_string(),
+            description: "".to_string(),
+            status: status.to_string(),
+            created_by: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        assert_eq!(detail("active").status_badge_class(), "badge-success");
+        assert_eq!(detail("archived").status_badge_class(), "badge-neutral");
+        assert_eq!(detail("draft").status_badge_class(), "badge-warning");
+        assert_eq!(detail("custom").status_badge_class(), "badge-neutral");
+    }
+
+    #[test]
+    fn test_step_view_item_formatted_post_delay() {
+        let step1 = StepViewItem {
+            id: 1,
+            step_number: 1,
+            step_type: "mouse_click".to_string(),
+            label: None,
+            post_delay_ms: 1500,
+            position: 10.0,
+            description: "Click".to_string(),
+        };
+        assert_eq!(step1.formatted_post_delay(), " · then wait 1.5s");
+
+        let step2 = StepViewItem {
+            id: 2,
+            step_number: 2,
+            step_type: "mouse_click".to_string(),
+            label: None,
+            post_delay_ms: 0,
+            position: 20.0,
+            description: "Click".to_string(),
+        };
+        assert_eq!(step2.formatted_post_delay(), "");
+
+        let step3 = StepViewItem {
+            id: 3,
+            step_number: 3,
+            step_type: "mouse_click".to_string(),
+            label: None,
+            post_delay_ms: -500,
+            position: 30.0,
+            description: "Click".to_string(),
+        };
+        assert_eq!(step3.formatted_post_delay(), "");
+    }
+
+    #[test]
+    fn test_worker_group_option_selection() {
+        let group = WorkerGroupOption {
+            id: 42,
+            name: "Default Group".to_string(),
+        };
+
+        assert!(group.is_selected(&Some(42)));
+        assert!(!group.is_selected(&Some(99)));
+        assert!(!group.is_selected(&None));
+    }
+
+    #[test]
+    fn test_variable_option_selections() {
+        let var = VariableOption {
+            id: 15,
+            name: "var1".to_string(),
+            var_type: "int".to_string(),
+        };
+
+        assert!(var.is_selected_x(&Some(15)));
+        assert!(!var.is_selected_x(&Some(10)));
+        assert!(!var.is_selected_x(&None));
+
+        assert!(var.is_selected_y(&Some(15)));
+        assert!(!var.is_selected_y(&None));
+
+        assert!(var.is_selected_output(&Some(15)));
+        assert!(!var.is_selected_output(&None));
+
+        assert!(var.is_selected_found(&Some(15)));
+        assert!(!var.is_selected_found(&None));
+    }
+
+    #[test]
+    fn test_bitmap_option_selection() {
+        let bitmap = BitmapOption {
+            id: 7,
+            name: "btn.png".to_string(),
+            width: 100,
+            height: 50,
+        };
+
+        assert!(bitmap.is_selected(&Some(7)));
+        assert!(!bitmap.is_selected(&Some(8)));
+        assert!(!bitmap.is_selected(&None));
+    }
+
+    #[test]
+    fn test_step_option_display_name_and_selections() {
+        let step_with_label = StepOption {
+            id: 101,
+            step_type: "mouse_click".to_string(),
+            label: Some("  Submit Form  ".to_string()),
+            position: 10.0,
+            display_number: 1,
+        };
+        assert_eq!(step_with_label.display_name(), "Step 1 (Submit Form)");
+        assert!(step_with_label.is_selected_match(&Some(101)));
+        assert!(!step_with_label.is_selected_match(&Some(200)));
+        assert!(step_with_label.is_selected_no_match(&Some(101)));
+
+        let step_with_whitespace_label = StepOption {
+            id: 102,
+            step_type: "find_bitmap".to_string(),
+            label: Some("   ".to_string()),
+            position: 20.0,
+            display_number: 2,
+        };
+        assert_eq!(step_with_whitespace_label.display_name(), "Step 2 (find_bitmap)");
+
+        let step_without_label = StepOption {
+            id: 103,
+            step_type: "key_press".to_string(),
+            label: None,
+            position: 30.0,
+            display_number: 3,
+        };
+        assert_eq!(step_without_label.display_name(), "Step 3 (key_press)");
+    }
+}
