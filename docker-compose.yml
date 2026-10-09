@@ -27,7 +27,7 @@ services:
       BIND_ADDRESS: 0.0.0.0:3000
       APP_ENV: production
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
+      test: ["CMD", "/app/deskdispatch", "healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -51,7 +51,7 @@ services:
       start_period: 10s
 
   rustfs:
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs:0.1.0
     container_name: deskdispatch-rustfs
     restart: unless-stopped
     environment:
