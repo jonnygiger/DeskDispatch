@@ -2,7 +2,7 @@
 name = "deskdispatch"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.99.0"
 
 [workspace]
 members = [".", "crates/deskdispatch-protocol"]
@@ -35,14 +35,14 @@ tokio-util = "0.7"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["compression-gzip", "compression-deflate", "compression-br", "trace", "request-id", "timeout", "catch-panic"] }
 mime_guess = "2.0"
-rust-embed = "8.12"
+rust-embed = "8.13"
 secrecy = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-uuid = { version = "1.13", features = ["v4", "serde"] }
+uuid = { version = "1.28", features = ["v4", "serde"] }
 image = "0.25"
 urlencoding = "2.1"
-utoipa = { version = "5.3", features = ["axum_extras", "chrono"] }
+utoipa = { version = "5.5", features = ["axum_extras", "chrono"] }
 
 [dev-dependencies]
-proptest = "1.6"
+proptest = "1.11"
