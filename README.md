@@ -315,6 +315,7 @@ The Docker setup incorporates multi-layered health checks, build caching optimiz
 - **Multi-Stage Cargo Build Caching:** `Dockerfile` optimizes builder stage layer caching by pre-compiling workspace Cargo dependencies using manifest stubs before copying full application source files.
 - **Dependency Chains (`depends_on`):** Service dependencies use explicit `condition: service_healthy` and `condition: service_completed_successfully` clauses to eliminate race conditions during boot.
 - **Database Readiness (`pg_isready`):** `deskdispatch-postgres` performs health checks every 5 seconds to ensure PostgreSQL accepts connection pools before application startup.
+- **PostgreSQL 18+ Volume Mount Standard:** `deskdispatch-postgres` mounts volume storage at `/var/lib/postgresql` as required by official PostgreSQL 18+ Docker images (storing data in major-version-specific subdirectories for `pg_ctlcluster` compatibility and seamless upgrades).
 - **Storage Readiness (`curl`):** `deskdispatch-rustfs` validates HTTP storage layer health before migrations or application startup.
 - **Application Liveness (`deskdispatch healthcheck`):** `deskdispatch-app` uses its internal binary healthcheck subcommand to verify TCP and HTTP `/livez` responsiveness every 10 seconds.
 - **Graceful Shutdown & Signal Handling:** `deskdispatch-app` listens for SIGINT/SIGTERM signals, canceling background tasks and flushing pending database queries before exiting.

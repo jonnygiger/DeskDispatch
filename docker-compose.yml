@@ -48,7 +48,7 @@ services:
       POSTGRES_PASSWORD: deskdispatch_db_prod_secret_9823
       POSTGRES_DB: deskdispatch
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d deskdispatch"]
       interval: 5s
