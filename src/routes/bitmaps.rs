@@ -465,9 +465,8 @@ pub async fn post_bitmaps_handler(
     let base_url = state.config.public_base_url.trim_end_matches('/');
 
     let redirect_url = format!(
-        "{}/bitmaps/commit?key={}&name={}",
+        "{}/bitmaps/commit?name={}",
         base_url,
-        object_key,
         urlencoding::encode(&bitmap_name)
     );
 
@@ -528,9 +527,8 @@ pub async fn post_automation_bitmaps_handler(
     let base_url = state.config.public_base_url.trim_end_matches('/');
 
     let redirect_url = format!(
-        "{}/bitmaps/commit?key={}&name={}&automation_id={}",
+        "{}/bitmaps/commit?name={}&automation_id={}",
         base_url,
-        object_key,
         urlencoding::encode(&bitmap_name),
         id
     );
