@@ -65,6 +65,8 @@ services:
     image: rustfs/rustfs:1.0.1
     container_name: deskdispatch-rustfs
     restart: unless-stopped
+    ports:
+      - "9000:9000"
     environment:
       RUSTFS_ROOT_USER: deskdispatch_s3_user
       RUSTFS_ROOT_PASSWORD: deskdispatch_s3_prod_secret_4712
