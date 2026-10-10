@@ -465,7 +465,7 @@ mod tests {
             secret_key,
             region,
             endpoint_url,
-            Some("http://localhost:3000/bitmaps/commit?key=bitmaps/button.png&name=button"),
+            Some("http://localhost:3000/bitmaps/commit?name=button"),
         )
         .unwrap();
 

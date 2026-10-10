@@ -182,7 +182,7 @@ fn main() {
             ("policy".to_string(), "sample_policy".to_string()),
         ],
         redirect_url:
-            "http://localhost:3000/bitmaps/commit?key=bitmaps/sample.png&name=Login%20Button"
+            "http://localhost:3000/bitmaps/commit?name=Login%20Button"
                 .to_string(),
     };
     fs::write(

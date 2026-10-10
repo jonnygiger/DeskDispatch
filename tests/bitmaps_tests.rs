@@ -294,7 +294,7 @@ async fn test_bitmap_upload_flow() {
     assert!(body_str.contains("New Admin Bitmap"));
     assert!(body_str.contains("http://localhost:9000/deskdispatch-bucket"));
     assert!(body_str.contains("success_action_redirect"));
-    assert!(body_str.contains("/bitmaps/commit?key="));
+    assert!(body_str.contains("/bitmaps/commit?name="));
 
     // Upload a valid 10x10 PNG object to S3 for commit testing
     let test_key = format!(
@@ -318,10 +318,11 @@ async fn test_bitmap_upload_flow() {
         .await;
 
     // 3. Admin GET /bitmaps/commit callback -> 200 OK rendering confirmation page (BitmapsConfirmTemplate)
+    // S3/RustFS redirects to redirect_url by appending bucket, key, and etag parameters.
     let req_commit_get = Request::builder()
         .method("GET")
         .uri(format!(
-            "/bitmaps/commit?key={}&name=Committed%20Bitmap",
+            "/bitmaps/commit?name=Committed%20Bitmap&bucket=deskdispatch-bucket&key={}&etag=%2212345%22",
             test_key
         ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
