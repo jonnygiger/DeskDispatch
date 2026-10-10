@@ -6,15 +6,18 @@ use axum::{
 use sqlx::Row;
 
 use super::types::*;
-use crate::auth::{log_audit, AuthUser, CsrfForm};
-use crate::routes::auth::HtmlTemplate;
 use crate::AppState;
+use crate::auth::{AuthUser, CsrfForm, log_audit};
+use crate::routes::auth::HtmlTemplate;
 
 pub fn is_valid_var_type(vt: &str) -> bool {
     matches!(vt, "int" | "bool" | "color" | "point" | "string")
 }
 
-pub async fn fetch_automation_variables(db: &sqlx::PgPool, automation_id: i64) -> Vec<VariableOption> {
+pub async fn fetch_automation_variables(
+    db: &sqlx::PgPool,
+    automation_id: i64,
+) -> Vec<VariableOption> {
     sqlx::query_as::<_, VariableOption>(
         "SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1 ORDER BY name ASC",
     )
@@ -95,7 +98,9 @@ pub async fn post_create_automation_variable_handler(
     if name.is_empty() {
         err = Some("Variable name cannot be empty.".to_string());
     } else if !is_valid_var_type(var_type) {
-        err = Some("Invalid variable type. Must be one of: int, bool, color, point, string.".to_string());
+        err = Some(
+            "Invalid variable type. Must be one of: int, bool, color, point, string.".to_string(),
+        );
     }
 
     if let Some(error_msg) = err {
@@ -151,8 +156,12 @@ pub async fn post_create_automation_variable_handler(
             .await
             .unwrap_or_default();
 
-            let err_msg = if e.to_string().contains("unique") || e.to_string().contains("duplicate") {
-                format!("A variable named «{}» already exists in this automation.", name)
+            let err_msg = if e.to_string().contains("unique") || e.to_string().contains("duplicate")
+            {
+                format!(
+                    "A variable named «{}» already exists in this automation.",
+                    name
+                )
             } else {
                 "Failed to create variable in database.".to_string()
             };
@@ -229,7 +238,9 @@ pub async fn post_update_automation_variable_handler(
     if name.is_empty() {
         err = Some("Variable name cannot be empty.".to_string());
     } else if !is_valid_var_type(var_type) {
-        err = Some("Invalid variable type. Must be one of: int, bool, color, point, string.".to_string());
+        err = Some(
+            "Invalid variable type. Must be one of: int, bool, color, point, string.".to_string(),
+        );
     }
 
     if let Some(error_msg) = err {
@@ -285,7 +296,10 @@ pub async fn post_update_automation_variable_handler(
         .unwrap_or_default();
 
         let err_msg = if e.to_string().contains("unique") || e.to_string().contains("duplicate") {
-            format!("A variable named «{}» already exists in this automation.", name)
+            format!(
+                "A variable named «{}» already exists in this automation.",
+                name
+            )
         } else {
             "Failed to update variable in database.".to_string()
         };
@@ -352,11 +366,12 @@ pub async fn post_delete_automation_variable_handler(
         _ => return Redirect::to("/automations").into_response(),
     };
 
-    let delete_res = sqlx::query("DELETE FROM automation_variables WHERE id = $1 AND automation_id = $2")
-        .bind(vid)
-        .bind(id)
-        .execute(&state.db)
-        .await;
+    let delete_res =
+        sqlx::query("DELETE FROM automation_variables WHERE id = $1 AND automation_id = $2")
+            .bind(vid)
+            .bind(id)
+            .execute(&state.db)
+            .await;
 
     match delete_res {
         Ok(_) => {
@@ -387,7 +402,9 @@ pub async fn post_delete_automation_variable_handler(
             .await
             .unwrap_or_default();
 
-            let err_msg = if e.to_string().contains("foreign key") || e.to_string().contains("violates foreign key constraint") {
+            let err_msg = if e.to_string().contains("foreign key")
+                || e.to_string().contains("violates foreign key constraint")
+            {
                 "Cannot delete variable because it is currently referenced by one or more automation steps.".to_string()
             } else {
                 "Failed to delete variable from database.".to_string()

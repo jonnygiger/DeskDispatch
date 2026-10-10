@@ -19,7 +19,7 @@ pub fn escape_css_url(url: &str) -> String {
             '\\' => escaped.push_str("\\\\"),
             '\'' => escaped.push_str("\\'"),
             '"' => escaped.push_str("\\\""),
-            '\n' | '\r' | '\x0C' => {},
+            '\n' | '\r' | '\x0C' => {}
             '(' => escaped.push_str("%28"),
             ')' => escaped.push_str("%29"),
             '<' => escaped.push_str("%3C"),
@@ -102,7 +102,11 @@ impl ImageMagnifier {
 
         format!(
             "background-image: url('{}'); background-size: {}px {}px; background-position: {:.2}px {:.2}px;",
-            escape_css_url(&self.presigned_url), bg_w, bg_h, pan_x, pan_y
+            escape_css_url(&self.presigned_url),
+            bg_w,
+            bg_h,
+            pan_x,
+            pan_y
         )
     }
 
@@ -131,7 +135,11 @@ impl ImageMagnifier {
 
         format!(
             "--grid-bg-url: url('{}'); --grid-bg-w: {}px; --grid-bg-h: {}px; --grid-pan-x: {:.2}px; --grid-pan-y: {:.2}px;",
-            escape_css_url(&self.presigned_url), bg_w, bg_h, pan_x, pan_y
+            escape_css_url(&self.presigned_url),
+            bg_w,
+            bg_h,
+            pan_x,
+            pan_y
         )
     }
 
@@ -165,9 +173,18 @@ mod tests {
         assert!(mag.zoom400_marker_style().is_empty());
         assert!(mag.grid_marker_style().is_empty());
 
-        assert!(mag.normal_style().contains("background-image: url('http://example.com/image.png')"));
-        assert!(mag.zoom400_style().contains("background-size: 7680px 4320px"));
-        assert!(mag.grid_style().contains("--grid-bg-w: 38400px; --grid-bg-h: 21600px;"));
+        assert!(
+            mag.normal_style()
+                .contains("background-image: url('http://example.com/image.png')")
+        );
+        assert!(
+            mag.zoom400_style()
+                .contains("background-size: 7680px 4320px")
+        );
+        assert!(
+            mag.grid_style()
+                .contains("--grid-bg-w: 38400px; --grid-bg-h: 21600px;")
+        );
     }
 
     #[test]
@@ -239,13 +256,15 @@ mod tests {
 
     #[test]
     fn test_marker_coordinate_positioning_partial_targets() {
-        let mag_no_x = ImageMagnifier::new("http://example.com/test.png", 800, 600, None, Some(100));
+        let mag_no_x =
+            ImageMagnifier::new("http://example.com/test.png", 800, 600, None, Some(100));
         assert!(!mag_no_x.show_marker());
         assert_eq!(mag_no_x.normal_marker_style(), "");
         assert_eq!(mag_no_x.zoom400_marker_style(), "");
         assert_eq!(mag_no_x.grid_marker_style(), "");
 
-        let mag_no_y = ImageMagnifier::new("http://example.com/test.png", 800, 600, Some(100), None);
+        let mag_no_y =
+            ImageMagnifier::new("http://example.com/test.png", 800, 600, Some(100), None);
         assert!(!mag_no_y.show_marker());
         assert_eq!(mag_no_y.normal_marker_style(), "");
         assert_eq!(mag_no_y.zoom400_marker_style(), "");
@@ -255,18 +274,21 @@ mod tests {
     #[test]
     fn test_normal_and_zoom400_edge_cases() {
         // Zero dimensions with target
-        let mag_zero = ImageMagnifier::new(
-            "http://example.com/image.png",
-            0,
-            0,
-            Some(100),
-            Some(100),
-        );
+        let mag_zero =
+            ImageMagnifier::new("http://example.com/image.png", 0, 0, Some(100), Some(100));
         assert!(!mag_zero.show_marker());
         assert_eq!(mag_zero.normal_marker_style(), "");
         assert_eq!(mag_zero.zoom400_marker_style(), "");
-        assert!(mag_zero.zoom400_style().contains("background-size: 0px 0px"));
-        assert!(mag_zero.zoom400_style().contains("background-position: 0.00px 0.00px"));
+        assert!(
+            mag_zero
+                .zoom400_style()
+                .contains("background-size: 0px 0px")
+        );
+        assert!(
+            mag_zero
+                .zoom400_style()
+                .contains("background-position: 0.00px 0.00px")
+        );
 
         // Exact math check for normal panel marker with 600x340 viewport
         // native 1200 x 680 (aspect ratio 600/340 = 1.7647...)
@@ -280,7 +302,10 @@ mod tests {
             Some(400),
             Some(200),
         );
-        assert_eq!(mag_normal.normal_marker_style(), "left: 200.00px; top: 100.00px;");
+        assert_eq!(
+            mag_normal.normal_marker_style(),
+            "left: 200.00px; top: 100.00px;"
+        );
 
         // Zoom 400% math check: native 800 x 600, target (100, 50)
         // bg_w = 3200, bg_h = 2400
@@ -302,16 +327,16 @@ mod tests {
     #[test]
     fn test_grid_panel_styling_and_overlays() {
         let css = include_str!("../static/style.css");
-        assert!(css.contains("image-rendering: pixelated;"), "CSS must contain image-rendering: pixelated;");
-        assert!(css.contains("repeating-linear-gradient"), "CSS must contain repeating-linear-gradient for grid");
-
-        let mag = ImageMagnifier::new(
-            "http://example.com/test.png",
-            800,
-            600,
-            Some(10),
-            Some(20),
+        assert!(
+            css.contains("image-rendering: pixelated;"),
+            "CSS must contain image-rendering: pixelated;"
         );
+        assert!(
+            css.contains("repeating-linear-gradient"),
+            "CSS must contain repeating-linear-gradient for grid"
+        );
+
+        let mag = ImageMagnifier::new("http://example.com/test.png", 800, 600, Some(10), Some(20));
 
         let grid_style = mag.grid_style();
         assert!(grid_style.contains("--grid-bg-url: url('http://example.com/test.png')"));
@@ -323,7 +348,10 @@ mod tests {
     fn test_escape_css_url() {
         let malicious = "http://example.com/img.png'); body { background: red; } /*";
         let escaped = escape_css_url(malicious);
-        assert_eq!(escaped, "http://example.com/img.png\\'%29; body { background: red; } /*");
+        assert_eq!(
+            escaped,
+            "http://example.com/img.png\\'%29; body { background: red; } /*"
+        );
 
         let mag = ImageMagnifier::new(malicious, 800, 600, None, None);
         assert!(!mag.normal_style().contains("img.png');"));
@@ -332,13 +360,7 @@ mod tests {
 
     #[test]
     fn test_template_rendering() {
-        let mag = ImageMagnifier::new(
-            "http://example.com/test.jpg",
-            800,
-            600,
-            Some(50),
-            Some(50),
-        );
+        let mag = ImageMagnifier::new("http://example.com/test.jpg", 800, 600, Some(50), Some(50));
 
         let tmpl = ImageMagnifierTemplate { magnifier: &mag };
         let rendered = tmpl.render().expect("Template should render successfully");

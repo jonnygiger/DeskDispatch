@@ -1,10 +1,10 @@
-use deskdispatch::routes::static_asset_handler;
 use axum::{
     body::to_bytes,
     extract::Path,
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
+use deskdispatch::routes::static_asset_handler;
 
 #[tokio::test]
 async fn test_static_asset_style_css() {
@@ -81,7 +81,10 @@ async fn test_static_asset_etag_304() {
         .to_string();
 
     let mut req_headers = HeaderMap::new();
-    req_headers.insert(header::IF_NONE_MATCH, header::HeaderValue::from_str(&etag).unwrap());
+    req_headers.insert(
+        header::IF_NONE_MATCH,
+        header::HeaderValue::from_str(&etag).unwrap(),
+    );
 
     let not_modified_res = static_asset_handler(req_headers, Path("style.css".to_string()))
         .await

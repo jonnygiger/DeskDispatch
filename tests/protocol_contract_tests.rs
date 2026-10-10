@@ -36,12 +36,16 @@ struct ApiDoc;
 #[test]
 fn test_openapi_schema_generation_and_components() {
     let openapi = ApiDoc::openapi();
-    let json_str = openapi.to_json().expect("Failed to serialize OpenAPI spec to JSON");
+    let json_str = openapi
+        .to_json()
+        .expect("Failed to serialize OpenAPI spec to JSON");
     let doc: serde_json::Value = serde_json::from_str(&json_str).expect("Valid JSON spec expected");
 
     // Verify OpenAPI version is 3.x
     assert!(
-        doc["openapi"].as_str().map_or(false, |v| v.starts_with("3.")),
+        doc["openapi"]
+            .as_str()
+            .map_or(false, |v| v.starts_with("3.")),
         "OpenAPI spec version should be 3.x: {:?}",
         doc["openapi"]
     );

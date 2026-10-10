@@ -1,8 +1,8 @@
 use axum::{
-    extract::FromRequestParts,
-    http::{header::AUTHORIZATION, request::Parts, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::FromRequestParts,
+    http::{StatusCode, header::AUTHORIZATION, request::Parts},
+    response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -13,11 +13,19 @@ use uuid::Uuid;
 use crate::AppState;
 
 pub fn generate_worker_api_key() -> String {
-    format!("dd_pk_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+    format!(
+        "dd_pk_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
 }
 
 pub fn generate_registration_token() -> String {
-    format!("dd_reg_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+    format!(
+        "dd_reg_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
 }
 
 pub fn hash_token(token: &str) -> Vec<u8> {

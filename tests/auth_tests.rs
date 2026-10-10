@@ -1,25 +1,25 @@
-use deskdispatch::auth::{
-    clear_session_cookie, create_session_cookie, generate_csrf_token,
-    validate_csrf_token, LoginRateLimiter, UserRole,
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
-use secrecy::ExposeSecret;
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, StatusCode, header},
+    middleware,
+    routing::{get, post},
+};
+use deskdispatch::AppState;
+use deskdispatch::auth::{
+    LoginRateLimiter, UserRole, clear_session_cookie, create_session_cookie, generate_csrf_token,
+    validate_csrf_token,
+};
 use deskdispatch::config::Config;
 use deskdispatch::routes::{
     get_index_handler, get_login_handler, get_password_handler, post_login_handler,
     post_logout_handler, post_password_handler,
 };
-use deskdispatch::AppState;
-use argon2::{
-    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
-    Argon2,
-};
-use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
-    middleware,
-    routing::{get, post},
-    Router,
-};
+use secrecy::ExposeSecret;
 use sqlx::Row;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -37,13 +37,17 @@ fn test_argon2_password_hashing() {
         .to_string();
 
     let parsed_hash = PasswordHash::new(&password_hash).unwrap();
-    assert!(argon2
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok());
+    assert!(
+        argon2
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .is_ok()
+    );
 
-    assert!(argon2
-        .verify_password("WrongPassword".as_bytes(), &parsed_hash)
-        .is_err());
+    assert!(
+        argon2
+            .verify_password("WrongPassword".as_bytes(), &parsed_hash)
+            .is_err()
+    );
 }
 
 #[test]
@@ -122,9 +126,9 @@ fn test_session_cookie_formatting() {
 
 #[test]
 fn test_top_nav_bar_role_conditional_rendering() {
+    use askama::Template;
     use deskdispatch::auth::AuthUser;
     use deskdispatch::routes::home::IndexTemplate;
-    use askama::Template;
 
     // 1. Admin role: "Users" link should be present in top nav
     let admin_user = AuthUser {
@@ -207,8 +211,9 @@ fn test_top_nav_bar_role_conditional_rendering() {
 }
 
 async fn get_test_pool() -> Option<sqlx::PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     let connect_opts = db_url
         .parse::<sqlx::postgres::PgConnectOptions>()
         .ok()?
@@ -257,10 +262,7 @@ async fn test_unauthenticated_redirect_to_login() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response.headers().get(header::LOCATION).unwrap(),
-        "/login"
-    );
+    assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/login");
 }
 
 #[tokio::test]
@@ -337,10 +339,7 @@ async fn test_full_auth_and_password_workflow() {
 
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response.headers().get(header::LOCATION).unwrap(),
-        "/"
-    );
+    assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/");
 
     let cookie_header = response
         .headers()

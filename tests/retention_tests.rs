@@ -4,7 +4,9 @@ use std::env;
 use std::time::Duration;
 
 async fn get_test_pool() -> Option<sqlx::PgPool> {
-    let db_url = env::var("DATABASE_URL").ok().filter(|v| !v.trim().is_empty())?;
+    let db_url = env::var("DATABASE_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(Duration::from_secs(5))
@@ -72,26 +74,33 @@ async fn test_prune_sessions_and_audit_logs() {
     .await;
 
     // Prune sessions
-    let pruned_sessions = prune_sessions(&pool, 7).await.expect("prune_sessions failed");
+    let pruned_sessions = prune_sessions(&pool, 7)
+        .await
+        .expect("prune_sessions failed");
     assert!(pruned_sessions >= 1);
 
     // Verify expired session is gone, valid session exists
-    let expired_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)")
-        .bind(expired_session_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let expired_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)")
+            .bind(expired_session_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(!expired_exists);
 
-    let valid_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)")
-        .bind(valid_session_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let valid_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)")
+            .bind(valid_session_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(valid_exists);
 
     // Cleanup session
-    let _ = sqlx::query("DELETE FROM sessions WHERE id = $1").bind(valid_session_id).execute(&pool).await;
+    let _ = sqlx::query("DELETE FROM sessions WHERE id = $1")
+        .bind(valid_session_id)
+        .execute(&pool)
+        .await;
 
     // 2. Insert old and recent audit log
     let old_audit_id: i64 = sqlx::query_scalar(
@@ -118,26 +127,36 @@ async fn test_prune_sessions_and_audit_logs() {
     .await
     .unwrap();
 
-    let pruned_audits = prune_audit_logs(&pool, 90).await.expect("prune_audit_logs failed");
+    let pruned_audits = prune_audit_logs(&pool, 90)
+        .await
+        .expect("prune_audit_logs failed");
     assert!(pruned_audits >= 1);
 
-    let old_audit_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_log WHERE id = $1)")
-        .bind(old_audit_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let old_audit_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_log WHERE id = $1)")
+            .bind(old_audit_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(!old_audit_exists);
 
-    let recent_audit_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_log WHERE id = $1)")
-        .bind(recent_audit_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let recent_audit_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_log WHERE id = $1)")
+            .bind(recent_audit_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(recent_audit_exists);
 
     // Cleanup audit log and user
-    let _ = sqlx::query("DELETE FROM audit_log WHERE id = $1").bind(recent_audit_id).execute(&pool).await;
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1").bind(user_id).execute(&pool).await;
+    let _ = sqlx::query("DELETE FROM audit_log WHERE id = $1")
+        .bind(recent_audit_id)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await;
 }
 
 #[tokio::test]
@@ -204,25 +223,38 @@ async fn test_prune_task_run_steps() {
     .await;
 
     // Prune task run steps (>30 days)
-    let pruned = prune_task_run_steps(&pool, 30).await.expect("prune_task_run_steps failed");
+    let pruned = prune_task_run_steps(&pool, 30)
+        .await
+        .expect("prune_task_run_steps failed");
     assert!(pruned >= 1);
 
-    let old_steps_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1")
-        .bind(old_run_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let old_steps_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1")
+            .bind(old_run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(old_steps_count, 0);
 
-    let recent_steps_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1")
-        .bind(recent_run_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let recent_steps_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1")
+            .bind(recent_run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(recent_steps_count, 1);
 
     // Cleanup
-    let _ = sqlx::query("DELETE FROM task_run_steps WHERE task_run_id = $1").bind(recent_run_id).execute(&pool).await;
-    let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1").bind(auto_id).execute(&pool).await;
-    let _ = sqlx::query("DELETE FROM automations WHERE id = $1").bind(auto_id).execute(&pool).await;
+    let _ = sqlx::query("DELETE FROM task_run_steps WHERE task_run_id = $1")
+        .bind(recent_run_id)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1")
+        .bind(auto_id)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM automations WHERE id = $1")
+        .bind(auto_id)
+        .execute(&pool)
+        .await;
 }

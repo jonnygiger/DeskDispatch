@@ -1,18 +1,19 @@
-use deskdispatch::auth::LoginRateLimiter;
-use deskdispatch::config::Config;
-use deskdispatch::AppState;
-use argon2::{PasswordHasher, Argon2};
+use argon2::{Argon2, PasswordHasher};
 use axum::{
     body::Body,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
 };
+use deskdispatch::AppState;
+use deskdispatch::auth::LoginRateLimiter;
+use deskdispatch::config::Config;
 use sqlx::Row;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 async fn get_test_pool() -> Option<sqlx::PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_millis(500))
         .connect(&db_url)
@@ -172,9 +173,24 @@ async fn test_dashboard_stats_tiles() {
     assert!(html.contains("lost"));
 
     // Clean up test data
-    let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1").bind(auto1_id).execute(&pool).await;
-    let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1").bind(worker1_id).execute(&pool).await;
-    let _ = sqlx::query("DELETE FROM automations WHERE created_by = $1").bind(user_id).execute(&pool).await;
-    let _ = sqlx::query("DELETE FROM sessions WHERE user_id = $1").bind(user_id).execute(&pool).await;
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1").bind(user_id).execute(&pool).await;
+    let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1")
+        .bind(auto1_id)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1")
+        .bind(worker1_id)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM automations WHERE created_by = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await;
 }

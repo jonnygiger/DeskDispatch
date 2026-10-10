@@ -7,9 +7,9 @@ use sqlx::{PgPool, Row};
 
 use super::types::*;
 use super::variables::fetch_automation_variables;
-use crate::auth::{log_audit, AuthUser, CsrfForm};
-use crate::routes::auth::HtmlTemplate;
 use crate::AppState;
+use crate::auth::{AuthUser, CsrfForm, log_audit};
+use crate::routes::auth::HtmlTemplate;
 
 pub fn validate_literal_or_reference<T>(
     mode: Option<&str>,
@@ -27,9 +27,15 @@ pub fn validate_literal_or_reference<T>(
             } else if literal.is_none() && var_id.is_some() {
                 "variable"
             } else if literal.is_some() && var_id.is_some() {
-                return Err(format!("Cannot specify both a fixed value and a variable for {}.", field_name));
+                return Err(format!(
+                    "Cannot specify both a fixed value and a variable for {}.",
+                    field_name
+                ));
             } else {
-                return Err(format!("Please specify either a fixed value or a variable for {}.", field_name));
+                return Err(format!(
+                    "Please specify either a fixed value or a variable for {}.",
+                    field_name
+                ));
             }
         }
     };
@@ -39,7 +45,10 @@ pub fn validate_literal_or_reference<T>(
             if let Some(vid) = var_id {
                 Ok((None, Some(vid)))
             } else {
-                Err(format!("Please select a valid variable for {}.", field_name))
+                Err(format!(
+                    "Please select a valid variable for {}.",
+                    field_name
+                ))
             }
         }
         "fixed" => {
@@ -125,11 +134,7 @@ pub fn generate_mouse_click_summary(
     format!("Click ({}, {}) [{}, {}]", x_str, y_str, button, click_type)
 }
 
-pub fn generate_find_pixel_rgb_summary(
-    x: i32,
-    y: i32,
-    output_var_name: Option<&str>,
-) -> String {
+pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&str>) -> String {
     match output_var_name {
         Some(name) if !name.trim().is_empty() => {
             format!("Read pixel at ({}, {}) → store as «{}»", x, y, name.trim())
@@ -144,7 +149,11 @@ pub fn generate_find_bitmap_summary(
 ) -> String {
     match output_found_var_name {
         Some(name) if !name.trim().is_empty() => {
-            format!("Search for «{}» on screen → store as «{}»", bitmap_name, name.trim())
+            format!(
+                "Search for «{}» on screen → store as «{}»",
+                bitmap_name,
+                name.trim()
+            )
         }
         _ => format!("Search for «{}» on screen", bitmap_name),
     }
@@ -208,7 +217,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     }
 
     // Build target step label map in memory (step_id -> "Step N (label/type)")
-    let mut step_target_map: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    let mut step_target_map: std::collections::HashMap<i64, String> =
+        std::collections::HashMap::new();
     for (idx, row) in raw_steps.iter().enumerate() {
         let step_id: i64 = row.get("id");
         let step_num = idx + 1;
@@ -304,7 +314,17 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         })
         .collect();
 
-    let mouse_clicks_map: std::collections::HashMap<i64, (Option<i32>, Option<i32>, Option<String>, Option<String>, String, String)> = mc_res
+    let mouse_clicks_map: std::collections::HashMap<
+        i64,
+        (
+            Option<i32>,
+            Option<i32>,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+        ),
+    > = mc_res
         .unwrap_or_default()
         .into_iter()
         .map(|r| {
@@ -342,7 +362,21 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         })
         .collect();
 
-    let branch_map: std::collections::HashMap<i64, (String, Option<i32>, Option<i32>, Option<i16>, Option<i16>, Option<i16>, Option<i16>, Option<String>, Option<i64>, Option<i64>)> = br_res
+    let branch_map: std::collections::HashMap<
+        i64,
+        (
+            String,
+            Option<i32>,
+            Option<i32>,
+            Option<i16>,
+            Option<i16>,
+            Option<i16>,
+            Option<i16>,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+        ),
+    > = br_res
         .unwrap_or_default()
         .into_iter()
         .map(|r| {
@@ -357,7 +391,21 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             let bitmap_name: Option<String> = r.get("bitmap_name");
             let on_match_step_id: Option<i64> = r.get("on_match_step_id");
             let on_no_match_step_id: Option<i64> = r.get("on_no_match_step_id");
-            (step_id, (condition_type, x, y, expected_r, expected_g, expected_b, tolerance, bitmap_name, on_match_step_id, on_no_match_step_id))
+            (
+                step_id,
+                (
+                    condition_type,
+                    x,
+                    y,
+                    expected_r,
+                    expected_g,
+                    expected_b,
+                    tolerance,
+                    bitmap_name,
+                    on_match_step_id,
+                    on_no_match_step_id,
+                ),
+            )
         })
         .collect();
 
@@ -378,7 +426,9 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                 }
             }
             "mouse_click" => {
-                if let Some((x, y, x_var_name, y_var_name, button, click_type)) = mouse_clicks_map.get(&step_id) {
+                if let Some((x, y, x_var_name, y_var_name, button, click_type)) =
+                    mouse_clicks_map.get(&step_id)
+                {
                     generate_mouse_click_summary(
                         *x,
                         *y,
@@ -406,7 +456,19 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                 }
             }
             "branch" => {
-                if let Some((condition_type, x, y, expected_r, expected_g, expected_b, tolerance, bitmap_name, match_id, no_match_id)) = branch_map.get(&step_id) {
+                if let Some((
+                    condition_type,
+                    x,
+                    y,
+                    expected_r,
+                    expected_g,
+                    expected_b,
+                    tolerance,
+                    bitmap_name,
+                    match_id,
+                    no_match_id,
+                )) = branch_map.get(&step_id)
+                {
                     let match_target_str = match_id
                         .and_then(|m_id| step_target_map.get(&m_id).cloned())
                         .unwrap_or_else(|| "Next Step".to_string());
@@ -572,13 +634,28 @@ pub async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) 
                 let automation_id: i64 = r.get("automation_id");
 
                 let match_target_str = if let Some(m_id) = r.get::<Option<i64>, _>("match_id") {
-                    get_step_target_label(db, automation_id, m_id, r.get("match_label"), r.get("match_type")).await
+                    get_step_target_label(
+                        db,
+                        automation_id,
+                        m_id,
+                        r.get("match_label"),
+                        r.get("match_type"),
+                    )
+                    .await
                 } else {
                     "Next Step".to_string()
                 };
 
-                let no_match_target_str = if let Some(n_id) = r.get::<Option<i64>, _>("no_match_id") {
-                    get_step_target_label(db, automation_id, n_id, r.get("no_match_label"), r.get("no_match_type")).await
+                let no_match_target_str = if let Some(n_id) = r.get::<Option<i64>, _>("no_match_id")
+                {
+                    get_step_target_label(
+                        db,
+                        automation_id,
+                        n_id,
+                        r.get("no_match_label"),
+                        r.get("no_match_type"),
+                    )
+                    .await
                 } else {
                     "Next Step".to_string()
                 };
@@ -624,13 +701,20 @@ async fn get_step_target_label(
 
     match label {
         Some(lbl) if !lbl.trim().is_empty() => format!("Step {} ({})", step_num, lbl.trim()),
-        _ => format!("Step {} ({})", step_num, step_type.as_deref().unwrap_or("step")),
+        _ => format!(
+            "Step {} ({})",
+            step_num,
+            step_type.as_deref().unwrap_or("step")
+        ),
     }
 }
 
 /// GET /automations/{id}/steps/new
 #[tracing::instrument(skip(user))]
-pub async fn get_step_type_picker_handler(user: AuthUser, Path(id): Path<i64>) -> impl IntoResponse {
+pub async fn get_step_type_picker_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
     HtmlTemplate(StepTypePickerTemplate {
         user,
         automation_id: id,
@@ -666,7 +750,9 @@ pub async fn get_new_branch_step_handler(
     Query(query): Query<NewBranchQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
-    let condition_type = query.condition_type.unwrap_or_else(|| "pixel_rgb".to_string());
+    let condition_type = query
+        .condition_type
+        .unwrap_or_else(|| "pixel_rgb".to_string());
     let steps = fetch_automation_step_options(&state.db, id, None).await;
     let bitmaps = fetch_available_bitmaps(&state.db, id).await;
 
@@ -810,18 +896,30 @@ pub async fn post_create_step_handler(
     let step_type_str = form.step_type.as_deref().unwrap_or("");
 
     if step_type_str == "branch" {
-        let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb").to_string();
+        let condition_type = form
+            .condition_type
+            .as_deref()
+            .unwrap_or("pixel_rgb")
+            .to_string();
 
         let mut error_msg = None;
-        if form.on_match_step_id.filter(|&sid| sid > 0).is_none() || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none() {
-            error_msg = Some("Both match and no-match target steps are required for branch conditions.".to_string());
+        if form.on_match_step_id.filter(|&sid| sid > 0).is_none()
+            || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none()
+        {
+            error_msg = Some(
+                "Both match and no-match target steps are required for branch conditions."
+                    .to_string(),
+            );
         } else if condition_type == "pixel_rgb" {
             if form.x.is_none() || form.y.is_none() {
-                error_msg = Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string());
+                error_msg = Some(
+                    "Please provide valid X and Y coordinates for pixel RGB condition.".to_string(),
+                );
             }
         } else if condition_type == "bitmap" {
             if form.reference_bitmap_id.is_none() || form.reference_bitmap_id == Some(0) {
-                error_msg = Some("Please select a reference bitmap for bitmap condition.".to_string());
+                error_msg =
+                    Some("Please select a reference bitmap for bitmap condition.".to_string());
             }
         }
 
@@ -862,12 +960,19 @@ pub async fn post_create_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+        let label = form
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|s: &&str| !s.is_empty())
+            .map(String::from);
 
-        let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await;
+        let max_pos_row = sqlx::query(
+            "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await;
 
         let next_pos: f64 = match max_pos_row {
             Ok(r) => {
@@ -1021,7 +1126,9 @@ pub async fn post_create_step_handler(
                         y: form.y,
                         output_variable_id: form.output_variable_id,
                         variables,
-                        error: Some("Selected output variable is invalid for this automation.".to_string()),
+                        error: Some(
+                            "Selected output variable is invalid for this automation.".to_string(),
+                        ),
                         is_edit: false,
                     }),
                 )
@@ -1030,12 +1137,19 @@ pub async fn post_create_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+        let label = form
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|s: &&str| !s.is_empty())
+            .map(String::from);
 
-        let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await;
+        let max_pos_row = sqlx::query(
+            "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await;
 
         let next_pos: f64 = match max_pos_row {
             Ok(r) => {
@@ -1171,7 +1285,10 @@ pub async fn post_create_step_handler(
                         output_y_variable_id: form.output_y_variable_id,
                         bitmaps,
                         variables,
-                        error: Some("Selected 'Is Found' output variable is invalid for this automation.".to_string()),
+                        error: Some(
+                            "Selected 'Is Found' output variable is invalid for this automation."
+                                .to_string(),
+                        ),
                         is_edit: false,
                     }),
                 )
@@ -1202,7 +1319,10 @@ pub async fn post_create_step_handler(
                         output_y_variable_id: form.output_y_variable_id,
                         bitmaps,
                         variables,
-                        error: Some("Selected 'Found X' output variable is invalid for this automation.".to_string()),
+                        error: Some(
+                            "Selected 'Found X' output variable is invalid for this automation."
+                                .to_string(),
+                        ),
                         is_edit: false,
                     }),
                 )
@@ -1233,7 +1353,10 @@ pub async fn post_create_step_handler(
                         output_y_variable_id: form.output_y_variable_id,
                         bitmaps,
                         variables,
-                        error: Some("Selected 'Found Y' output variable is invalid for this automation.".to_string()),
+                        error: Some(
+                            "Selected 'Found Y' output variable is invalid for this automation."
+                                .to_string(),
+                        ),
                         is_edit: false,
                     }),
                 )
@@ -1242,13 +1365,20 @@ pub async fn post_create_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+        let label = form
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|s: &&str| !s.is_empty())
+            .map(String::from);
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
 
-        let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await;
+        let max_pos_row = sqlx::query(
+            "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await;
 
         let next_pos: f64 = match max_pos_row {
             Ok(r) => {
@@ -1411,12 +1541,19 @@ pub async fn post_create_step_handler(
         .to_string();
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+        let label = form
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|s: &&str| !s.is_empty())
+            .map(String::from);
 
-        let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await;
+        let max_pos_row = sqlx::query(
+            "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await;
 
         let next_pos: f64 = match max_pos_row {
             Ok(r) => {
@@ -1519,12 +1656,19 @@ pub async fn post_create_step_handler(
     }
 
     let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-    let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+    let label = form
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|s: &&str| !s.is_empty())
+        .map(String::from);
 
-    let max_pos_row = sqlx::query("SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await;
+    let max_pos_row = sqlx::query(
+        "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await;
 
     let next_pos: f64 = match max_pos_row {
         Ok(r) => {
@@ -1560,11 +1704,12 @@ pub async fn post_create_step_handler(
         }
     };
 
-    let detail_res = sqlx::query("INSERT INTO step_key_presses (step_id, key_combo) VALUES ($1, $2)")
-        .bind(step_id)
-        .bind(key_combo)
-        .execute(&mut *tx)
-        .await;
+    let detail_res =
+        sqlx::query("INSERT INTO step_key_presses (step_id, key_combo) VALUES ($1, $2)")
+            .bind(step_id)
+            .bind(key_combo)
+            .execute(&mut *tx)
+            .await;
 
     if let Err(e) = detail_res {
         tracing::error!("Failed to insert step_key_presses: {}", e);
@@ -1827,10 +1972,12 @@ pub async fn get_edit_step_handler(
         })
         .into_response()
     } else if step_type == "find_pixel_rgb" {
-        let fp_row = sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
-            .bind(sid)
-            .fetch_optional(&state.db)
-            .await;
+        let fp_row = sqlx::query(
+            "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
+        )
+        .bind(sid)
+        .fetch_optional(&state.db)
+        .await;
 
         let (x, y, output_variable_id) = match fp_row {
             Ok(Some(r)) => (
@@ -1873,11 +2020,28 @@ pub async fn get_edit_step_handler(
                 r.get::<String, _>("button"),
                 r.get::<String, _>("click_type"),
             ),
-            _ => (None, None, None, None, "left".to_string(), "single".to_string()),
+            _ => (
+                None,
+                None,
+                None,
+                None,
+                "left".to_string(),
+                "single".to_string(),
+            ),
         };
 
-        let x_mode = if x_var_id.is_some() { "variable" } else { "fixed" }.to_string();
-        let y_mode = if y_var_id.is_some() { "variable" } else { "fixed" }.to_string();
+        let x_mode = if x_var_id.is_some() {
+            "variable"
+        } else {
+            "fixed"
+        }
+        .to_string();
+        let y_mode = if y_var_id.is_some() {
+            "variable"
+        } else {
+            "fixed"
+        }
+        .to_string();
 
         let variables = fetch_automation_variables(&state.db, id).await;
 
@@ -1920,11 +2084,12 @@ pub async fn post_edit_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let step_type_row = sqlx::query("SELECT step_type FROM automation_steps WHERE id = $1 AND automation_id = $2")
-        .bind(sid)
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await;
+    let step_type_row =
+        sqlx::query("SELECT step_type FROM automation_steps WHERE id = $1 AND automation_id = $2")
+            .bind(sid)
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await;
 
     let step_type: String = match step_type_row {
         Ok(Some(r)) => r.get("step_type"),
@@ -1932,18 +2097,30 @@ pub async fn post_edit_step_handler(
     };
 
     if step_type == "branch" {
-        let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb").to_string();
+        let condition_type = form
+            .condition_type
+            .as_deref()
+            .unwrap_or("pixel_rgb")
+            .to_string();
 
         let mut error_msg = None;
-        if form.on_match_step_id.filter(|&sid| sid > 0).is_none() || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none() {
-            error_msg = Some("Both match and no-match target steps are required for branch conditions.".to_string());
+        if form.on_match_step_id.filter(|&sid| sid > 0).is_none()
+            || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none()
+        {
+            error_msg = Some(
+                "Both match and no-match target steps are required for branch conditions."
+                    .to_string(),
+            );
         } else if condition_type == "pixel_rgb" {
             if form.x.is_none() || form.y.is_none() {
-                error_msg = Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string());
+                error_msg = Some(
+                    "Please provide valid X and Y coordinates for pixel RGB condition.".to_string(),
+                );
             }
         } else if condition_type == "bitmap" {
             if form.reference_bitmap_id.is_none() || form.reference_bitmap_id == Some(0) {
-                error_msg = Some("Please select a reference bitmap for bitmap condition.".to_string());
+                error_msg =
+                    Some("Please select a reference bitmap for bitmap condition.".to_string());
             }
         }
 
@@ -1984,7 +2161,12 @@ pub async fn post_edit_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+        let label = form
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|s: &&str| !s.is_empty())
+            .map(String::from);
 
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
@@ -2121,7 +2303,9 @@ pub async fn post_edit_step_handler(
                         y: form.y,
                         output_variable_id: form.output_variable_id,
                         variables,
-                        error: Some("Selected output variable is invalid for this automation.".to_string()),
+                        error: Some(
+                            "Selected output variable is invalid for this automation.".to_string(),
+                        ),
                         is_edit: true,
                     }),
                 )
@@ -2130,7 +2314,12 @@ pub async fn post_edit_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+        let label = form
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|s: &&str| !s.is_empty())
+            .map(String::from);
 
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
@@ -2242,7 +2431,10 @@ pub async fn post_edit_step_handler(
                         output_y_variable_id: form.output_y_variable_id,
                         bitmaps,
                         variables,
-                        error: Some("Selected 'Is Found' output variable is invalid for this automation.".to_string()),
+                        error: Some(
+                            "Selected 'Is Found' output variable is invalid for this automation."
+                                .to_string(),
+                        ),
                         is_edit: true,
                     }),
                 )
@@ -2273,7 +2465,10 @@ pub async fn post_edit_step_handler(
                         output_y_variable_id: form.output_y_variable_id,
                         bitmaps,
                         variables,
-                        error: Some("Selected 'Found X' output variable is invalid for this automation.".to_string()),
+                        error: Some(
+                            "Selected 'Found X' output variable is invalid for this automation."
+                                .to_string(),
+                        ),
                         is_edit: true,
                     }),
                 )
@@ -2304,7 +2499,10 @@ pub async fn post_edit_step_handler(
                         output_y_variable_id: form.output_y_variable_id,
                         bitmaps,
                         variables,
-                        error: Some("Selected 'Found Y' output variable is invalid for this automation.".to_string()),
+                        error: Some(
+                            "Selected 'Found Y' output variable is invalid for this automation."
+                                .to_string(),
+                        ),
                         is_edit: true,
                     }),
                 )
@@ -2313,7 +2511,12 @@ pub async fn post_edit_step_handler(
         }
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+        let label = form
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|s: &&str| !s.is_empty())
+            .map(String::from);
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
 
         let mut tx = match state.db.begin().await {
@@ -2451,7 +2654,12 @@ pub async fn post_edit_step_handler(
         .to_string();
 
         let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+        let label = form
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|s: &&str| !s.is_empty())
+            .map(String::from);
 
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
@@ -2530,7 +2738,12 @@ pub async fn post_edit_step_handler(
     }
 
     let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-    let label = form.label.as_deref().map(str::trim).filter(|s: &&str| !s.is_empty()).map(String::from);
+    let label = form
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|s: &&str| !s.is_empty())
+        .map(String::from);
 
     let mut tx = match state.db.begin().await {
         Ok(tx) => tx,
@@ -2597,14 +2810,24 @@ pub async fn post_move_step_down_handler(
 ) -> impl IntoResponse {
     if user.role.can_edit() {
         if let Err(e) = reorder_step(&state.db, id, sid, false).await {
-            tracing::error!("Failed to move step {} down in automation {}: {}", sid, id, e);
+            tracing::error!(
+                "Failed to move step {} down in automation {}: {}",
+                sid,
+                id,
+                e
+            );
         }
     }
     Redirect::to(&format!("/automations/{}", id))
 }
 
 /// Helper function to reorder step up or down
-pub async fn reorder_step(db: &PgPool, automation_id: i64, step_id: i64, is_up: bool) -> Result<(), sqlx::Error> {
+pub async fn reorder_step(
+    db: &PgPool,
+    automation_id: i64,
+    step_id: i64,
+    is_up: bool,
+) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;
 
     // Lock the automation row to serialize concurrent step reordering / mutations
@@ -2673,23 +2896,23 @@ pub async fn post_delete_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-
     // Check if step is referenced in task_run_steps execution history
-    let has_history: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM task_run_steps WHERE step_id = $1)",
-    )
-    .bind(sid)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(false);
+    let has_history: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_run_steps WHERE step_id = $1)")
+            .bind(sid)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(false);
 
     let res = if has_history {
         // Soft delete step to preserve run history
-        sqlx::query("UPDATE automation_steps SET deleted_at = now() WHERE id = $1 AND automation_id = $2")
-            .bind(sid)
-            .bind(id)
-            .execute(&state.db)
-            .await
+        sqlx::query(
+            "UPDATE automation_steps SET deleted_at = now() WHERE id = $1 AND automation_id = $2",
+        )
+        .bind(sid)
+        .bind(id)
+        .execute(&state.db)
+        .await
     } else {
         // Hard delete step
         sqlx::query("DELETE FROM automation_steps WHERE id = $1 AND automation_id = $2")
@@ -2700,7 +2923,12 @@ pub async fn post_delete_step_handler(
     };
 
     if let Err(e) = &res {
-        tracing::error!("Failed to delete step {} from automation {}: {}", sid, id, e);
+        tracing::error!(
+            "Failed to delete step {} from automation {}: {}",
+            sid,
+            id,
+            e
+        );
     } else {
         let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
             .bind(id)
@@ -2710,7 +2938,11 @@ pub async fn post_delete_step_handler(
         let _ = log_audit(
             &state.db,
             Some(user.id),
-            if has_history { "soft_delete_step" } else { "delete_step" },
+            if has_history {
+                "soft_delete_step"
+            } else {
+                "delete_step"
+            },
             "automation_step",
             Some(sid),
             Some(serde_json::json!({ "automation_id": id, "soft_deleted": has_history })),
@@ -2718,7 +2950,11 @@ pub async fn post_delete_step_handler(
         .await;
 
         if let Err(e) = check_and_compact_positions(&state.db, id).await {
-            tracing::error!("Failed to compact positions after deleting step {}: {}", sid, e);
+            tracing::error!(
+                "Failed to compact positions after deleting step {}: {}",
+                sid,
+                e
+            );
         }
     }
 
@@ -2727,7 +2963,10 @@ pub async fn post_delete_step_handler(
 
 /// Compact positions to 10.0, 20.0, 30.0... if gaps between adjacent steps are too narrow (< 0.0001)
 #[tracing::instrument(skip(db))]
-pub async fn check_and_compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sqlx::Error> {
+pub async fn check_and_compact_positions(
+    db: &PgPool,
+    automation_id: i64,
+) -> Result<(), sqlx::Error> {
     let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC")
         .bind(automation_id)
         .fetch_all(db)
@@ -2792,16 +3031,24 @@ mod tests {
         // 2. Mode "fixed" with missing literal -> Err
         let r2 = validate_literal_or_reference::<i32>(Some("fixed"), None, None, "X coordinate");
         assert!(r2.is_err());
-        assert!(r2.unwrap_err().contains("Please provide a fixed value for X coordinate."));
+        assert!(
+            r2.unwrap_err()
+                .contains("Please provide a fixed value for X coordinate.")
+        );
 
         // 3. Mode "variable" with valid variable ID (> 0) -> Ok((None, Some(var_id)))
-        let r3 = validate_literal_or_reference::<i32>(Some("variable"), None, Some(10), "X coordinate");
+        let r3 =
+            validate_literal_or_reference::<i32>(Some("variable"), None, Some(10), "X coordinate");
         assert_eq!(r3, Ok((None, Some(10))));
 
         // 4. Mode "variable" with invalid variable ID (None or <= 0) -> Err
-        let r4 = validate_literal_or_reference::<i32>(Some("variable"), None, Some(0), "X coordinate");
+        let r4 =
+            validate_literal_or_reference::<i32>(Some("variable"), None, Some(0), "X coordinate");
         assert!(r4.is_err());
-        assert!(r4.unwrap_err().contains("Please select a valid variable for X coordinate."));
+        assert!(
+            r4.unwrap_err()
+                .contains("Please select a valid variable for X coordinate.")
+        );
 
         let r5 = validate_literal_or_reference::<i32>(Some("variable"), None, None, "X coordinate");
         assert!(r5.is_err());
@@ -2817,12 +3064,18 @@ mod tests {
         // 7. Unspecified mode with both literal and variable ID -> Err
         let r8 = validate_literal_or_reference(None, Some(100), Some(15), "X coordinate");
         assert!(r8.is_err());
-        assert!(r8.unwrap_err().contains("Cannot specify both a fixed value and a variable for X coordinate."));
+        assert!(
+            r8.unwrap_err()
+                .contains("Cannot specify both a fixed value and a variable for X coordinate.")
+        );
 
         // 8. Unspecified mode with neither literal nor variable ID -> Err
         let r9 = validate_literal_or_reference::<i32>(None, None, None, "X coordinate");
         assert!(r9.is_err());
-        assert!(r9.unwrap_err().contains("Please specify either a fixed value or a variable for X coordinate."));
+        assert!(
+            r9.unwrap_err()
+                .contains("Please specify either a fixed value or a variable for X coordinate.")
+        );
     }
 
     #[test]
@@ -2832,11 +3085,25 @@ mod tests {
         assert_eq!(s1, "Click (824, 391) [left, single]");
 
         // Variable X, Fixed Y
-        let s2 = generate_mouse_click_summary(None, Some(391), Some("target_x"), None, "right", "double");
+        let s2 = generate_mouse_click_summary(
+            None,
+            Some(391),
+            Some("target_x"),
+            None,
+            "right",
+            "double",
+        );
         assert_eq!(s2, "Click («target_x», 391) [right, double]");
 
         // Variable X and Y
-        let s3 = generate_mouse_click_summary(None, None, Some("target_x"), Some("target_y"), "middle", "single");
+        let s3 = generate_mouse_click_summary(
+            None,
+            None,
+            Some("target_x"),
+            Some("target_y"),
+            "middle",
+            "single",
+        );
         assert_eq!(s3, "Click («target_x», «target_y») [middle, single]");
 
         // Variable X with no name fallback
@@ -2867,7 +3134,10 @@ mod tests {
 
         // With output variable
         let s2 = generate_find_bitmap_summary("login_button", Some("found_login"));
-        assert_eq!(s2, "Search for «login_button» on screen → store as «found_login»");
+        assert_eq!(
+            s2,
+            "Search for «login_button» on screen → store as «found_login»"
+        );
 
         // With whitespace output variable name
         let s3 = generate_find_bitmap_summary("login_button", Some("   "));
@@ -2931,16 +3201,7 @@ mod tests {
         );
 
         let s4 = generate_branch_summary(
-            "bitmap",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            "bitmap", None, None, None, None, None, None, None, None, None,
         );
         assert_eq!(
             s4,
@@ -2970,8 +3231,8 @@ mod tests {
 
     #[test]
     fn test_step_mouse_click_template_rendering_literal_and_reference_toggles() {
-        use askama::Template;
         use crate::auth::UserRole;
+        use askama::Template;
 
         let dummy_user = AuthUser {
             id: 1,
@@ -3045,15 +3306,17 @@ mod tests {
 
         let rendered_var = tmpl_var.render().unwrap();
         assert!(rendered_var.contains("<select name=\"x_mode\""));
-        assert!(rendered_var.contains("<option value=\"variable\" selected>From Variable</option>"));
+        assert!(
+            rendered_var.contains("<option value=\"variable\" selected>From Variable</option>")
+        );
         assert!(rendered_var.contains("var_x (int)"));
         assert!(rendered_var.contains("var_y (int)"));
     }
 
     #[test]
     fn test_step_find_pixel_rgb_template_rendering() {
-        use askama::Template;
         use crate::auth::UserRole;
+        use askama::Template;
 
         let dummy_user = AuthUser {
             id: 1,
@@ -3065,13 +3328,11 @@ mod tests {
             must_change_password: false,
         };
 
-        let vars = vec![
-            VariableOption {
-                id: 10,
-                name: "bg_color".to_string(),
-                var_type: "color".to_string(),
-            },
-        ];
+        let vars = vec![VariableOption {
+            id: 10,
+            name: "bg_color".to_string(),
+            var_type: "color".to_string(),
+        }];
 
         let tmpl = StepFindPixelRgbTemplate {
             user: dummy_user,
@@ -3096,8 +3357,8 @@ mod tests {
 
     #[test]
     fn test_step_find_bitmap_template_rendering_with_output_variables() {
-        use askama::Template;
         use crate::auth::UserRole;
+        use askama::Template;
 
         let dummy_user = AuthUser {
             id: 1,
@@ -3127,14 +3388,12 @@ mod tests {
             },
         ];
 
-        let bitmaps = vec![
-            BitmapOption {
-                id: 1,
-                name: "login_button.png".to_string(),
-                width: 100,
-                height: 40,
-            },
-        ];
+        let bitmaps = vec![BitmapOption {
+            id: 1,
+            name: "login_button.png".to_string(),
+            width: 100,
+            height: 40,
+        }];
 
         let tmpl = StepFindBitmapTemplate {
             user: dummy_user,

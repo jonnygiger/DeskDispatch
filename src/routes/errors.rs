@@ -31,7 +31,6 @@ pub struct InternalServerErrorTemplate {
     pub user: Option<AuthUser>,
 }
 
-
 #[tracing::instrument(skip(user))]
 pub async fn not_found_handler(OptionalAuthUser(user): OptionalAuthUser) -> impl IntoResponse {
     (
@@ -59,7 +58,9 @@ mod tests {
     #[tokio::test]
     async fn test_error_handlers_status_and_rendering() {
         // Test not_found_handler without user
-        let response_404 = not_found_handler(OptionalAuthUser(None)).await.into_response();
+        let response_404 = not_found_handler(OptionalAuthUser(None))
+            .await
+            .into_response();
         assert_eq!(response_404.status(), StatusCode::NOT_FOUND);
 
         let body_404 = axum::body::to_bytes(response_404.into_body(), usize::MAX)

@@ -1,14 +1,14 @@
-use deskdispatch::auth::{generate_csrf_token, AuthUser, UserRole};
-use deskdispatch::config::Config;
-use secrecy::ExposeSecret;
-use deskdispatch::routes::workers::*;
-use deskdispatch::AppState;
 use askama::Template;
 use axum::{
     body::Body,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
 };
 use chrono::Utc;
+use deskdispatch::AppState;
+use deskdispatch::auth::{AuthUser, UserRole, generate_csrf_token};
+use deskdispatch::config::Config;
+use deskdispatch::routes::workers::*;
+use secrecy::ExposeSecret;
 use tower::ServiceExt;
 use uuid::Uuid;
 

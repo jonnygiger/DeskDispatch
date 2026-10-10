@@ -1,7 +1,7 @@
-use askama::Template;
-use serde::Deserialize;
 use crate::auth::AuthUser;
 use crate::de::deserialize_option_number;
+use askama::Template;
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct AutomationsListQuery {
@@ -290,7 +290,9 @@ impl StepOption {
 
     pub fn display_name(&self) -> String {
         match &self.label {
-            Some(lbl) if !lbl.trim().is_empty() => format!("Step {} ({})", self.display_number, lbl.trim()),
+            Some(lbl) if !lbl.trim().is_empty() => {
+                format!("Step {} ({})", self.display_number, lbl.trim())
+            }
             _ => format!("Step {} ({})", self.display_number, self.step_type),
         }
     }
@@ -538,12 +540,30 @@ mod tests {
             last_run_at: None,
         };
 
-        assert_eq!(item(Some("succeeded")).last_run_status_badge_class(), "badge-success");
-        assert_eq!(item(Some("failed")).last_run_status_badge_class(), "badge-danger");
-        assert_eq!(item(Some("lost")).last_run_status_badge_class(), "badge-danger");
-        assert_eq!(item(Some("running")).last_run_status_badge_class(), "badge-warning");
-        assert_eq!(item(Some("cancelling")).last_run_status_badge_class(), "badge-warning");
-        assert_eq!(item(Some("other")).last_run_status_badge_class(), "badge-neutral");
+        assert_eq!(
+            item(Some("succeeded")).last_run_status_badge_class(),
+            "badge-success"
+        );
+        assert_eq!(
+            item(Some("failed")).last_run_status_badge_class(),
+            "badge-danger"
+        );
+        assert_eq!(
+            item(Some("lost")).last_run_status_badge_class(),
+            "badge-danger"
+        );
+        assert_eq!(
+            item(Some("running")).last_run_status_badge_class(),
+            "badge-warning"
+        );
+        assert_eq!(
+            item(Some("cancelling")).last_run_status_badge_class(),
+            "badge-warning"
+        );
+        assert_eq!(
+            item(Some("other")).last_run_status_badge_class(),
+            "badge-neutral"
+        );
         assert_eq!(item(None).last_run_status_badge_class(), "badge-neutral");
     }
 
@@ -702,7 +722,10 @@ mod tests {
             position: 20.0,
             display_number: 2,
         };
-        assert_eq!(step_with_whitespace_label.display_name(), "Step 2 (find_bitmap)");
+        assert_eq!(
+            step_with_whitespace_label.display_name(),
+            "Step 2 (find_bitmap)"
+        );
 
         let step_without_label = StepOption {
             id: 103,

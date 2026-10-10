@@ -1,9 +1,12 @@
-use deskdispatch::routes::automations::{check_and_compact_positions, compact_positions, reorder_step};
+use deskdispatch::routes::automations::{
+    check_and_compact_positions, compact_positions, reorder_step,
+};
 use sqlx::PgPool;
 
 async fn get_test_pool() -> Option<PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     PgPool::connect(&db_url).await.ok()
 }
 
@@ -52,11 +55,12 @@ async fn test_sparse_position_assignment_and_reordering() {
     .unwrap();
     let step1_id: i64 = sqlx::Row::get(&step1_row, "id");
 
-    let max_pos: f64 = sqlx::query_scalar("SELECT MAX(position) FROM automation_steps WHERE automation_id = $1")
-        .bind(auto_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let max_pos: f64 =
+        sqlx::query_scalar("SELECT MAX(position) FROM automation_steps WHERE automation_id = $1")
+            .bind(auto_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     let step2_pos = max_pos + 10.0;
     let step2_row = sqlx::query(
         "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'key_press', 'Step 2', 0) RETURNING id",
@@ -125,7 +129,9 @@ async fn test_sparse_position_assignment_and_reordering() {
 #[tokio::test]
 async fn test_gap_precision_threshold_and_compaction_trigger() {
     let Some(pool) = get_test_pool().await else {
-        println!("Database not available, skipping test_gap_precision_threshold_and_compaction_trigger");
+        println!(
+            "Database not available, skipping test_gap_precision_threshold_and_compaction_trigger"
+        );
         return;
     };
 
@@ -186,7 +192,9 @@ async fn test_gap_precision_threshold_and_compaction_trigger() {
 #[tokio::test]
 async fn test_reorder_step_swaps_positions_without_unique_constraint_error() {
     let Some(pool) = get_test_pool().await else {
-        println!("Database not available, skipping test_reorder_step_swaps_positions_without_unique_constraint_error");
+        println!(
+            "Database not available, skipping test_reorder_step_swaps_positions_without_unique_constraint_error"
+        );
         return;
     };
 
@@ -211,7 +219,11 @@ async fn test_reorder_step_swaps_positions_without_unique_constraint_error() {
 
     // Move step 2 UP (should swap position with step 1)
     let reorder_res = reorder_step(&pool, auto_id, step2_id, true).await;
-    assert!(reorder_res.is_ok(), "reorder_step failed: {:?}", reorder_res.err());
+    assert!(
+        reorder_res.is_ok(),
+        "reorder_step failed: {:?}",
+        reorder_res.err()
+    );
 
     let ordered_ids: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",

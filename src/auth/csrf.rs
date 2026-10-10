@@ -26,7 +26,10 @@ pub fn validate_csrf_token(token: &str, expected_token: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +43,10 @@ where
 {
     type Rejection = Response;
 
-    async fn from_request(mut req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(
+        mut req: axum::extract::Request,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
         let app_state = AppState::from_ref(state);
 
         let user = match req.extensions().get::<AuthUser>().cloned() {
@@ -59,7 +65,11 @@ where
         let (parts, body) = req.into_parts();
         let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
             Ok(b) => b,
-            Err(_) => return Err((StatusCode::BAD_REQUEST, "Failed to read request body").into_response()),
+            Err(_) => {
+                return Err(
+                    (StatusCode::BAD_REQUEST, "Failed to read request body").into_response()
+                );
+            }
         };
 
         let mut provided_csrf: Option<String> = parts
@@ -69,7 +79,9 @@ where
             .map(|s| s.to_string());
 
         if provided_csrf.is_none() {
-            if let Ok(params) = serde_urlencoded::from_bytes::<std::collections::HashMap<String, String>>(&bytes) {
+            if let Ok(params) =
+                serde_urlencoded::from_bytes::<std::collections::HashMap<String, String>>(&bytes)
+            {
                 provided_csrf = params.get("csrf_token").cloned();
             }
         }
@@ -87,7 +99,9 @@ where
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to deserialize CsrfForm payload: {}", e);
-                return Err((StatusCode::BAD_REQUEST, format!("Invalid form data: {}", e)).into_response());
+                return Err(
+                    (StatusCode::BAD_REQUEST, format!("Invalid form data: {}", e)).into_response(),
+                );
             }
         };
 
@@ -114,20 +128,35 @@ pub async fn csrf_origin_middleware(
         return Ok(next.run(req).await);
     }
 
-    if let Some(sec_fetch_site) = req.headers().get("Sec-Fetch-Site").and_then(|h| h.to_str().ok()) {
+    if let Some(sec_fetch_site) = req
+        .headers()
+        .get("Sec-Fetch-Site")
+        .and_then(|h| h.to_str().ok())
+    {
         if sec_fetch_site == "cross-site" {
-            tracing::warn!(path = path, "Rejected cross-site request via Sec-Fetch-Site");
+            tracing::warn!(
+                path = path,
+                "Rejected cross-site request via Sec-Fetch-Site"
+            );
             return Err(StatusCode::FORBIDDEN);
         }
     }
 
-    if let Some(origin_header) = req.headers().get(axum::http::header::ORIGIN).and_then(|h| h.to_str().ok()) {
+    if let Some(origin_header) = req
+        .headers()
+        .get(axum::http::header::ORIGIN)
+        .and_then(|h| h.to_str().ok())
+    {
         let expected_base = &state.config.public_base_url;
         let expected_origin = expected_base.trim_end_matches('/');
 
         let origin_matches = if origin_header == expected_origin {
             true
-        } else if let Some(host_header) = req.headers().get(axum::http::header::HOST).and_then(|h| h.to_str().ok()) {
+        } else if let Some(host_header) = req
+            .headers()
+            .get(axum::http::header::HOST)
+            .and_then(|h| h.to_str().ok())
+        {
             origin_header.rsplit("://").next().unwrap_or("") == host_header
         } else {
             false

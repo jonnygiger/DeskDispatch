@@ -2,16 +2,19 @@
 use sqlx::PgPool;
 
 async fn get_test_pool() -> Option<PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     PgPool::connect(&db_url).await.ok()
 }
 
 #[test]
 fn test_schema_queries_syntax() {
-    let select_users = "SELECT id, username, password_hash, display_name, role, is_active FROM users";
+    let select_users =
+        "SELECT id, username, password_hash, display_name, role, is_active FROM users";
     let select_automations = "SELECT id, name, description, status FROM automations";
-    let select_steps = "SELECT id, automation_id, position, step_type, post_delay_ms FROM automation_steps";
+    let select_steps =
+        "SELECT id, automation_id, position, step_type, post_delay_ms FROM automation_steps";
     let select_mouse_clicks = "SELECT step_id, x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks";
     let select_key_presses = "SELECT step_id, key_combo FROM step_key_presses";
     let select_branches = "SELECT step_id, automation_id, condition_type, on_match_step_id, on_no_match_step_id FROM step_branches";
@@ -64,7 +67,10 @@ async fn test_explain_queries_hit_indexes() {
     let dispatch_plan_str = dispatch_plan.join("\n");
     println!("Dispatch Plan:\n{}", dispatch_plan_str);
     assert!(
-        dispatch_plan_str.contains("idx_task_runs_queued") || dispatch_plan_str.contains("Index Scan") || dispatch_plan_str.contains("Bitmap Index Scan") || dispatch_plan_str.contains("task_runs"),
+        dispatch_plan_str.contains("idx_task_runs_queued")
+            || dispatch_plan_str.contains("Index Scan")
+            || dispatch_plan_str.contains("Bitmap Index Scan")
+            || dispatch_plan_str.contains("task_runs"),
         "Dispatch query plan should reference index or table: {}",
         dispatch_plan_str
     );
@@ -86,7 +92,10 @@ async fn test_explain_queries_hit_indexes() {
     let scheduling_plan_str = scheduling_plan.join("\n");
     println!("Scheduling Plan:\n{}", scheduling_plan_str);
     assert!(
-        scheduling_plan_str.contains("idx_schedules_due") || scheduling_plan_str.contains("Index Scan") || scheduling_plan_str.contains("Bitmap Index Scan") || scheduling_plan_str.contains("schedules"),
+        scheduling_plan_str.contains("idx_schedules_due")
+            || scheduling_plan_str.contains("Index Scan")
+            || scheduling_plan_str.contains("Bitmap Index Scan")
+            || scheduling_plan_str.contains("schedules"),
         "Scheduling query plan should execute cleanly: {}",
         scheduling_plan_str
     );
@@ -109,7 +118,10 @@ async fn test_explain_queries_hit_indexes() {
     let positional_plan_str = positional_plan.join("\n");
     println!("Positional Plan:\n{}", positional_plan_str);
     assert!(
-        positional_plan_str.contains("idx_steps_automation_position") || positional_plan_str.contains("Index Scan") || positional_plan_str.contains("Bitmap Index Scan") || positional_plan_str.contains("automation_steps"),
+        positional_plan_str.contains("idx_steps_automation_position")
+            || positional_plan_str.contains("Index Scan")
+            || positional_plan_str.contains("Bitmap Index Scan")
+            || positional_plan_str.contains("automation_steps"),
         "Positional query plan should execute cleanly: {}",
         positional_plan_str
     );
@@ -149,7 +161,10 @@ async fn test_explain_queries_hit_indexes() {
     let runs_list_plan_str = runs_list_plan.join("\n");
     println!("Runs List Plan:\n{}", runs_list_plan_str);
     assert!(
-        runs_list_plan_str.contains("idx_task_runs_queued_at_id") || runs_list_plan_str.contains("Index Scan") || runs_list_plan_str.contains("Bitmap Index Scan") || runs_list_plan_str.contains("task_runs"),
+        runs_list_plan_str.contains("idx_task_runs_queued_at_id")
+            || runs_list_plan_str.contains("Index Scan")
+            || runs_list_plan_str.contains("Bitmap Index Scan")
+            || runs_list_plan_str.contains("task_runs"),
         "Runs list query plan should execute cleanly: {}",
         runs_list_plan_str
     );
@@ -172,7 +187,10 @@ async fn test_explain_queries_hit_indexes() {
     let sweeper_plan_str = sweeper_plan.join("\n");
     println!("Sweeper Plan:\n{}", sweeper_plan_str);
     assert!(
-        sweeper_plan_str.contains("idx_task_runs_worker_id") || sweeper_plan_str.contains("Index Scan") || sweeper_plan_str.contains("Scan") || sweeper_plan_str.contains("task_runs"),
+        sweeper_plan_str.contains("idx_task_runs_worker_id")
+            || sweeper_plan_str.contains("Index Scan")
+            || sweeper_plan_str.contains("Scan")
+            || sweeper_plan_str.contains("task_runs"),
         "Sweeper query plan should execute cleanly: {}",
         sweeper_plan_str
     );
@@ -204,7 +222,10 @@ async fn test_schema_hardening_constraints() {
     let dup_res = sqlx::query("INSERT INTO users (username, password_hash, display_name, role) VALUES ('SCHEMA_TEST_USER', 'hash', 'Test2', 'viewer')")
         .execute(&mut *tx)
         .await;
-    assert!(dup_res.is_err(), "Duplicate case-insensitive username should be rejected");
+    assert!(
+        dup_res.is_err(),
+        "Duplicate case-insensitive username should be rejected"
+    );
 
     // 3. Verify CHECK constraints (post_delay_ms >= 0)
     let auto_id: i64 = sqlx::query_scalar("INSERT INTO automations (name, created_by) VALUES ('Schema Hardening Test', $1) RETURNING id")
@@ -217,7 +238,10 @@ async fn test_schema_hardening_constraints() {
         .bind(auto_id)
         .execute(&mut *tx)
         .await;
-    assert!(neg_delay_res.is_err(), "Negative post_delay_ms should be rejected by CHECK constraint");
+    assert!(
+        neg_delay_res.is_err(),
+        "Negative post_delay_ms should be rejected by CHECK constraint"
+    );
 
     // 4. Verify RGB bounds constraint (expected_r > 255)
     let step1_id: i64 = sqlx::query_scalar("INSERT INTO automation_steps (automation_id, position, step_type) VALUES ($1, 10.0, 'key_press') RETURNING id")
@@ -245,7 +269,10 @@ async fn test_schema_hardening_constraints() {
         .bind(step2_id)
         .execute(&mut *tx)
         .await;
-    assert!(invalid_rgb_res.is_err(), "RGB expected_r = 999 should be rejected by CHECK constraint");
+    assert!(
+        invalid_rgb_res.is_err(),
+        "RGB expected_r = 999 should be rejected by CHECK constraint"
+    );
 
     // 5. Verify cross-automation branch target rejection
     let auto2_id: i64 = sqlx::query_scalar("INSERT INTO automations (name, created_by) VALUES ('Schema Hardening Test 2', $1) RETURNING id")
@@ -267,7 +294,10 @@ async fn test_schema_hardening_constraints() {
         .bind(step2_id)
         .execute(&mut *tx)
         .await;
-    assert!(cross_auto_res.is_err(), "Cross-automation branch target should be rejected by composite FK constraint");
+    assert!(
+        cross_auto_res.is_err(),
+        "Cross-automation branch target should be rejected by composite FK constraint"
+    );
 
     tx.rollback().await.unwrap();
 }

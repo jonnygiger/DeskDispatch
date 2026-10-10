@@ -1,20 +1,17 @@
-use deskdispatch::{
-    config::Config,
-    routes::*,
-    AppState,
-};
-use secrecy::ExposeSecret;
 use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
     Router,
+    body::Body,
+    http::{Request, StatusCode, header},
 };
+use deskdispatch::{AppState, config::Config, routes::*};
+use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 async fn get_test_pool() -> Option<PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     PgPool::connect(&db_url).await.ok()
 }
 
@@ -71,7 +68,10 @@ async fn test_bitmaps_list_routes() {
 
     let app = Router::new()
         .route("/bitmaps", axum::routing::get(get_bitmaps_handler))
-        .route("/automations/{id}/bitmaps", axum::routing::get(get_automation_bitmaps_handler))
+        .route(
+            "/automations/{id}/bitmaps",
+            axum::routing::get(get_automation_bitmaps_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
@@ -96,7 +96,12 @@ async fn test_bitmaps_list_routes() {
     assert_eq!(location, "/login");
 
     // 2. Authenticated request empty list
-    let (user_id, session) = create_test_user(&pool, &format!("bitmap_user_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
+    let (user_id, session) = create_test_user(
+        &pool,
+        &format!("bitmap_user_{}", uuid::Uuid::new_v4().simple()),
+        "viewer",
+    )
+    .await;
 
     let req_auth = Request::builder()
         .method("GET")
@@ -204,25 +209,51 @@ async fn test_bitmap_upload_flow() {
     };
 
     let app = Router::new()
-        .route("/bitmaps", axum::routing::get(get_bitmaps_handler).post(post_bitmaps_handler))
-        .route("/automations/{id}/bitmaps", axum::routing::get(get_automation_bitmaps_handler).post(post_automation_bitmaps_handler))
-        .route("/bitmaps/commit", axum::routing::get(get_bitmap_commit_handler).post(post_bitmap_commit_handler))
+        .route(
+            "/bitmaps",
+            axum::routing::get(get_bitmaps_handler).post(post_bitmaps_handler),
+        )
+        .route(
+            "/automations/{id}/bitmaps",
+            axum::routing::get(get_automation_bitmaps_handler)
+                .post(post_automation_bitmaps_handler),
+        )
+        .route(
+            "/bitmaps/commit",
+            axum::routing::get(get_bitmap_commit_handler).post(post_bitmap_commit_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_upload_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
-    let (admin_id, admin_session) = create_test_user(&pool, &format!("admin_upload_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_viewer_id, viewer_session) = create_test_user(
+        &pool,
+        &format!("viewer_upload_{}", uuid::Uuid::new_v4().simple()),
+        "viewer",
+    )
+    .await;
+    let (admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("admin_upload_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
 
     // Extract CSRF token for admin session
     let session_uuid = uuid::Uuid::parse_str(&admin_session).unwrap();
-    let admin_csrf = deskdispatch::auth::generate_csrf_token(session_uuid, config.session_secret.expose_secret());
+    let admin_csrf = deskdispatch::auth::generate_csrf_token(
+        session_uuid,
+        config.session_secret.expose_secret(),
+    );
 
     // Extract CSRF token for viewer session
     let viewer_session_uuid = uuid::Uuid::parse_str(&viewer_session).unwrap();
-    let viewer_csrf = deskdispatch::auth::generate_csrf_token(viewer_session_uuid, config.session_secret.expose_secret());
+    let viewer_csrf = deskdispatch::auth::generate_csrf_token(
+        viewer_session_uuid,
+        config.session_secret.expose_secret(),
+    );
 
     // 1. Viewer attempt to POST /bitmaps -> 403 Forbidden
     let req_viewer = Request::builder()
@@ -230,7 +261,10 @@ async fn test_bitmap_upload_flow() {
         .uri("/bitmaps")
         .header(header::COOKIE, format!("session_id={}", viewer_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from(format!("csrf_token={}&name=ForbiddenBitmap", viewer_csrf)))
+        .body(Body::from(format!(
+            "csrf_token={}&name=ForbiddenBitmap",
+            viewer_csrf
+        )))
         .unwrap();
 
     let res_viewer = app.clone().oneshot(req_viewer).await.unwrap();
@@ -242,13 +276,18 @@ async fn test_bitmap_upload_flow() {
         .uri("/bitmaps")
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from(format!("csrf_token={}&name=New%20Admin%20Bitmap", admin_csrf)))
+        .body(Body::from(format!(
+            "csrf_token={}&name=New%20Admin%20Bitmap",
+            admin_csrf
+        )))
         .unwrap();
 
     let res_admin = app.clone().oneshot(req_admin).await.unwrap();
     assert_eq!(res_admin.status(), StatusCode::OK);
 
-    let body_bytes = axum::body::to_bytes(res_admin.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res_admin.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("Upload Image for Reference Bitmap"));
     assert!(body_str.contains("New Admin Bitmap"));
@@ -257,10 +296,16 @@ async fn test_bitmap_upload_flow() {
     assert!(body_str.contains("/bitmaps/commit?key="));
 
     // Upload a valid 10x10 PNG object to S3 for commit testing
-    let test_key = format!("bitmaps/user_{}_{}.png", admin_id, uuid::Uuid::new_v4().simple());
+    let test_key = format!(
+        "bitmaps/user_{}_{}.png",
+        admin_id,
+        uuid::Uuid::new_v4().simple()
+    );
     let img_buf = image::RgbImage::from_fn(10, 10, |_, _| image::Rgb([255, 0, 0]));
     let mut png_bytes = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgb8(img_buf).write_to(&mut png_bytes, image::ImageFormat::Png).unwrap();
+    image::DynamicImage::ImageRgb8(img_buf)
+        .write_to(&mut png_bytes, image::ImageFormat::Png)
+        .unwrap();
 
     let _ = s3_client
         .put_object()
@@ -274,14 +319,19 @@ async fn test_bitmap_upload_flow() {
     // 3. Admin GET /bitmaps/commit callback -> 200 OK rendering confirmation page (BitmapsConfirmTemplate)
     let req_commit_get = Request::builder()
         .method("GET")
-        .uri(format!("/bitmaps/commit?key={}&name=Committed%20Bitmap", test_key))
+        .uri(format!(
+            "/bitmaps/commit?key={}&name=Committed%20Bitmap",
+            test_key
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
         .unwrap();
 
     let res_commit_get = app.clone().oneshot(req_commit_get).await.unwrap();
     assert_eq!(res_commit_get.status(), StatusCode::OK);
-    let get_body_bytes = axum::body::to_bytes(res_commit_get.into_body(), usize::MAX).await.unwrap();
+    let get_body_bytes = axum::body::to_bytes(res_commit_get.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let get_body_str = String::from_utf8(get_body_bytes.to_vec()).unwrap();
     assert!(get_body_str.contains("Step 3: Confirm Reference Bitmap Registration"));
     assert!(get_body_str.contains("10 × 10 px"));
@@ -301,7 +351,12 @@ async fn test_bitmap_upload_flow() {
 
     let res_commit_post = app.clone().oneshot(req_commit_post).await.unwrap();
     assert_eq!(res_commit_post.status(), StatusCode::SEE_OTHER);
-    let location = res_commit_post.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let location = res_commit_post
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert_eq!(location, "/bitmaps");
 
     // Verify row inserted in database with correct dimensions (10x10)
@@ -362,21 +417,51 @@ async fn test_bitmap_deletion_flow() {
     };
 
     let app = Router::new()
-        .route("/bitmaps/{id}/delete", axum::routing::post(post_delete_bitmap_handler))
-        .route("/automations/{id}/bitmaps/{bid}/delete", axum::routing::post(post_automation_delete_bitmap_handler))
+        .route(
+            "/bitmaps/{id}/delete",
+            axum::routing::post(post_delete_bitmap_handler),
+        )
+        .route(
+            "/automations/{id}/bitmaps/{bid}/delete",
+            axum::routing::post(post_automation_delete_bitmap_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_del_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
-    let (editor_id, editor_session) = create_test_user(&pool, &format!("editor_del_{}", uuid::Uuid::new_v4().simple()), "editor").await;
-    let (admin_id, admin_session) = create_test_user(&pool, &format!("admin_del_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_viewer_id, viewer_session) = create_test_user(
+        &pool,
+        &format!("viewer_del_{}", uuid::Uuid::new_v4().simple()),
+        "viewer",
+    )
+    .await;
+    let (editor_id, editor_session) = create_test_user(
+        &pool,
+        &format!("editor_del_{}", uuid::Uuid::new_v4().simple()),
+        "editor",
+    )
+    .await;
+    let (admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("admin_del_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
 
-    let viewer_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), config.session_secret.expose_secret());
-    let editor_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), config.session_secret.expose_secret());
-    let admin_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&admin_session).unwrap(), config.session_secret.expose_secret());
+    let viewer_csrf = deskdispatch::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&viewer_session).unwrap(),
+        config.session_secret.expose_secret(),
+    );
+    let editor_csrf = deskdispatch::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&editor_session).unwrap(),
+        config.session_secret.expose_secret(),
+    );
+    let admin_csrf = deskdispatch::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&admin_session).unwrap(),
+        config.session_secret.expose_secret(),
+    );
 
     // Insert a test bitmap record
     let key1 = format!("bitmaps/del_test_1_{}.png", uuid::Uuid::new_v4().simple());
@@ -425,7 +510,12 @@ async fn test_bitmap_deletion_flow() {
 
     let res_editor = app.clone().oneshot(req_editor).await.unwrap();
     assert_eq!(res_editor.status(), StatusCode::SEE_OTHER);
-    let loc_editor = res_editor.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let loc_editor = res_editor
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert_eq!(loc_editor, "/bitmaps");
 
     // Verify record deleted from database
@@ -468,7 +558,10 @@ async fn test_bitmap_deletion_flow() {
     // 4. Admin delete scoped bitmap via /automations/{id}/bitmaps/{bid}/delete
     let req_admin_scoped = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/bitmaps/{}/delete", auto_id, bm_id_2))
+        .uri(format!(
+            "/automations/{}/bitmaps/{}/delete",
+            auto_id, bm_id_2
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(format!("csrf_token={}", admin_csrf)))
@@ -476,8 +569,16 @@ async fn test_bitmap_deletion_flow() {
 
     let res_admin_scoped = app.clone().oneshot(req_admin_scoped).await.unwrap();
     assert_eq!(res_admin_scoped.status(), StatusCode::SEE_OTHER);
-    let loc_admin_scoped = res_admin_scoped.headers().get(header::LOCATION).unwrap().to_str().unwrap();
-    assert_eq!(loc_admin_scoped, format!("/automations/{}/bitmaps", auto_id));
+    let loc_admin_scoped = res_admin_scoped
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(
+        loc_admin_scoped,
+        format!("/automations/{}/bitmaps", auto_id)
+    );
 
     // Verify scoped record deleted from database
     let check_row2 = sqlx::query("SELECT id FROM bitmaps WHERE id = $1")
@@ -515,16 +616,31 @@ async fn test_region_picker_top_left_flow() {
     };
 
     let app = Router::new()
-        .route("/bitmaps/pick-region", axum::routing::get(get_pick_region_handler).post(post_pick_region_top_left_handler))
-        .route("/automations/{id}/bitmaps/pick-region", axum::routing::get(get_automation_pick_region_handler).post(post_automation_pick_region_top_left_handler))
+        .route(
+            "/bitmaps/pick-region",
+            axum::routing::get(get_pick_region_handler).post(post_pick_region_top_left_handler),
+        )
+        .route(
+            "/automations/{id}/bitmaps/pick-region",
+            axum::routing::get(get_automation_pick_region_handler)
+                .post(post_automation_pick_region_top_left_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_user_id, session) = create_test_user(&pool, &format!("region_user_{}", uuid::Uuid::new_v4().simple()), "editor").await;
-    let csrf_token = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&session).unwrap(), config.session_secret.expose_secret());
+    let (_user_id, session) = create_test_user(
+        &pool,
+        &format!("region_user_{}", uuid::Uuid::new_v4().simple()),
+        "editor",
+    )
+    .await;
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&session).unwrap(),
+        config.session_secret.expose_secret(),
+    );
 
     // 1. GET /bitmaps/pick-region
     let req_get = Request::builder()
@@ -536,7 +652,9 @@ async fn test_region_picker_top_left_flow() {
 
     let res_get = app.clone().oneshot(req_get).await.unwrap();
     assert_eq!(res_get.status(), StatusCode::OK);
-    let body_bytes_get = axum::body::to_bytes(res_get.into_body(), usize::MAX).await.unwrap();
+    let body_bytes_get = axum::body::to_bytes(res_get.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str_get = String::from_utf8(body_bytes_get.to_vec()).unwrap();
     assert!(body_str_get.contains("Step 1: Click Top-Left Corner"));
     assert!(body_str_get.contains("input type=\"image\""));
@@ -558,7 +676,9 @@ async fn test_region_picker_top_left_flow() {
     let res_post = app.clone().oneshot(req_post).await.unwrap();
     assert_eq!(res_post.status(), StatusCode::OK);
 
-    let body_bytes_post = axum::body::to_bytes(res_post.into_body(), usize::MAX).await.unwrap();
+    let body_bytes_post = axum::body::to_bytes(res_post.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str_post = String::from_utf8(body_bytes_post.to_vec()).unwrap();
     assert!(body_str_post.contains("Coarse Top-Left Corner Selected"));
     assert!(body_str_post.contains("(600, 340)"));
@@ -591,20 +711,45 @@ async fn test_region_picker_confirm_crop_flow() {
     };
 
     let app = Router::new()
-        .route("/bitmaps/pick-region/bottom-right", axum::routing::post(post_pick_region_bottom_right_handler))
-        .route("/bitmaps/pick-region/confirm", axum::routing::post(post_pick_region_confirm_handler))
-        .route("/automations/{id}/bitmaps/pick-region/confirm", axum::routing::post(post_automation_pick_region_confirm_handler))
+        .route(
+            "/bitmaps/pick-region/bottom-right",
+            axum::routing::post(post_pick_region_bottom_right_handler),
+        )
+        .route(
+            "/bitmaps/pick-region/confirm",
+            axum::routing::post(post_pick_region_confirm_handler),
+        )
+        .route(
+            "/automations/{id}/bitmaps/pick-region/confirm",
+            axum::routing::post(post_automation_pick_region_confirm_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_viewer_id, viewer_session) = create_test_user(&pool, &format!("viewer_confirm_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
-    let (editor_id, editor_session) = create_test_user(&pool, &format!("editor_confirm_{}", uuid::Uuid::new_v4().simple()), "editor").await;
+    let (_viewer_id, viewer_session) = create_test_user(
+        &pool,
+        &format!("viewer_confirm_{}", uuid::Uuid::new_v4().simple()),
+        "viewer",
+    )
+    .await;
+    let (editor_id, editor_session) = create_test_user(
+        &pool,
+        &format!("editor_confirm_{}", uuid::Uuid::new_v4().simple()),
+        "editor",
+    )
+    .await;
 
-    let viewer_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&viewer_session).unwrap(), config.session_secret.expose_secret());
-    let editor_csrf = deskdispatch::auth::generate_csrf_token(uuid::Uuid::parse_str(&editor_session).unwrap(), config.session_secret.expose_secret());
+    let viewer_csrf = deskdispatch::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&viewer_session).unwrap(),
+        config.session_secret.expose_secret(),
+    );
+    let editor_csrf = deskdispatch::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&editor_session).unwrap(),
+        config.session_secret.expose_secret(),
+    );
 
     // 1. Editor POST /bitmaps/pick-region/bottom-right -> Stage 3 HTML with Step 3 Confirm Crop Preview
     let br_post_body = format!(
@@ -623,7 +768,9 @@ async fn test_region_picker_confirm_crop_flow() {
     let res_br = app.clone().oneshot(req_br).await.unwrap();
     assert_eq!(res_br.status(), StatusCode::OK);
 
-    let body_bytes_br = axum::body::to_bytes(res_br.into_body(), usize::MAX).await.unwrap();
+    let body_bytes_br = axum::body::to_bytes(res_br.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str_br = String::from_utf8(body_bytes_br.to_vec()).unwrap();
     assert!(body_str_br.contains("Step 3: Confirm Crop Preview"));
     assert!(body_str_br.contains("/bitmaps/pick-region/confirm"));
@@ -662,7 +809,12 @@ async fn test_region_picker_confirm_crop_flow() {
 
     let res_editor_confirm = app.clone().oneshot(req_editor_confirm).await.unwrap();
     assert_eq!(res_editor_confirm.status(), StatusCode::SEE_OTHER);
-    let location = res_editor_confirm.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let location = res_editor_confirm
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert_eq!(location, "/bitmaps");
 
     // Verify row inserted in database: width = 100, height = 50
@@ -682,11 +834,13 @@ async fn test_region_picker_confirm_crop_flow() {
     assert_eq!(db_created_by, editor_id);
 
     // Verify audit log entry
-    let audit_row = sqlx::query("SELECT id, user_id, action FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = $1")
-        .bind(crop_bm_id)
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
+    let audit_row = sqlx::query(
+        "SELECT id, user_id, action FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = $1",
+    )
+    .bind(crop_bm_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
     assert!(audit_row.is_some());
     let audit_action: String = sqlx::Row::get(&audit_row.unwrap(), "action");
     assert_eq!(audit_action, "create_bitmap_crop");
@@ -706,7 +860,10 @@ async fn test_region_picker_confirm_crop_flow() {
 
     let req_scoped_confirm = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/bitmaps/pick-region/confirm", auto_id))
+        .uri(format!(
+            "/automations/{}/bitmaps/pick-region/confirm",
+            auto_id
+        ))
         .header(header::COOKIE, format!("session_id={}", editor_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(scoped_confirm_body))
@@ -714,13 +871,20 @@ async fn test_region_picker_confirm_crop_flow() {
 
     let res_scoped_confirm = app.clone().oneshot(req_scoped_confirm).await.unwrap();
     assert_eq!(res_scoped_confirm.status(), StatusCode::SEE_OTHER);
-    let scoped_loc = res_scoped_confirm.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let scoped_loc = res_scoped_confirm
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert_eq!(scoped_loc, format!("/automations/{}/bitmaps", auto_id));
 
-    let scoped_row = sqlx::query("SELECT id, automation_id, width, height FROM bitmaps WHERE name = 'Scoped Crop Bitmap'")
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
+    let scoped_row = sqlx::query(
+        "SELECT id, automation_id, width, height FROM bitmaps WHERE name = 'Scoped Crop Bitmap'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
     assert!(scoped_row.is_some());
     let s_row = scoped_row.unwrap();
     let s_auto_id: Option<i64> = sqlx::Row::get(&s_row, "automation_id");

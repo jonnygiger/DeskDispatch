@@ -1,20 +1,18 @@
-use deskdispatch::auth::WorkerAuth;
-use deskdispatch::config::Config;
-use deskdispatch::AppState;
 use axum::{
+    Json, Router,
     body::Body,
-    http::{header::AUTHORIZATION, Request, StatusCode},
+    http::{Request, StatusCode, header::AUTHORIZATION},
     response::IntoResponse,
     routing::get,
-    Json, Router,
 };
+use deskdispatch::AppState;
+use deskdispatch::auth::WorkerAuth;
+use deskdispatch::config::Config;
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-async fn test_protected_worker_route(
-    worker: WorkerAuth,
-) -> impl IntoResponse {
+async fn test_protected_worker_route(worker: WorkerAuth) -> impl IntoResponse {
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -80,7 +78,10 @@ async fn test_worker_auth_extractor_integration() {
     };
 
     let app = Router::new()
-        .route("/api/v1/workers/test-auth", get(test_protected_worker_route))
+        .route(
+            "/api/v1/workers/test-auth",
+            get(test_protected_worker_route),
+        )
         .with_state(state);
 
     // 1. Missing Authorization header -> 401 Unauthorized
@@ -105,7 +106,10 @@ async fn test_worker_auth_extractor_integration() {
     // 3. Invalid API key -> 401 Unauthorized
     let req = Request::builder()
         .uri("/api/v1/workers/test-auth")
-        .header(AUTHORIZATION, "Bearer invalid_api_key_000000000000000000000")
+        .header(
+            AUTHORIZATION,
+            "Bearer invalid_api_key_000000000000000000000",
+        )
         .body(Body::empty())
         .unwrap();
 

@@ -1,10 +1,5 @@
-use axum::{
-    extract::State,
-    http::header,
-    middleware::Next,
-    response::Response,
-};
 use crate::AppState;
+use axum::{extract::State, http::header, middleware::Next, response::Response};
 
 /// Middleware to attach security hardening headers to all HTTP responses.
 pub async fn security_headers_middleware(
@@ -59,9 +54,9 @@ pub async fn security_headers_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::Body, routing::get, Router};
     use crate::auth::LoginRateLimiter;
     use crate::config::Config;
+    use axum::{Router, body::Body, routing::get};
     use secrecy::SecretString;
     use tower::ServiceExt;
 
@@ -92,14 +87,11 @@ mod tests {
             metrics_bind_address: None,
         };
 
-        let pool = sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/deskdispatch").unwrap();
-        let s3_credentials = aws_sdk_s3::config::Credentials::new(
-            "key",
-            "secret",
-            None,
-            None,
-            "static",
-        );
+        let pool =
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/deskdispatch")
+                .unwrap();
+        let s3_credentials =
+            aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
         let s3_config = aws_sdk_s3::config::Builder::new()
             .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
             .credentials_provider(s3_credentials)
@@ -141,7 +133,11 @@ mod tests {
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         let headers = response.headers();
 
-        let csp = headers.get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
+        let csp = headers
+            .get(header::CONTENT_SECURITY_POLICY)
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(csp.contains("script-src 'none'"));
         assert!(csp.contains("frame-ancestors 'none'"));
         assert!(csp.contains("form-action 'self' http://rustfs:9000"));

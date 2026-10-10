@@ -1,19 +1,16 @@
-use deskdispatch::{
-    config::Config,
-    routes::*,
-    AppState,
-};
 use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
     Router,
+    body::Body,
+    http::{Request, StatusCode, header},
 };
+use deskdispatch::{AppState, config::Config, routes::*};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 async fn get_test_pool() -> Option<PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     PgPool::connect(&db_url).await.ok()
 }
 
@@ -72,7 +69,12 @@ async fn test_media_screenshot_redirects() {
 
     let app = deskdispatch::build_router(state);
 
-    let (user_id, session) = create_test_user(&pool, &format!("media_user_{}", uuid::Uuid::new_v4().simple()), "viewer").await;
+    let (user_id, session) = create_test_user(
+        &pool,
+        &format!("media_user_{}", uuid::Uuid::new_v4().simple()),
+        "viewer",
+    )
+    .await;
 
     // Insert dummy automation, step, and screenshot
     let auto_row = sqlx::query(
@@ -121,8 +123,14 @@ async fn test_media_screenshot_redirects() {
         .to_str()
         .unwrap();
 
-    assert!(location.contains(&obj_key), "Location should contain object key");
-    assert!(location.contains("X-Amz-Expires="), "Location should be presigned S3 URL");
+    assert!(
+        location.contains(&obj_key),
+        "Location should contain object key"
+    );
+    assert!(
+        location.contains("X-Amz-Expires="),
+        "Location should be presigned S3 URL"
+    );
 
     // 2. GET non-existent screenshot -> Expect 404 NOT_FOUND
     let req_nf = Request::builder()
@@ -166,8 +174,14 @@ async fn test_media_screenshot_redirects() {
         .to_str()
         .unwrap();
 
-    assert!(location_bm.contains(&bitmap_key), "Location should contain bitmap key");
-    assert!(location_bm.contains("X-Amz-Expires="), "Location should be presigned S3 URL");
+    assert!(
+        location_bm.contains(&bitmap_key),
+        "Location should contain bitmap key"
+    );
+    assert!(
+        location_bm.contains("X-Amz-Expires="),
+        "Location should be presigned S3 URL"
+    );
 
     // 4. GET non-existent bitmap -> Expect 404 NOT_FOUND
     let req_bm_nf = Request::builder()

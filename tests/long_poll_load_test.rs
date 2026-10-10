@@ -1,19 +1,18 @@
-use deskdispatch::{
-    auth::WorkerAuth,
-    config::Config,
-    routes::api_workers::get_next_assignment_handler,
-    AppState,
-};
 use axum::{extract::State, response::IntoResponse};
+use deskdispatch::{
+    AppState, auth::WorkerAuth, config::Config, routes::api_workers::get_next_assignment_handler,
+};
 use sqlx::postgres::PgPoolOptions;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn test_long_poll_300_workers_no_pool_exhaustion() {
     let db_url = match std::env::var("DATABASE_URL") {
         Ok(url) if !url.trim().is_empty() => url,
         _ => {
-            eprintln!("Skipping test_long_poll_300_workers_no_pool_exhaustion: DATABASE_URL not set");
+            eprintln!(
+                "Skipping test_long_poll_300_workers_no_pool_exhaustion: DATABASE_URL not set"
+            );
             return;
         }
     };
@@ -27,7 +26,10 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Skipping test_long_poll_300_workers_no_pool_exhaustion: failed to connect to DB: {}", e);
+            eprintln!(
+                "Skipping test_long_poll_300_workers_no_pool_exhaustion: failed to connect to DB: {}",
+                e
+            );
             return;
         }
     };
@@ -132,9 +134,13 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
             res.push(h.await);
         }
         res
-    }).await {
+    })
+    .await
+    {
         Ok(res) => res,
-        Err(_) => panic!("Long poll load test timed out! Possible connection pool exhaustion or deadlock."),
+        Err(_) => panic!(
+            "Long poll load test timed out! Possible connection pool exhaustion or deadlock."
+        ),
     };
 
     for res in results {

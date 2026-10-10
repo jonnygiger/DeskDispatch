@@ -1,19 +1,15 @@
 use askama::Template;
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use sqlx::Row;
 
 use super::auth::HtmlTemplate;
 use crate::auth::{
-    hash_password_async, log_audit, revoke_user_sessions_except, verify_password_async, AuthUser,
-    CsrfForm,
+    AuthUser, CsrfForm, hash_password_async, log_audit, revoke_user_sessions_except,
+    verify_password_async,
 };
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 
 use crate::AppState;
 
@@ -168,11 +164,13 @@ pub async fn post_password_handler(
         }
     };
 
-    if let Err(e) = sqlx::query("UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2")
-        .bind(new_password_hash)
-        .bind(user.id)
-        .execute(&state.db)
-        .await
+    if let Err(e) = sqlx::query(
+        "UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2",
+    )
+    .bind(new_password_hash)
+    .bind(user.id)
+    .execute(&state.db)
+    .await
     {
         tracing::error!("Failed to update password in database: {}", e);
         return (

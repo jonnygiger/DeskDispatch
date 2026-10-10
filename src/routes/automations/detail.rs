@@ -7,9 +7,9 @@ use sqlx::Row;
 use super::parameters::validate_parameter_default_value;
 use super::steps::fetch_automation_step_views;
 use super::types::*;
-use crate::auth::{log_audit, AuthUser, CsrfForm};
-use crate::routes::auth::HtmlTemplate;
 use crate::AppState;
+use crate::auth::{AuthUser, CsrfForm, log_audit};
+use crate::routes::auth::HtmlTemplate;
 
 /// GET /automations/{id}
 #[tracing::instrument(skip(state, user))]
@@ -80,9 +80,14 @@ pub async fn post_automation_edit_handler(
     let requested_status = form.status.as_str();
 
     let final_status = if requested_status == "active" {
-        if let Err(lint_errors) = crate::validation::validate_automation_for_activation(&state.db, id).await {
+        if let Err(lint_errors) =
+            crate::validation::validate_automation_for_activation(&state.db, id).await
+        {
             let error_msgs: Vec<String> = lint_errors.iter().map(|e| e.to_string()).collect();
-            let combined_err = format!("Cannot activate automation due to validation errors: {}", error_msgs.join("; "));
+            let combined_err = format!(
+                "Cannot activate automation due to validation errors: {}",
+                error_msgs.join("; ")
+            );
             tracing::warn!(automation_id = id, errors = %combined_err, "Refusing activation due to lint errors");
 
             let flash = crate::auth::FlashMessage::error(combined_err);
@@ -169,20 +174,21 @@ pub async fn post_automation_delete_handler(
     }
 
     // Check if automation has execution history in task_runs
-    let has_history: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM task_runs WHERE automation_id = $1)",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(false);
+    let has_history: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE automation_id = $1)")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(false);
 
     if has_history {
         // Archive the automation to preserve execution history
-        let res = sqlx::query("UPDATE automations SET status = 'archived', updated_at = now() WHERE id = $1")
-            .bind(id)
-            .execute(&state.db)
-            .await;
+        let res = sqlx::query(
+            "UPDATE automations SET status = 'archived', updated_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&state.db)
+        .await;
 
         if res.is_ok() {
             let _ = log_audit(
@@ -259,9 +265,14 @@ pub async fn post_run_now_automation_handler(
             .into_response();
     }
 
-    if let Err(lint_errors) = crate::validation::validate_automation_for_activation(&state.db, id).await {
+    if let Err(lint_errors) =
+        crate::validation::validate_automation_for_activation(&state.db, id).await
+    {
         let error_msgs: Vec<String> = lint_errors.iter().map(|e| e.to_string()).collect();
-        let combined_err = format!("Cannot run automation due to validation errors: {}", error_msgs.join("; "));
+        let combined_err = format!(
+            "Cannot run automation due to validation errors: {}",
+            error_msgs.join("; ")
+        );
         tracing::warn!(automation_id = id, errors = %combined_err, "Refusing Run Now trigger due to lint errors");
 
         let flash = crate::auth::FlashMessage::error(combined_err);
@@ -391,7 +402,11 @@ pub async fn post_run_now_automation_handler(
     let task_run_id: i64 = match run_res {
         Ok(row) => row.get("id"),
         Err(e) => {
-            tracing::error!("Failed to queue manual task run for automation {}: {}", id, e);
+            tracing::error!(
+                "Failed to queue manual task run for automation {}: {}",
+                id,
+                e
+            );
             let _ = tx.rollback().await;
             let flash = crate::auth::FlashMessage::error("Failed to queue run.");
             let (c1, c2) = crate::auth::build_flash_cookie(&flash);
@@ -407,19 +422,32 @@ pub async fn post_run_now_automation_handler(
     };
 
     // Pre-snapshot full automation payload incorporating parameter overrides
-    let overrides_ref = if clean_overrides.is_empty() { None } else { Some(&clean_overrides) };
-    if let Ok(automation_json) = crate::routes::api_workers::fetch_full_automation_json_with_overrides(&mut *tx, id, overrides_ref).await {
-        let _ = sqlx::query(
-            "UPDATE task_runs SET dispatched_automation_json = $1 WHERE id = $2",
+    let overrides_ref = if clean_overrides.is_empty() {
+        None
+    } else {
+        Some(&clean_overrides)
+    };
+    if let Ok(automation_json) =
+        crate::routes::api_workers::fetch_full_automation_json_with_overrides(
+            &mut *tx,
+            id,
+            overrides_ref,
         )
-        .bind(&automation_json)
-        .bind(task_run_id)
-        .execute(&mut *tx)
-        .await;
+        .await
+    {
+        let _ = sqlx::query("UPDATE task_runs SET dispatched_automation_json = $1 WHERE id = $2")
+            .bind(&automation_json)
+            .bind(task_run_id)
+            .execute(&mut *tx)
+            .await;
     }
 
     if let Err(e) = tx.commit().await {
-        tracing::error!("Failed to commit transaction for task run {}: {}", task_run_id, e);
+        tracing::error!(
+            "Failed to commit transaction for task run {}: {}",
+            task_run_id,
+            e
+        );
     }
 
     tracing::info!(
@@ -443,7 +471,8 @@ pub async fn post_run_now_automation_handler(
     )
     .await;
 
-    let flash = crate::auth::FlashMessage::success(format!("Run #{} queued successfully.", task_run_id));
+    let flash =
+        crate::auth::FlashMessage::success(format!("Run #{} queued successfully.", task_run_id));
     let (c1, c2) = crate::auth::build_flash_cookie(&flash);
     (
         [

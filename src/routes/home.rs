@@ -2,12 +2,12 @@ use askama::Template;
 use axum::{extract::State, response::IntoResponse};
 use chrono::{DateTime, Utc};
 
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 
 use super::auth::HtmlTemplate;
-use crate::auth::AuthUser;
 use crate::AppState;
+use crate::auth::AuthUser;
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/", get(get_index_handler))
@@ -52,10 +52,7 @@ pub struct IndexTemplate {
 }
 
 #[tracing::instrument(skip(state, user))]
-pub async fn get_index_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-) -> impl IntoResponse {
+pub async fn get_index_handler(State(state): State<AppState>, user: AuthUser) -> impl IntoResponse {
     // Optimization: Run all 5 independent dashboard queries concurrently over the database pool
     // using `tokio::join!`. This reduces overall dashboard HTTP request latency from the sum of 5
     // sequential query round-trips to the duration of the single longest query.

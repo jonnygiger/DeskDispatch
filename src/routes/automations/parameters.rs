@@ -6,15 +6,18 @@ use axum::{
 use sqlx::Row;
 
 use super::types::*;
-use crate::auth::{log_audit, AuthUser, CsrfForm};
-use crate::routes::auth::HtmlTemplate;
 use crate::AppState;
+use crate::auth::{AuthUser, CsrfForm, log_audit};
+use crate::routes::auth::HtmlTemplate;
 
 pub fn is_valid_param_type(pt: &str) -> bool {
     matches!(pt, "int" | "bool" | "color" | "string")
 }
 
-pub fn validate_parameter_default_value(param_type: &str, default_value: &str) -> Result<(), String> {
+pub fn validate_parameter_default_value(
+    param_type: &str,
+    default_value: &str,
+) -> Result<(), String> {
     let val = default_value.trim();
     match param_type {
         "int" => {
@@ -25,7 +28,10 @@ pub fn validate_parameter_default_value(param_type: &str, default_value: &str) -
         "bool" => {
             let lower = val.to_lowercase();
             if !matches!(lower.as_str(), "true" | "false" | "1" | "0" | "yes" | "no") {
-                return Err(format!("Default value «{}» is not a valid boolean (expected true/false, 1/0, yes/no).", val));
+                return Err(format!(
+                    "Default value «{}» is not a valid boolean (expected true/false, 1/0, yes/no).",
+                    val
+                ));
             }
         }
         "color" => {
@@ -172,8 +178,12 @@ pub async fn post_create_automation_parameter_handler(
             .await
             .unwrap_or_default();
 
-            let err_msg = if e.to_string().contains("unique") || e.to_string().contains("duplicate") {
-                format!("A parameter named «{}» already exists in this automation.", name)
+            let err_msg = if e.to_string().contains("unique") || e.to_string().contains("duplicate")
+            {
+                format!(
+                    "A parameter named «{}» already exists in this automation.",
+                    name
+                )
             } else {
                 "Failed to create parameter in database.".to_string()
             };
@@ -198,7 +208,11 @@ pub async fn post_create_automation_parameter_handler(
         .await;
 
     if tx.commit().await.is_ok() {
-        tracing::info!("Created automation parameter '{}' for automation {}", name, id);
+        tracing::info!(
+            "Created automation parameter '{}' for automation {}",
+            name,
+            id
+        );
         let _ = log_audit(
             &state.db,
             Some(user.id),
@@ -311,7 +325,10 @@ pub async fn post_update_automation_parameter_handler(
         .unwrap_or_default();
 
         let err_msg = if e.to_string().contains("unique") || e.to_string().contains("duplicate") {
-            format!("A parameter named «{}» already exists in this automation.", name)
+            format!(
+                "A parameter named «{}» already exists in this automation.",
+                name
+            )
         } else {
             "Failed to update parameter in database.".to_string()
         };
@@ -374,11 +391,12 @@ pub async fn post_delete_automation_parameter_handler(
         }
     };
 
-    let delete_res = sqlx::query("DELETE FROM automation_parameters WHERE id = $1 AND automation_id = $2")
-        .bind(pid)
-        .bind(id)
-        .execute(&mut *tx)
-        .await;
+    let delete_res =
+        sqlx::query("DELETE FROM automation_parameters WHERE id = $1 AND automation_id = $2")
+            .bind(pid)
+            .bind(id)
+            .execute(&mut *tx)
+            .await;
 
     match delete_res {
         Ok(_) => {
@@ -388,7 +406,11 @@ pub async fn post_delete_automation_parameter_handler(
                 .await;
 
             if tx.commit().await.is_ok() {
-                tracing::info!("Deleted automation parameter {} from automation {}", pid, id);
+                tracing::info!(
+                    "Deleted automation parameter {} from automation {}",
+                    pid,
+                    id
+                );
                 let _ = log_audit(
                     &state.db,
                     Some(user.id),
