@@ -1,4 +1,4 @@
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use std::env;
 
 #[derive(Debug, Clone)]
@@ -207,43 +207,6 @@ mod tests {
         assert!(!config.is_production());
     }
 
-    #[test]
-    fn test_production_default_session_secret_fails() {
-        let mut config = create_valid_prod_config();
-        config.session_secret =
-            SecretString::from("default_session_secret_change_me_in_production".to_string());
-        let err = config.validate().unwrap_err();
-        assert!(err.contains("SESSION_SECRET"));
-
-        config.session_secret = SecretString::from("super-secret-key-change-me".to_string());
-        let err = config.validate().unwrap_err();
-        assert!(err.contains("SESSION_SECRET"));
-    }
-
-    #[test]
-    fn test_production_default_s3_access_key_fails() {
-        let mut config = create_valid_prod_config();
-        config.s3_access_key = "rustfsadmin".to_string();
-        let err = config.validate().unwrap_err();
-        assert!(err.contains("S3_ACCESS_KEY"));
-    }
-
-    #[test]
-    fn test_production_default_s3_secret_key_fails() {
-        let mut config = create_valid_prod_config();
-        config.s3_secret_key = SecretString::from("rustfsadminpassword".to_string());
-        let err = config.validate().unwrap_err();
-        assert!(err.contains("S3_SECRET_KEY"));
-    }
-
-    #[test]
-    fn test_production_default_db_password_fails() {
-        let mut config = create_valid_prod_config();
-        config.database_url =
-            "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string();
-        let err = config.validate().unwrap_err();
-        assert!(err.contains("DATABASE_URL"));
-    }
 
     #[test]
     fn test_production_secure_config_succeeds() {

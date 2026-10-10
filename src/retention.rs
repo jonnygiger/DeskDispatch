@@ -70,7 +70,7 @@ pub async fn prune_task_run_steps(pool: &PgPool, retention_days: u32) -> Result<
 }
 
 struct OldScreenshot {
-    id: i64,
+    step_id: i64,
     object_storage_key: String,
 }
 
@@ -84,9 +84,9 @@ pub async fn prune_old_screenshots(
 ) -> Result<(u64, u64), String> {
     let rows = sqlx::query(
         r#"
-        SELECT id, object_storage_key
+        SELECT step_id, object_storage_key
         FROM step_screenshots
-        WHERE created_at < NOW() - ($1 * INTERVAL '1 day')
+        WHERE captured_at < NOW() - ($1 * INTERVAL '1 day')
         "#,
     )
     .bind(retention_days as i32)
@@ -97,7 +97,7 @@ pub async fn prune_old_screenshots(
     .map(|row| {
         use sqlx::Row;
         OldScreenshot {
-            id: row.get("id"),
+            step_id: row.get("step_id"),
             object_storage_key: row.get("object_storage_key"),
         }
     })
@@ -108,8 +108,8 @@ pub async fn prune_old_screenshots(
 
     for item in rows {
         // Delete from DB first to ensure data consistency
-        let res = sqlx::query("DELETE FROM step_screenshots WHERE id = $1")
-            .bind(item.id)
+        let res = sqlx::query("DELETE FROM step_screenshots WHERE step_id = $1")
+            .bind(item.step_id)
             .execute(pool)
             .await;
 
@@ -129,15 +129,15 @@ pub async fn prune_old_screenshots(
                     }
                     Err(e) => {
                         error!(
-                            "Failed to delete S3 object '{}' for screenshot ID {}: {}",
-                            item.object_storage_key, item.id, e
+                            "Failed to delete S3 object '{}' for screenshot step_id {}: {}",
+                            item.object_storage_key, item.step_id, e
                         );
                     }
                 }
             }
             Ok(_) => {}
             Err(e) => {
-                error!("Failed to delete screenshot DB row ID {}: {}", item.id, e);
+                error!("Failed to delete screenshot DB row step_id {}: {}", item.step_id, e);
             }
         }
     }
