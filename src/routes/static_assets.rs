@@ -43,12 +43,11 @@ pub async fn static_asset_handler(
                 response_headers.insert(header::ETAG, etag_val);
             }
 
-            if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
-                if let Ok(req_etag) = if_none_match.to_str() {
-                    if req_etag.trim() == etag || req_etag.contains(&etag) {
-                        return (StatusCode::NOT_MODIFIED, response_headers).into_response();
-                    }
-                }
+            if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH)
+                && let Ok(req_etag) = if_none_match.to_str()
+                && (req_etag.trim() == etag || req_etag.contains(&etag))
+            {
+                return (StatusCode::NOT_MODIFIED, response_headers).into_response();
             }
 
             (StatusCode::OK, response_headers, content.data).into_response()

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use deskdispatch::routes::api_workers::sweep_stalled_task_runs;
 use sqlx::{PgPool, Row};
 use std::sync::Arc;

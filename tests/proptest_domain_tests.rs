@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use deskdispatch::domain::TaskRunStatus;
 use proptest::prelude::*;
 

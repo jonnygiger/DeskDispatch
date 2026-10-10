@@ -98,15 +98,15 @@ pub fn clear_session_cookie() -> String {
 pub fn extract_session_id(cookie_header: &str) -> Option<Uuid> {
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
-        if let Some(value) = cookie.strip_prefix("__Host-session_id=") {
-            if let Ok(id) = Uuid::parse_str(value) {
-                return Some(id);
-            }
+        if let Some(value) = cookie.strip_prefix("__Host-session_id=")
+            && let Ok(id) = Uuid::parse_str(value)
+        {
+            return Some(id);
         }
-        if let Some(value) = cookie.strip_prefix("session_id=") {
-            if let Ok(id) = Uuid::parse_str(value) {
-                return Some(id);
-            }
+        if let Some(value) = cookie.strip_prefix("session_id=")
+            && let Ok(id) = Uuid::parse_str(value)
+        {
+            return Some(id);
         }
     }
     None

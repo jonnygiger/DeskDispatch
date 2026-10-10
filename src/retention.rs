@@ -244,20 +244,20 @@ pub async fn gc_orphan_s3_objects(
 
         if let Some(contents) = list_res.contents {
             for obj in contents {
-                if let Some(key) = obj.key {
-                    if !db_keys.contains(&key) {
-                        info!("Found orphan S3 object '{}', deleting...", key);
-                        if let Err(e) = s3_client
-                            .delete_object()
-                            .bucket(bucket)
-                            .key(&key)
-                            .send()
-                            .await
-                        {
-                            error!("Failed to delete orphan S3 object '{}': {}", key, e);
-                        } else {
-                            deleted_count += 1;
-                        }
+                if let Some(key) = obj.key
+                    && !db_keys.contains(&key)
+                {
+                    info!("Found orphan S3 object '{}', deleting...", key);
+                    if let Err(e) = s3_client
+                        .delete_object()
+                        .bucket(bucket)
+                        .key(&key)
+                        .send()
+                        .await
+                    {
+                        error!("Failed to delete orphan S3 object '{}': {}", key, e);
+                    } else {
+                        deleted_count += 1;
                     }
                 }
             }

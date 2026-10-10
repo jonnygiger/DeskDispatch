@@ -61,24 +61,24 @@ impl LoginRateLimiter {
 
     pub fn check_rate_limit(&self, ip: IpAddr, username: &str) -> Result<(), String> {
         let now = Instant::now();
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().expect("lock rate limiter mutex");
         self.sweep_expired(&mut inner, now);
 
         let key = (ip, username.to_lowercase());
 
-        if let Some(timestamps) = inner.user_attempts.get(&key) {
-            if timestamps.len() >= self.max_user_attempts {
-                return Err("Too many failed login attempts. Please try again later.".to_string());
-            }
+        if let Some(timestamps) = inner.user_attempts.get(&key)
+            && timestamps.len() >= self.max_user_attempts
+        {
+            return Err("Too many failed login attempts. Please try again later.".to_string());
         }
 
-        if let Some(ip_timestamps) = inner.ip_attempts.get(&ip) {
-            if ip_timestamps.len() >= self.max_ip_attempts {
-                return Err(
-                    "Too many failed login attempts from this IP address. Please try again later."
-                        .to_string(),
-                );
-            }
+        if let Some(ip_timestamps) = inner.ip_attempts.get(&ip)
+            && ip_timestamps.len() >= self.max_ip_attempts
+        {
+            return Err(
+                "Too many failed login attempts from this IP address. Please try again later."
+                    .to_string(),
+            );
         }
 
         Ok(())
@@ -86,7 +86,7 @@ impl LoginRateLimiter {
 
     pub fn record_failure(&self, ip: IpAddr, username: &str) {
         let now = Instant::now();
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().expect("lock rate limiter mutex");
         self.sweep_expired(&mut inner, now);
 
         let key = (ip, username.to_lowercase());
@@ -97,19 +97,20 @@ impl LoginRateLimiter {
 
     pub fn clear(&self, ip: IpAddr, username: &str) {
         let now = Instant::now();
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().expect("lock rate limiter mutex");
         let key = (ip, username.to_lowercase());
         inner.user_attempts.remove(&key);
         self.sweep_expired(&mut inner, now);
     }
 
     pub fn entry_counts(&self) -> (usize, usize) {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().expect("lock rate limiter mutex");
         (inner.user_attempts.len(), inner.ip_attempts.len())
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

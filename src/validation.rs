@@ -276,23 +276,29 @@ pub async fn validate_automation_for_activation(
         match meta.step_type.as_str() {
             "mouse_click" => {
                 if let Some(mc) = mc_map.get(&sid) {
-                    if let Some(x) = mc.x {
-                        if !(0..=10000).contains(&x) {
-                            errors.push(AutomationLintError {
-                                step_id: Some(sid),
-                                step_number: Some(step_num),
-                                message: format!("Mouse click X coordinate {} is outside valid bounds (0..10000).", x),
-                            });
-                        }
+                    if let Some(x) = mc.x
+                        && !(0..=10000).contains(&x)
+                    {
+                        errors.push(AutomationLintError {
+                            step_id: Some(sid),
+                            step_number: Some(step_num),
+                            message: format!(
+                                "Mouse click X coordinate {} is outside valid bounds (0..10000).",
+                                x
+                            ),
+                        });
                     }
-                    if let Some(y) = mc.y {
-                        if !(0..=10000).contains(&y) {
-                            errors.push(AutomationLintError {
-                                step_id: Some(sid),
-                                step_number: Some(step_num),
-                                message: format!("Mouse click Y coordinate {} is outside valid bounds (0..10000).", y),
-                            });
-                        }
+                    if let Some(y) = mc.y
+                        && !(0..=10000).contains(&y)
+                    {
+                        errors.push(AutomationLintError {
+                            step_id: Some(sid),
+                            step_number: Some(step_num),
+                            message: format!(
+                                "Mouse click Y coordinate {} is outside valid bounds (0..10000).",
+                                y
+                            ),
+                        });
                     }
 
                     if let Some(x_vid) = mc.x_var_id {
@@ -384,65 +390,65 @@ pub async fn validate_automation_for_activation(
                         });
                     }
 
-                    if let Some(x) = fb.search_x {
-                        if !(0..=10000).contains(&x) {
-                            errors.push(AutomationLintError {
-                                step_id: Some(sid),
-                                step_number: Some(step_num),
-                                message: format!(
-                                    "Search X coordinate {} is outside valid bounds.",
-                                    x
-                                ),
-                            });
-                        }
+                    if let Some(x) = fb.search_x
+                        && !(0..=10000).contains(&x)
+                    {
+                        errors.push(AutomationLintError {
+                            step_id: Some(sid),
+                            step_number: Some(step_num),
+                            message: format!("Search X coordinate {} is outside valid bounds.", x),
+                        });
                     }
-                    if let Some(y) = fb.search_y {
-                        if !(0..=10000).contains(&y) {
-                            errors.push(AutomationLintError {
-                                step_id: Some(sid),
-                                step_number: Some(step_num),
-                                message: format!(
-                                    "Search Y coordinate {} is outside valid bounds.",
-                                    y
-                                ),
-                            });
-                        }
+                    if let Some(y) = fb.search_y
+                        && !(0..=10000).contains(&y)
+                    {
+                        errors.push(AutomationLintError {
+                            step_id: Some(sid),
+                            step_number: Some(step_num),
+                            message: format!("Search Y coordinate {} is outside valid bounds.", y),
+                        });
                     }
 
-                    if let Some(f_vid) = fb.output_found_var_id {
-                        if let Some(v) = vars_map.get(&f_vid) {
-                            if v.var_type != "bool" {
-                                errors.push(AutomationLintError {
-                                    step_id: Some(sid),
-                                    step_number: Some(step_num),
-                                    message: format!("'Found' output variable '{}' is of type '{}', expected 'bool'.", v.name, v.var_type),
-                                });
-                            }
-                        }
+                    if let Some(f_vid) = fb.output_found_var_id
+                        && let Some(v) = vars_map.get(&f_vid)
+                        && v.var_type != "bool"
+                    {
+                        errors.push(AutomationLintError {
+                            step_id: Some(sid),
+                            step_number: Some(step_num),
+                            message: format!(
+                                "'Found' output variable '{}' is of type '{}', expected 'bool'.",
+                                v.name, v.var_type
+                            ),
+                        });
                     }
 
-                    if let Some(x_vid) = fb.output_x_var_id {
-                        if let Some(v) = vars_map.get(&x_vid) {
-                            if v.var_type != "int" {
-                                errors.push(AutomationLintError {
-                                    step_id: Some(sid),
-                                    step_number: Some(step_num),
-                                    message: format!("'Found X' output variable '{}' is of type '{}', expected 'int'.", v.name, v.var_type),
-                                });
-                            }
-                        }
+                    if let Some(x_vid) = fb.output_x_var_id
+                        && let Some(v) = vars_map.get(&x_vid)
+                        && v.var_type != "int"
+                    {
+                        errors.push(AutomationLintError {
+                            step_id: Some(sid),
+                            step_number: Some(step_num),
+                            message: format!(
+                                "'Found X' output variable '{}' is of type '{}', expected 'int'.",
+                                v.name, v.var_type
+                            ),
+                        });
                     }
 
-                    if let Some(y_vid) = fb.output_y_var_id {
-                        if let Some(v) = vars_map.get(&y_vid) {
-                            if v.var_type != "int" {
-                                errors.push(AutomationLintError {
-                                    step_id: Some(sid),
-                                    step_number: Some(step_num),
-                                    message: format!("'Found Y' output variable '{}' is of type '{}', expected 'int'.", v.name, v.var_type),
-                                });
-                            }
-                        }
+                    if let Some(y_vid) = fb.output_y_var_id
+                        && let Some(v) = vars_map.get(&y_vid)
+                        && v.var_type != "int"
+                    {
+                        errors.push(AutomationLintError {
+                            step_id: Some(sid),
+                            step_number: Some(step_num),
+                            message: format!(
+                                "'Found Y' output variable '{}' is of type '{}', expected 'int'.",
+                                v.name, v.var_type
+                            ),
+                        });
                     }
                 }
             }
@@ -506,23 +512,23 @@ pub async fn validate_automation_for_activation(
                             });
                         }
                     } else if b.condition_type == "pixel_rgb" {
-                        if let Some(x) = b.x {
-                            if !(0..=10000).contains(&x) {
-                                errors.push(AutomationLintError {
-                                    step_id: Some(sid),
-                                    step_number: Some(step_num),
-                                    message: format!("Pixel branch condition X coordinate {} is outside valid bounds.", x),
-                                });
-                            }
+                        if let Some(x) = b.x
+                            && !(0..=10000).contains(&x)
+                        {
+                            errors.push(AutomationLintError {
+                                step_id: Some(sid),
+                                step_number: Some(step_num),
+                                message: format!("Pixel branch condition X coordinate {} is outside valid bounds.", x),
+                            });
                         }
-                        if let Some(y) = b.y {
-                            if !(0..=10000).contains(&y) {
-                                errors.push(AutomationLintError {
-                                    step_id: Some(sid),
-                                    step_number: Some(step_num),
-                                    message: format!("Pixel branch condition Y coordinate {} is outside valid bounds.", y),
-                                });
-                            }
+                        if let Some(y) = b.y
+                            && !(0..=10000).contains(&y)
+                        {
+                            errors.push(AutomationLintError {
+                                step_id: Some(sid),
+                                step_number: Some(step_num),
+                                message: format!("Pixel branch condition Y coordinate {} is outside valid bounds.", y),
+                            });
                         }
                     }
                 }
@@ -546,15 +552,15 @@ pub async fn validate_automation_for_activation(
         if meta.step_type == "branch" {
             if let Some(b) = branch_map.get(&sid) {
                 let mut succs = Vec::new();
-                if let Some(m_target) = b.on_match_step_id {
-                    if step_map.contains_key(&m_target) {
-                        succs.push(m_target);
-                    }
+                if let Some(m_target) = b.on_match_step_id
+                    && step_map.contains_key(&m_target)
+                {
+                    succs.push(m_target);
                 }
-                if let Some(nm_target) = b.on_no_match_step_id {
-                    if step_map.contains_key(&nm_target) {
-                        succs.push(nm_target);
-                    }
+                if let Some(nm_target) = b.on_no_match_step_id
+                    && step_map.contains_key(&nm_target)
+                {
+                    succs.push(nm_target);
                 }
                 if succs.is_empty() {
                     succs.push(next_in_seq);
@@ -641,9 +647,7 @@ pub async fn validate_automation_for_activation(
 
         for &sid in &step_id_order {
             let predecessors = rev_adj.get(&sid).cloned().unwrap_or_default();
-            let incoming_inits = if sid == start_node {
-                HashSet::new()
-            } else if predecessors.is_empty() {
+            let incoming_inits = if sid == start_node || predecessors.is_empty() {
                 HashSet::new()
             } else {
                 let mut iter = predecessors.iter();
@@ -665,11 +669,11 @@ pub async fn validate_automation_for_activation(
                 }
             };
 
-            if let Some(current_inits) = step_initialized_vars.get_mut(&sid) {
-                if *current_inits != incoming_inits {
-                    *current_inits = incoming_inits;
-                    changed = true;
-                }
+            if let Some(current_inits) = step_initialized_vars.get_mut(&sid)
+                && *current_inits != incoming_inits
+            {
+                *current_inits = incoming_inits;
+                changed = true;
             }
         }
     }
@@ -682,34 +686,30 @@ pub async fn validate_automation_for_activation(
         let meta = &step_map[&sid];
         let inits = &step_initialized_vars[&sid];
 
-        if meta.step_type == "mouse_click" {
-            if let Some(mc) = mc_map.get(&sid) {
-                if let Some(x_vid) = mc.x_var_id {
-                    if !inits.contains(&x_vid) {
-                        if let Some(v) = vars_map.get(&x_vid) {
-                            if !available_params.contains(&v.name) {
-                                errors.push(AutomationLintError {
-                                    step_id: Some(sid),
-                                    step_number: Some(meta.step_number),
-                                    message: format!("Variable '{}' read for X coordinate before being written along all execution paths.", v.name),
-                                });
-                            }
-                        }
-                    }
-                }
-                if let Some(y_vid) = mc.y_var_id {
-                    if !inits.contains(&y_vid) {
-                        if let Some(v) = vars_map.get(&y_vid) {
-                            if !available_params.contains(&v.name) {
-                                errors.push(AutomationLintError {
-                                    step_id: Some(sid),
-                                    step_number: Some(meta.step_number),
-                                    message: format!("Variable '{}' read for Y coordinate before being written along all execution paths.", v.name),
-                                });
-                            }
-                        }
-                    }
-                }
+        if meta.step_type == "mouse_click"
+            && let Some(mc) = mc_map.get(&sid)
+        {
+            if let Some(x_vid) = mc.x_var_id
+                && !inits.contains(&x_vid)
+                && let Some(v) = vars_map.get(&x_vid)
+                && !available_params.contains(&v.name)
+            {
+                errors.push(AutomationLintError {
+                    step_id: Some(sid),
+                    step_number: Some(meta.step_number),
+                    message: format!("Variable '{}' read for X coordinate before being written along all execution paths.", v.name),
+                });
+            }
+            if let Some(y_vid) = mc.y_var_id
+                && !inits.contains(&y_vid)
+                && let Some(v) = vars_map.get(&y_vid)
+                && !available_params.contains(&v.name)
+            {
+                errors.push(AutomationLintError {
+                    step_id: Some(sid),
+                    step_number: Some(meta.step_number),
+                    message: format!("Variable '{}' read for Y coordinate before being written along all execution paths.", v.name),
+                });
             }
         }
     }
@@ -742,10 +742,10 @@ fn add_step_writes(
     fp_map: &HashMap<i64, FindPixelMeta>,
     fb_map: &HashMap<i64, FindBitmapMeta>,
 ) {
-    if let Some(fp) = fp_map.get(&step_id) {
-        if let Some(vid) = fp.output_var_id {
-            set.insert(vid);
-        }
+    if let Some(fp) = fp_map.get(&step_id)
+        && let Some(vid) = fp.output_var_id
+    {
+        set.insert(vid);
     }
     if let Some(fb) = fb_map.get(&step_id) {
         if let Some(vid) = fb.output_found_var_id {

@@ -11,14 +11,14 @@ pub async fn security_headers_middleware(
     let headers = response.headers_mut();
 
     let mut s3_origins = Vec::new();
-    if let Some(endpoint) = &state.config.s3_public_endpoint {
-        if !endpoint.trim().is_empty() {
-            s3_origins.push(endpoint.trim());
-        }
-    } else if let Some(endpoint) = &state.config.s3_endpoint {
-        if !endpoint.trim().is_empty() {
-            s3_origins.push(endpoint.trim());
-        }
+    if let Some(endpoint) = &state.config.s3_public_endpoint
+        && !endpoint.trim().is_empty()
+    {
+        s3_origins.push(endpoint.trim());
+    } else if let Some(endpoint) = &state.config.s3_endpoint
+        && !endpoint.trim().is_empty()
+    {
+        s3_origins.push(endpoint.trim());
     }
 
     let extra_origins = if s3_origins.is_empty() {
@@ -52,6 +52,7 @@ pub async fn security_headers_middleware(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::auth::LoginRateLimiter;

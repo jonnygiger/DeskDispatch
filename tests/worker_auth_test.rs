@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use axum::{
     Json, Router,
     body::Body,
@@ -54,7 +55,7 @@ async fn test_worker_auth_extractor_integration() {
         "#,
     )
     .bind(&hostname)
-    .bind(&display_name)
+    .bind(display_name)
     .bind(&api_key_hash)
     .fetch_one(&pool)
     .await

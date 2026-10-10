@@ -225,10 +225,10 @@ pub async fn post_logout_handler(
         let _ = log_audit(&state.db, Some(u.id), "logout", "user", Some(u.id), None).await;
     }
 
-    if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|h| h.to_str().ok()) {
-        if let Some(session_id) = extract_session_id(cookie_header) {
-            let _ = delete_session(&state.db, session_id).await;
-        }
+    if let Some(cookie_header) = headers.get(header::COOKIE).and_then(|h| h.to_str().ok())
+        && let Some(session_id) = extract_session_id(cookie_header)
+    {
+        let _ = delete_session(&state.db, session_id).await;
     }
 
     let cookie = clear_session_cookie();
@@ -248,18 +248,17 @@ pub fn extract_client_ip(
     trust_proxy_headers: bool,
 ) -> IpAddr {
     if trust_proxy_headers {
-        if let Some(forwarded) = headers.get("X-Forwarded-For").and_then(|h| h.to_str().ok()) {
-            if let Some(first_ip) = forwarded.split(',').next() {
-                if let Ok(ip) = first_ip.trim().parse() {
-                    return ip;
-                }
-            }
+        if let Some(forwarded) = headers.get("X-Forwarded-For").and_then(|h| h.to_str().ok())
+            && let Some(first_ip) = forwarded.split(',').next()
+            && let Ok(ip) = first_ip.trim().parse()
+        {
+            return ip;
         }
 
-        if let Some(real_ip) = headers.get("X-Real-IP").and_then(|h| h.to_str().ok()) {
-            if let Ok(ip) = real_ip.trim().parse() {
-                return ip;
-            }
+        if let Some(real_ip) = headers.get("X-Real-IP").and_then(|h| h.to_str().ok())
+            && let Ok(ip) = real_ip.trim().parse()
+        {
+            return ip;
         }
     }
 
@@ -271,6 +270,7 @@ pub fn extract_client_ip(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use axum::http::HeaderValue;

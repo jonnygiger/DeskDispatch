@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use deskdispatch_protocol::*;
 use utoipa::OpenApi;
 
@@ -43,9 +44,7 @@ fn test_openapi_schema_generation_and_components() {
 
     // Verify OpenAPI version is 3.x
     assert!(
-        doc["openapi"]
-            .as_str()
-            .map_or(false, |v| v.starts_with("3.")),
+        doc["openapi"].as_str().is_some_and(|v| v.starts_with("3.")),
         "OpenAPI spec version should be 3.x: {:?}",
         doc["openapi"]
     );

@@ -24,6 +24,7 @@ pub struct PresignedPost {
 }
 
 #[derive(Debug)]
+#[allow(clippy::result_large_err)]
 pub enum StorageError {
     PresigningConfig(aws_sdk_s3::presigning::PresigningConfigError),
     GetObject(aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>),
@@ -99,6 +100,7 @@ pub struct StorageService {
     public_endpoint_url: Option<String>,
 }
 
+#[allow(clippy::result_large_err)]
 impl StorageService {
     pub fn new(s3_client: Client, bucket: impl Into<String>) -> Self {
         Self {
@@ -212,8 +214,8 @@ fn rewrite_url_with_public_endpoint(
     };
     let clean_internal = internal_ep.trim_end_matches('/');
     let clean_public = public_ep.trim_end_matches('/');
-    if url.starts_with(clean_internal) {
-        format!("{}{}", clean_public, &url[clean_internal.len()..])
+    if let Some(rest) = url.strip_prefix(clean_internal) {
+        format!("{}{}", clean_public, rest)
     } else {
         url
     }
@@ -221,6 +223,7 @@ fn rewrite_url_with_public_endpoint(
 
 /// Standalone helper function to generate a presigned GET URL using an S3 Client, bucket, key, and expiration duration.
 #[tracing::instrument(skip(s3_client))]
+#[allow(clippy::result_large_err)]
 pub async fn get_presigned_get_url(
     s3_client: &Client,
     bucket: &str,
@@ -241,6 +244,7 @@ pub async fn get_presigned_get_url(
 
 /// Standalone helper function to generate a presigned POST policy and SigV4 form fields for browser-direct upload.
 #[tracing::instrument(skip(secret_key))]
+#[allow(clippy::too_many_arguments, clippy::result_large_err)]
 pub fn generate_presigned_post_policy(
     bucket: &str,
     object_key: &str,
@@ -347,6 +351,7 @@ pub fn generate_presigned_post_policy(
 
 /// Standalone helper function to generate a presigned PUT URL using an S3 Client, bucket, key, and expiration duration.
 #[tracing::instrument(skip(s3_client))]
+#[allow(clippy::result_large_err)]
 pub async fn get_presigned_put_url(
     s3_client: &Client,
     bucket: &str,
@@ -366,6 +371,7 @@ pub async fn get_presigned_put_url(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

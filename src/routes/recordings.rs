@@ -218,14 +218,13 @@ pub async fn post_worker_record_start_handler(
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    let worker_exists = match sqlx::query("SELECT id FROM task_worker_pcs WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-    {
-        Ok(Some(_)) => true,
-        _ => false,
-    };
+    let worker_exists = matches!(
+        sqlx::query("SELECT id FROM task_worker_pcs WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await,
+        Ok(Some(_))
+    );
 
     if !worker_exists {
         return (StatusCode::NOT_FOUND, "Worker PC not found").into_response();
@@ -427,19 +426,18 @@ pub async fn get_recording_review_handler(
         let captured_at: DateTime<Utc> = r.get("captured_at");
 
         let mut magnifier = None;
-        if let Some(ref key) = screenshot_object_key {
-            if let Ok(presigned_url) = storage
+        if let Some(ref key) = screenshot_object_key
+            && let Ok(presigned_url) = storage
                 .generate_presigned_get_url(key, std::time::Duration::from_secs(3600))
                 .await
-            {
-                magnifier = Some(ImageMagnifier::new(
-                    presigned_url,
-                    1920,
-                    1080,
-                    x.and_then(|v| u32::try_from(v).ok()),
-                    y.and_then(|v| u32::try_from(v).ok()),
-                ));
-            }
+        {
+            magnifier = Some(ImageMagnifier::new(
+                presigned_url,
+                1920,
+                1080,
+                x.and_then(|v| u32::try_from(v).ok()),
+                y.and_then(|v| u32::try_from(v).ok()),
+            ));
         }
 
         events.push(RecordingEventDetail {
@@ -653,16 +651,16 @@ pub async fn post_recording_convert_handler(
                 }
             }
             "screenshot" => {
-                if let Some(ref key) = screenshot_object_key {
-                    if let Some(step_id) = last_created_step_id {
-                        let _ = sqlx::query(
-                            "INSERT INTO step_screenshots (step_id, object_storage_key, width, height) VALUES ($1, $2, 1920, 1080) ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key",
-                        )
-                        .bind(step_id)
-                        .bind(key)
-                        .execute(&mut *tx)
-                        .await;
-                    }
+                if let Some(ref key) = screenshot_object_key
+                    && let Some(step_id) = last_created_step_id
+                {
+                    let _ = sqlx::query(
+                        "INSERT INTO step_screenshots (step_id, object_storage_key, width, height) VALUES ($1, $2, 1920, 1080) ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key",
+                    )
+                    .bind(step_id)
+                    .bind(key)
+                    .execute(&mut *tx)
+                    .await;
                 }
             }
             _ => {}
