@@ -7,15 +7,22 @@ DeskDispatch is a high-performance, zero-JavaScript task server for managing and
 ## Table of Contents
 
 - [Overview & Architecture](#overview--architecture)
+- [C4 Model Architecture Diagram](#c4-model-architecture-diagram)
+- [UML Sequence Diagrams](#uml-sequence-diagrams)
+  - [1. Worker Task Assignment, Execution, and Screenshot Upload](#1-worker-task-assignment-execution-and-screenshot-upload)
+  - [2. Desktop Recording Capture and Automation Conversion](#2-desktop-recording-capture-and-automation-conversion)
+  - [3. Scheduled Cron Execution & Stalled Sweeper Failsafe](#3-scheduled-cron-execution--stalled-sweeper-failsafe)
 - [Technology Stack](#technology-stack)
 - [Zero-JavaScript Interface Design](#zero-javascript-interface-design)
+- [Docker Management & Automated Operations](#docker-management--automated-operations)
+  - [Prerequisites](#prerequisites)
+  - [Starting the Application](#starting-the-application)
+  - [Monitoring & Checking Status](#monitoring--checking-status)
+  - [Viewing Logs](#viewing-logs)
+  - [Stopping the Application](#stopping-the-application)
+  - [Resetting Data & Volume Storage](#resetting-data--volume-storage)
+  - [Failsafe & Healthcheck Architecture](#failsafe--healthcheck-architecture)
 - [Prerequisites & Environment Configuration](#prerequisites--environment-configuration)
-- [Getting Started & Local Development](#getting-started--local-development)
-  - [1. Infrastructure Services](#1-infrastructure-services)
-  - [2. Running Database Migrations](#2-running-database-migrations)
-  - [3. Seeding the Initial Admin User](#3-seeding-the-initial-admin-user)
-  - [4. Running the Task Server](#4-running-the-task-server)
-  - [5. Running Tests](#5-running-tests)
 - [Web Operator Interface — Route Map](#web-operator-interface--route-map)
 - [Worker-Facing API Reference](#worker-facing-api-reference)
 - [Database Schema & Data Model](#database-schema--data-model)
@@ -44,33 +51,160 @@ DeskDispatch is a high-performance, zero-JavaScript task server for managing and
 
 DeskDispatch serves as the central control plane for GUI automation workflows. Operator users define automations containing sequences of mouse clicks, keystrokes, pixel color checks, reference bitmap searches, and conditional branches. Headless worker PCs poll the task server over HTTPS/JSON to receive assignments, execute steps locally, and report execution results.
 
-```
-┌─────────────────────────────────────────┐
-│     Operator Browser (HTML/CSS only)    │
-└────────────────────┬────────────────────┘
-                     │ HTTPS / Form POSTs
-                     ▼
-┌─────────────────────────────────────────┐
-│      DeskDispatch Task Server           │
-│         (Rust / Axum / Askama)          │
-└──────────┬──────────────────┬───────────┘
-           │                  │
-    PostgreSQL              RustFS / S3
-(Metadata, Steps,         (Screenshots &
- Runs, Workers)            Ref Bitmaps)
-           ▲                  ▲
-           │                  │
-           └─────────┬────────┘
-                     │ HTTPS / JSON Poll
-┌────────────────────┴────────────────────┐
-│         Task Worker PCs (Fleet)         │
-└─────────────────────────────────────────┘
+```mermaid
+graph TD
+    Browser["Operator Browser<br/>(Zero-JS HTML/CSS)"]
+    Server["DeskDispatch Task Server<br/>(Rust / Axum / Askama)"]
+    DB[("PostgreSQL<br/>(Metadata, Steps, Runs, Workers)")]
+    Storage[("RustFS / S3 Storage<br/>(Screenshots & Ref Bitmaps)")]
+    Workers["Task Worker PCs Fleet<br/>(Headless Agents)"]
+
+    Browser -- "HTTPS / Form POSTs" --> Server
+    Server -- "Metadata & Task Queues" --> DB
+    Server -- "Presigned Object URLs" --> Storage
+    Workers -- "HTTPS / JSON Poll & Event Batches" --> Server
+    Workers -- "Direct Presigned Uploads/Downloads" --> Storage
 ```
 
 **Key Architectural Guarantees:**
 - **Worker-Initiated Pull Model:** Workers poll the server via long-polling (`GET /api/v1/workers/next-assignment`). The server never opens inbound connections to worker PCs, enabling deployment across NATs and firewalls.
 - **Zero-JavaScript Web Interface:** All web views are rendered on the server using Askama templates. Form submissions use standard HTTP POST with 303 Redirects. Interaction mechanisms like coordinate pickers leverage native HTML `<input type="image">`.
 - **Atomic Dispatch:** Task run claiming utilizes PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED` queries to guarantee thread-safe, concurrent task distribution across multiple worker nodes without external locking services.
+
+---
+
+## C4 Model Architecture Diagram
+
+The C4 Model Container diagram illustrates the high-level software architecture, boundaries, and interactions among system components:
+
+```mermaid
+C4Container
+    title Container Diagram for DeskDispatch Task Server
+
+    Person(operator, "Operator / Admin", "Manages automations, schedules, worker fleets, and reviews execution runs.")
+    Person_Ext(worker_agent, "Task Worker Agent", "Headless worker process executing GUI actions (clicks, keystrokes, pixel/bitmap searches).")
+
+    System_Boundary(deskdispatch_sys, "DeskDispatch Automation Control Plane") {
+        Container(web_app, "DeskDispatch Web & API Server", "Rust / Axum / Askama", "Serves Zero-JS HTML operator UI, background schedulers, sweeper tasks, and HTTP JSON Worker API endpoints.")
+        ContainerDb(database, "PostgreSQL Database", "PostgreSQL 16", "Stores user credentials, audit logs, automation definitions, steps, schedules, worker metadata, and task run states.")
+        ContainerDb(object_storage, "RustFS Object Storage", "S3-Compatible Storage", "Stores reference bitmaps, region crops, and execution screenshots.")
+        Container(migration_job, "Init / Migration Job", "DeskDispatch CLI (`setup`)", "Runs database migrations, seeds default admin user, and initializes S3 storage buckets.")
+    }
+
+    Rel(operator, web_app, "Interacts with UI via HTML forms and CSS magnifier", "HTTPS")
+    Rel(worker_agent, web_app, "Polls assignments, sends heartbeats, submits step results and recording events", "HTTPS / JSON")
+    Rel(worker_agent, object_storage, "Uploads execution screenshots & downloads reference bitmaps", "HTTPS / S3 Presigned URLs")
+    Rel(web_app, database, "Reads & writes metadata, locks queue rows via `FOR UPDATE SKIP LOCKED`", "SQLx / TCP")
+    Rel(web_app, object_storage, "Generates presigned GET/PUT URLs and manages retention cleanup", "AWS SigV4 / HTTP")
+    Rel(migration_job, database, "Applies SQL migrations and seeds admin account", "SQLx / TCP")
+    Rel(migration_job, object_storage, "Ensures bucket existence and lifecycle rules", "S3 API")
+```
+
+---
+
+## UML Sequence Diagrams
+
+### 1. Worker Task Assignment, Execution, and Screenshot Upload
+
+This sequence details how manual or scheduled tasks are claimed atomically by task worker machines, executed step-by-step, and logged with presigned screenshot uploads:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Operator as Operator / Admin
+    participant Server as DeskDispatch Server
+    participant DB as PostgreSQL DB
+    participant S3 as RustFS S3 Storage
+    participant Worker as Task Worker Machine
+
+    Operator->>Server: POST /automations/{id}/run-now
+    Server->>DB: INSERT into task_runs (status = 'queued')
+    Server-->>Operator: 303 Redirect to /runs/{run_id}
+
+    loop Long-Poll Assignment Loop
+        Worker->>Server: GET /api/v1/workers/next-assignment
+        Server->>DB: SELECT ... FOR UPDATE SKIP LOCKED
+        DB-->>Server: Claimed task_run details
+        Server-->>Worker: 200 OK (Task assignment + Full Automation JSON)
+    end
+
+    loop Step Execution
+        Worker->>Worker: Execute GUI Step (Click / Keypress / Bitmap Search)
+        Worker->>Server: GET /api/v1/workers/task-runs/{id}/screenshot-upload-url
+        Server-->>Worker: 200 OK (Presigned S3 PUT URL)
+        Worker->>S3: PUT /screenshots/{key}.png (Image Data)
+        Worker->>Server: POST /api/v1/workers/task-runs/{id}/screenshots/{key}/commit
+        Worker->>Server: POST /api/v1/workers/task-runs/{id}/step-result
+        Server->>DB: UPDATE task_run_steps & variable_values
+    end
+
+    Worker->>Server: POST /api/v1/workers/task-runs/{id}/complete (status = 'succeeded')
+    Server->>DB: UPDATE task_runs SET status = 'succeeded'
+```
+
+### 2. Desktop Recording Capture and Automation Conversion
+
+This sequence demonstrates live user action recording on worker machines and draft conversion into executable automations:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Operator as Operator / Admin
+    participant Server as DeskDispatch Server
+    participant DB as PostgreSQL DB
+    participant S3 as RustFS S3 Storage
+    participant Worker as Task Worker Machine
+
+    Operator->>Server: POST /workers/{id}/record/start
+    Server->>DB: INSERT into recording_sessions (status = 'recording')
+
+    loop Worker Heartbeat & Poll
+        Worker->>Server: POST /api/v1/workers/heartbeat
+        Server-->>Worker: Response with active recording session ID
+    end
+
+    loop Capture Stream
+        Worker->>Worker: Capture Mouse/Keyboard OS Events
+        Worker->>Server: GET /api/v1/workers/recordings/{session_id}/screenshot-upload-url
+        Server-->>Worker: Presigned S3 PUT URL
+        Worker->>S3: PUT recording event screenshot
+        Worker->>Server: POST /api/v1/workers/recordings/{session_id}/events
+        Server->>DB: INSERT into recording_events
+    end
+
+    Operator->>Server: POST /recordings/{id}/stop
+    Server->>DB: UPDATE recording_sessions SET status = 'completed'
+    Operator->>Server: GET /recordings/{id}/review
+    Operator->>Server: POST /recordings/{id}/convert (Select events)
+    Server->>DB: Create automation, automation_steps & details
+    Server-->>Operator: 303 Redirect to /automations/{new_id}
+```
+
+### 3. Scheduled Cron Execution & Stalled Sweeper Failsafe
+
+This sequence highlights background cron schedule processing alongside automated failsafe recovery for stalled task runs:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Cron as Cron Scheduler Loop
+    participant Sweeper as Stalled Execution Sweeper
+    participant Server as DeskDispatch Server
+    participant DB as PostgreSQL DB
+
+    rect rgb(240, 248, 255)
+        note over Cron, DB: Scheduled Execution Trigger
+        Cron->>DB: Query due schedules (process_due_schedules)
+        Cron->>DB: INSERT task_runs (status = 'queued', target_worker_group_id)
+        Cron->>DB: UPDATE schedules SET next_run_at
+    end
+
+    rect rgb(255, 240, 240)
+        note over Sweeper, DB: Stalled Task Run Eviction (Failsafe)
+        Sweeper->>DB: Query running task_runs where worker heartbeat > 90s
+        Sweeper->>DB: UPDATE task_runs SET status = 'lost', error_message
+    end
+```
 
 ---
 
@@ -105,93 +239,113 @@ DeskDispatch accomplishes rich interactive functionality entirely without client
 
 ---
 
-## Prerequisites & Environment Configuration
+## Docker Management & Automated Operations
+
+DeskDispatch is fully containerized and configured for automatic startup, lifecycle management, and failsafe execution through Docker Compose.
 
 ### Prerequisites
-- **Rust Toolchain:** 1.99+ (2024 edition support)
-- **Docker & Docker Compose:** For running PostgreSQL and RustFS object storage locally
+- **Docker Engine:** v20.10+
+- **Docker Compose:** v2.0+
 
-### Environment Variables (`.env`)
+### Starting the Application
 
-```env
-# Database
-DATABASE_URL=postgres://postgres:postgrespassword@localhost:5432/deskdispatch
-
-# Object Storage (S3 / RustFS)
-S3_ENDPOINT=http://localhost:9000
-S3_PUBLIC_ENDPOINT=http://localhost:9000
-S3_BUCKET=deskdispatch-bucket
-S3_ACCESS_KEY=rustfsadmin
-S3_SECRET_KEY=rustfsadminpassword
-S3_REGION=us-east-1
-
-# Application Security & Server Config
-SESSION_SECRET=super-secret-key-change-me
-BIND_ADDRESS=0.0.0.0:3000
-APP_ENV=development
-MIN_AGENT_VERSION=1.0.0
-```
-
-### Public S3 Endpoint URL Rewriting (`S3_PUBLIC_ENDPOINT`)
-When DeskDispatch runs inside a Docker network or behind a private infrastructure network, `S3_ENDPOINT` typically points to an internal container address (e.g., `http://rustfs:9000`). However, operator browsers and external task-worker PCs need to access presigned GET/PUT URLs and POST policies using a publicly reachable host. By setting `S3_PUBLIC_ENDPOINT` (e.g., `https://s3.example.com`), the task server automatically rewrites generated presigned object storage URLs from the internal endpoint to the public endpoint, allowing external clients to upload screenshots and download reference bitmaps directly without exposing internal network routing.
-
----
-
-## Getting Started & Local Development
-
-### 1. Infrastructure Services
-
-Start the local PostgreSQL database and RustFS object storage containers:
+To start the entire application stack (PostgreSQL, RustFS Object Storage, Database Migration & Seeding Job, and the DeskDispatch Task Server) in background daemon mode:
 
 ```bash
 docker compose up -d
 ```
 
-This provisions:
-- **PostgreSQL:** `localhost:5432` (db: `deskdispatch`, user: `postgres`, pass: `postgrespassword`)
-- **RustFS S3 Service:** `http://localhost:9000` (Console on `http://localhost:9001`)
-- **Bucket Creation:** Initializes `deskdispatch-bucket` automatically on startup.
+**Automatic Startup Sequence:**
+1. **PostgreSQL Container (`deskdispatch-postgres`):** Starts and waits for healthy database readiness (`pg_isready`).
+2. **RustFS Storage Container (`deskdispatch-rustfs`):** Starts and waits for healthy S3 API readiness (`/health`).
+3. **Migration & Initialization Job (`deskdispatch-migration`):** Runs `/app/deskdispatch setup` to execute database migrations, seed the initial administrator account (`admin` / `test`), and create the S3 bucket (`deskdispatch-bucket`).
+4. **DeskDispatch App Container (`deskdispatch-app`):** Boots after `migration` completes successfully and begins serving operator requests on port 3000.
 
-### 2. Running Database Migrations
+### Monitoring & Checking Status
 
-Migrations run automatically on application boot. You can also run migrations manually or inspect schema files in `migrations/`:
-
-```bash
-# Migrations are embedded and executed automatically via main.rs
-```
-
-### 3. Seeding the Initial Admin User
-
-Run the included seed binary to create the default administrative account:
+Inspect running containers and health statuses:
 
 ```bash
-ADMIN_USERNAME=admin ADMIN_PASSWORD=adminpassword ADMIN_DISPLAY_NAME="Administrator" cargo run --bin seed
+docker compose ps
 ```
 
-### 4. Running the Task Server
-
-Start the Axum web server:
+Probe application health endpoints:
 
 ```bash
-cargo run
+# Basic liveness check
+curl http://localhost:3000/livez
+
+# Database & system readiness check
+curl http://localhost:3000/readyz
 ```
 
-Access the health check endpoint to confirm operational status:
+### Viewing Logs
+
+Stream live logs across all services:
 
 ```bash
-curl http://localhost:3000/healthz
-# Returns 200 OK: "OK"
+docker compose logs -f
 ```
 
-Open `http://localhost:3000` in your browser to log in.
-
-### 5. Running Tests
-
-Execute internal library unit tests:
+Stream logs for a specific service (e.g., the web server):
 
 ```bash
-cargo test --lib
+docker compose logs -f app
 ```
+
+### Stopping the Application
+
+To stop all running containers while preserving database and object storage volumes:
+
+```bash
+docker compose down
+```
+
+### Resetting Data & Volume Storage
+
+To stop all containers and clear persistent storage volumes (e.g. for a clean re-initialization):
+
+```bash
+docker compose down -v
+```
+
+### Failsafe & Healthcheck Architecture
+
+The Docker setup incorporates multi-layered health checks and fail-fast guarantees:
+- **Dependency Chains (`depends_on`):** Service dependencies use explicit `condition: service_healthy` and `condition: service_completed_successfully` clauses to eliminate race conditions during boot.
+- **Database Readiness (`pg_isready`):** `deskdispatch-postgres` performs health checks every 5 seconds to ensure PostgreSQL accepts connection pools before application startup.
+- **Storage Readiness (`curl`):** `deskdispatch-rustfs` validates HTTP storage layer health before migrations or application startup.
+- **Application Liveness (`deskdispatch healthcheck`):** `deskdispatch-app` uses its internal binary healthcheck subcommand to verify TCP and HTTP `/livez` responsiveness every 10 seconds.
+- **Graceful Shutdown & Signal Handling:** `deskdispatch-app` listens for SIGINT/SIGTERM signals, canceling background tasks and flushing pending database queries before exiting.
+- **Production Credential Validation:** In production mode (`APP_ENV=production`), `Config::validate()` fails fast on startup if default or weak credentials are detected for `SESSION_SECRET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, or `DATABASE_URL`.
+
+---
+
+## Prerequisites & Environment Configuration
+
+### Environment Variables (`.env`)
+
+```env
+# Database
+DATABASE_URL=postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch
+
+# Object Storage (S3 / RustFS)
+S3_ENDPOINT=http://rustfs:9000
+S3_PUBLIC_ENDPOINT=http://localhost:9000
+S3_BUCKET=deskdispatch-bucket
+S3_ACCESS_KEY=deskdispatch_s3_user
+S3_SECRET_KEY=deskdispatch_s3_prod_secret_4712
+S3_REGION=us-east-1
+
+# Application Security & Server Config
+SESSION_SECRET=deskdispatch_session_prod_secret_8832
+BIND_ADDRESS=0.0.0.0:3000
+APP_ENV=production
+MIN_AGENT_VERSION=1.0.0
+```
+
+### Public S3 Endpoint URL Rewriting (`S3_PUBLIC_ENDPOINT`)
+When DeskDispatch runs inside a Docker network or behind a private infrastructure network, `S3_ENDPOINT` typically points to an internal container address (e.g., `http://rustfs:9000`). However, operator browsers and external task-worker PCs need to access presigned GET/PUT URLs and POST policies using a publicly reachable host. By setting `S3_PUBLIC_ENDPOINT` (e.g., `http://localhost:9000`), the task server automatically rewrites generated presigned object storage URLs from the internal endpoint to the public endpoint, allowing external clients to upload screenshots and download reference bitmaps directly without exposing internal network routing.
 
 ---
 
@@ -202,6 +356,8 @@ All GET routes render Askama HTML templates; all POST routes mutate state and is
 | Area | Route Path | Method | Minimum Role | Status | Description |
 | --- | --- | --- | --- | --- | --- |
 | **System** | `/healthz` | GET | Public | Implemented | Health check endpoint |
+| | `/livez` | GET | Public | Implemented | Liveness probe endpoint |
+| | `/readyz` | GET | Public | Implemented | System & database readiness probe |
 | | `/static/{*path}` | GET | Public | Implemented | Embedded static CSS assets |
 | | `/dev/magnifier-verify` | GET | Public | Implemented | Magnifier CSS verification tool |
 | **Auth** | `/login` | GET, POST | Public | Implemented | Session login with rate limiting |
@@ -289,26 +445,52 @@ All endpoints except `/register` require HTTP Header `Authorization: Bearer <api
 
 DeskDispatch uses PostgreSQL with discriminated detail tables for automation step primitives:
 
-```
-                  ┌─────────────────┐
-                  │   automations   │
-                  └────────┬────────┘
-                           │ 1:N
-                           ▼
-                  ┌─────────────────┐
-                  │ automation_steps│ (position, step_type, post_delay_ms)
-                  └────────┬────────┘
-                           │ 1:1 Discriminated Foreign Key
-    ┌──────────────────────┼──────────────────────┬──────────────────────┐
-    ▼                      ▼                      ▼                      ▼
-┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│step_mouse_clicks │ │step_key_presses  │ │step_find_pixel_rgb│ │ step_find_bitmap │
-└──────────────────┘ └──────────────────┘ └──────────────────┘ └──────────────────┘
-                           │
-                           ▼
-                  ┌──────────────────┐
-                  │  step_branches   │ (condition_type, on_match_step_id, on_no_match_step_id)
-                  └──────────────────┘
+```mermaid
+erDiagram
+    users ||--o{ sessions : "creates"
+    users ||--o{ audit_log : "performs"
+    automations ||--o{ automation_steps : "contains"
+    automations ||--o{ automation_variables : "defines"
+    automations ||--o{ automation_parameters : "defines"
+    automations ||--o{ task_runs : "instantiates"
+    automation_steps ||--o| step_mouse_clicks : "discriminates"
+    automation_steps ||--o| step_key_presses : "discriminates"
+    automation_steps ||--o| step_find_pixel_rgb : "discriminates"
+    automation_steps ||--o| step_find_bitmap : "discriminates"
+    automation_steps ||--o| step_branches : "discriminates"
+    task_worker_pcs }|--|{ worker_group_members : "belongs to"
+    worker_groups ||--o{ worker_group_members : "groups"
+    worker_groups ||--o{ schedules : "targets"
+    automations ||--o{ schedules : "scheduled by"
+    task_runs ||--o{ task_run_steps : "logs"
+    task_runs ||--o{ task_run_variable_values : "captures"
+    recording_sessions ||--o{ recording_events : "streams"
+
+    automations {
+        uuid id PK
+        string name
+        string status
+    }
+    automation_steps {
+        uuid id PK
+        uuid automation_id FK
+        float position
+        string step_type
+        int post_delay_ms
+    }
+    task_runs {
+        uuid id PK
+        uuid automation_id FK
+        uuid worker_id FK
+        string status
+        timestamp queued_at
+    }
+    task_worker_pcs {
+        uuid id PK
+        string hostname
+        string status
+        timestamp last_heartbeat_at
+    }
 ```
 
 **Key Database Tables:**
