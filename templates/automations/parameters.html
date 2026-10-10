@@ -108,12 +108,12 @@
                                     <form method="post" action="/automations/{{ automation.id }}/parameters/{{ param_item.id }}" style="display: flex; flex-direction: column; gap: 0.75rem;">
                                         {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <div>
-                                            <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
-                                            <input type="text" name="name" value="{{ param_item.name }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <label for="param-edit-name-{{ param_item.id }}" style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
+                                            <input type="text" id="param-edit-name-{{ param_item.id }}" name="name" value="{{ param_item.name }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
                                         </div>
                                         <div>
-                                            <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Type</label>
-                                            <select name="param_type" class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <label for="param-edit-type-{{ param_item.id }}" style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Type</label>
+                                            <select id="param-edit-type-{{ param_item.id }}" name="param_type" class="form-control" style="width: 100%; padding: 0.375rem;">
                                                 <option value="int"{% if param_item.param_type == "int" %} selected{% endif %}>int</option>
                                                 <option value="bool"{% if param_item.param_type == "bool" %} selected{% endif %}>bool</option>
                                                 <option value="color"{% if param_item.param_type == "color" %} selected{% endif %}>color</option>
@@ -121,12 +121,12 @@
                                             </select>
                                         </div>
                                         <div>
-                                            <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Default Value</label>
-                                            <input type="text" name="default_value" value="{{ param_item.default_value }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <label for="param-edit-default-{{ param_item.id }}" style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Default Value</label>
+                                            <input type="text" id="param-edit-default-{{ param_item.id }}" name="default_value" value="{{ param_item.default_value }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
                                         </div>
                                         <div>
-                                            <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Description</label>
-                                            <input type="text" name="description" value="{{ param_item.description }}" class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <label for="param-edit-desc-{{ param_item.id }}" style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Description</label>
+                                            <input type="text" id="param-edit-desc-{{ param_item.id }}" name="description" value="{{ param_item.description }}" class="form-control" style="width: 100%; padding: 0.375rem;">
                                         </div>
                                         <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem;">
                                             <button type="submit" class="btn btn-sm btn-primary">Save Changes</button>

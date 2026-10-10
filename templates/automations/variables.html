@@ -102,12 +102,12 @@
                                     <form method="post" action="/automations/{{ automation.id }}/variables/{{ var_item.id }}" style="display: flex; flex-direction: column; gap: 0.75rem;">
                                         {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <div>
-                                            <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
-                                            <input type="text" name="name" value="{{ var_item.name }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <label for="var-edit-name-{{ var_item.id }}" style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Name</label>
+                                            <input type="text" id="var-edit-name-{{ var_item.id }}" name="name" value="{{ var_item.name }}" required class="form-control" style="width: 100%; padding: 0.375rem;">
                                         </div>
                                         <div>
-                                            <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Type</label>
-                                            <select name="var_type" class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <label for="var-edit-type-{{ var_item.id }}" style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Type</label>
+                                            <select id="var-edit-type-{{ var_item.id }}" name="var_type" class="form-control" style="width: 100%; padding: 0.375rem;">
                                                 <option value="int"{% if var_item.var_type == "int" %} selected{% endif %}>int</option>
                                                 <option value="bool"{% if var_item.var_type == "bool" %} selected{% endif %}>bool</option>
                                                 <option value="color"{% if var_item.var_type == "color" %} selected{% endif %}>color</option>
@@ -116,8 +116,8 @@
                                             </select>
                                         </div>
                                         <div>
-                                            <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Description</label>
-                                            <input type="text" name="description" value="{{ var_item.description }}" class="form-control" style="width: 100%; padding: 0.375rem;">
+                                            <label for="var-edit-desc-{{ var_item.id }}" style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">Description</label>
+                                            <input type="text" id="var-edit-desc-{{ var_item.id }}" name="description" value="{{ var_item.description }}" class="form-control" style="width: 100%; padding: 0.375rem;">
                                         </div>
                                         <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem;">
                                             <button type="submit" class="btn btn-sm btn-primary">Save Changes</button>

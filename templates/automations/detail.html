@@ -56,12 +56,12 @@
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
                 {% for param in parameters %}
                 <div>
-                    <label style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">
+                    <label for="param-override-{{ param.name }}" style="display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.25rem;">
                         {{ param.name }} <span style="font-weight: 400; color: var(--color-text-muted);">({{ param.param_type }})</span>
                     </label>
-                    <input type="text" name="parameters[{{ param.name }}]" value="{{ param.default_value }}" class="form-control" style="width: 100%;">
+                    <input type="text" id="param-override-{{ param.name }}" name="parameters[{{ param.name }}]" value="{{ param.default_value }}" class="form-control" style="width: 100%;"{% if !param.description.is_empty() %} aria-describedby="param-override-desc-{{ param.name }}"{% endif %}>
                     {% if !param.description.is_empty() %}
-                    <span style="font-size: 0.75rem; color: var(--color-text-muted); display: block; margin-top: 0.125rem;">{{ param.description }}</span>
+                    <span id="param-override-desc-{{ param.name }}" style="font-size: 0.75rem; color: var(--color-text-muted); display: block; margin-top: 0.125rem;">{{ param.description }}</span>
                     {% endif %}
                 </div>
                 {% endfor %}
