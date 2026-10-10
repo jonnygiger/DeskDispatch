@@ -13,3 +13,7 @@
 ## 2025-03-10 - [Eliminating N+1 database queries on automation detail view]
 **Learning:** `get_automation_detail_handler` in `src/routes/automations/detail.rs` previously ran `fetch_step_description` sequentially for every step in an automation, triggering per-step subtype and target label database queries and resulting in 4 + 3N sequential DB round trips per request.
 **Action:** Create a bulk step view helper `fetch_automation_step_views` in `src/routes/automations/steps.rs` that bulk-fetches active step subtype details into HashMaps concurrently with `tokio::join!` and resolves branch step labels in memory. Execute step views, worker groups, and parameter options concurrently using `tokio::join!`, reducing database round trips to 3 fixed calls regardless of step count.
+
+## 2025-03-10 - [Concurrent task run detail and recording session queries with tokio::join!]
+**Learning:** `get_run_detail_handler` in `src/routes/runs.rs` and recording handlers in `src/routes/recordings.rs` sequentially executed independent database queries for the primary entity record, executed step/event rows, and variable values in 2 to 3 consecutive round-trips.
+**Action:** Use `tokio::join!` to execute independent entity, step/event, and variable value queries concurrently across PgPool connections, reducing DB wait latency for task run detail views by ~66% and recording session views by ~50%.

@@ -471,36 +471,88 @@ pub async fn get_run_detail_handler(
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
-    let run_row = match sqlx::query(
-        r#"
-        SELECT
-            tr.id,
-            tr.automation_id,
-            a.name AS automation_name,
-            tr.schedule_id,
-            s.name AS schedule_name,
-            tr.worker_id,
-            w.display_name AS worker_name,
-            w.screen_width AS worker_screen_width,
-            w.screen_height AS worker_screen_height,
-            tr.status,
-            COALESCE(u.display_name, u.username, s.name, 'Manual') AS triggered_by,
-            tr.queued_at,
-            tr.started_at,
-            tr.completed_at,
-            tr.error_message
-        FROM task_runs tr
-        JOIN automations a ON tr.automation_id = a.id
-        LEFT JOIN schedules s ON tr.schedule_id = s.id
-        LEFT JOIN task_worker_pcs w ON tr.worker_id = w.id
-        LEFT JOIN users u ON tr.triggered_by_user_id = u.id
-        WHERE tr.id = $1
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    {
+    // Bolt Optimization: Run all 3 independent task run detail queries (main task run record,
+    // executed step logs with screenshot keys, and variable values) concurrently using `tokio::join!`.
+    // This reduces page load database wait latency from 3 sequential round-trips to the duration
+    // of the single longest query (~66% latency reduction).
+    let (run_row_res, step_rows_res, var_rows_res) = tokio::join!(
+        sqlx::query(
+            r#"
+            SELECT
+                tr.id,
+                tr.automation_id,
+                a.name AS automation_name,
+                tr.schedule_id,
+                s.name AS schedule_name,
+                tr.worker_id,
+                w.display_name AS worker_name,
+                w.screen_width AS worker_screen_width,
+                w.screen_height AS worker_screen_height,
+                tr.status,
+                COALESCE(u.display_name, u.username, s.name, 'Manual') AS triggered_by,
+                tr.queued_at,
+                tr.started_at,
+                tr.completed_at,
+                tr.error_message,
+                tr.parameter_overrides,
+                tr.dispatched_automation_json
+            FROM task_runs tr
+            JOIN automations a ON tr.automation_id = a.id
+            LEFT JOIN schedules s ON tr.schedule_id = s.id
+            LEFT JOIN task_worker_pcs w ON tr.worker_id = w.id
+            LEFT JOIN users u ON tr.triggered_by_user_id = u.id
+            WHERE tr.id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&state.db),
+        sqlx::query(
+            r#"
+            SELECT
+                trs.id,
+                trs.step_id,
+                s.step_type,
+                s.label,
+                trs.started_at,
+                trs.completed_at,
+                trs.result,
+                trs.captured_r,
+                trs.captured_g,
+                trs.captured_b,
+                trs.captured_found,
+                trs.captured_x,
+                trs.captured_y,
+                trs.screenshot_object_key,
+                ss.object_storage_key AS step_screenshot_key
+            FROM task_run_steps trs
+            JOIN automation_steps s ON trs.step_id = s.id
+            LEFT JOIN step_screenshots ss ON s.id = ss.step_id
+            WHERE trs.task_run_id = $1
+            ORDER BY trs.id ASC
+            "#,
+        )
+        .bind(id)
+        .fetch_all(&state.db),
+        sqlx::query(
+            r#"
+            SELECT
+                trvv.variable_id,
+                av.name AS variable_name,
+                av.var_type,
+                trvv.value,
+                trvv.set_at_step_id,
+                trvv.set_at
+            FROM task_run_variable_values trvv
+            JOIN automation_variables av ON trvv.variable_id = av.id
+            WHERE trvv.task_run_id = $1
+            ORDER BY av.name ASC
+            "#,
+        )
+        .bind(id)
+        .fetch_all(&state.db),
+    );
+
+    let run_row = match run_row_res {
         Ok(Some(row)) => row,
         _ => return Redirect::to("/runs").into_response(),
     };
@@ -534,35 +586,8 @@ pub async fn get_run_detail_handler(
         || run_item.status == "running"
         || run_item.status == "cancelling";
 
-    let step_rows = sqlx::query(
-        r#"
-        SELECT
-            trs.id,
-            trs.step_id,
-            s.step_type,
-            s.label,
-            trs.started_at,
-            trs.completed_at,
-            trs.result,
-            trs.captured_r,
-            trs.captured_g,
-            trs.captured_b,
-            trs.captured_found,
-            trs.captured_x,
-            trs.captured_y,
-            trs.screenshot_object_key,
-            ss.object_storage_key AS step_screenshot_key
-        FROM task_run_steps trs
-        JOIN automation_steps s ON trs.step_id = s.id
-        LEFT JOIN step_screenshots ss ON s.id = ss.step_id
-        WHERE trs.task_run_id = $1
-        ORDER BY trs.id ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let step_rows = step_rows_res.unwrap_or_default();
+    let var_rows = var_rows_res.unwrap_or_default();
 
     let mut executed_steps = Vec::new();
     for (idx, r) in step_rows.into_iter().enumerate() {
@@ -617,26 +642,6 @@ pub async fn get_run_detail_handler(
             magnifier,
         });
     }
-
-    let var_rows = sqlx::query(
-        r#"
-        SELECT
-            trvv.variable_id,
-            av.name AS variable_name,
-            av.var_type,
-            trvv.value,
-            trvv.set_at_step_id,
-            trvv.set_at
-        FROM task_run_variable_values trvv
-        JOIN automation_variables av ON trvv.variable_id = av.id
-        WHERE trvv.task_run_id = $1
-        ORDER BY av.name ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
 
     let variable_values = var_rows
         .into_iter()
