@@ -40,7 +40,7 @@ services:
         max-file: "3"
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: deskdispatch-postgres
     restart: unless-stopped
     environment:
@@ -62,7 +62,7 @@ services:
         max-file: "3"
 
   rustfs:
-    image: rustfs/rustfs:0.1.0
+    image: rustfs/rustfs:1.0.1
     container_name: deskdispatch-rustfs
     restart: unless-stopped
     environment:

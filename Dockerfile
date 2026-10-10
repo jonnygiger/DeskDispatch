@@ -10,16 +10,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy workspace crates, dependency files, and source code
+# Pre-build dependencies to leverage Docker layer caching
 COPY Cargo.toml Cargo.lock ./
+COPY crates/deskdispatch-protocol/Cargo.toml ./crates/deskdispatch-protocol/
+RUN mkdir -p src crates/deskdispatch-protocol/src && \
+    echo "fn main() {}" > src/main.rs && \
+    touch src/lib.rs && \
+    touch crates/deskdispatch-protocol/src/lib.rs && \
+    cargo build --release --locked
+
+# Copy workspace crates, source code, templates, static assets, and database migrations
 COPY crates ./crates
 COPY src ./src
 COPY templates ./templates
 COPY static ./static
 COPY migrations ./migrations
 
-# Build the release binary
-RUN cargo build --release --locked
+# Update timestamps on source files to force recompilation of workspace crates and build final binary
+RUN touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs && \
+    cargo build --release --locked
 
 # Stage 2: Runner
 FROM debian:bookworm-slim AS runner

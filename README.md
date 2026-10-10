@@ -86,8 +86,8 @@ C4Container
 
     System_Boundary(deskdispatch_sys, "DeskDispatch Automation Control Plane") {
         Container(web_app, "DeskDispatch Web & API Server", "Rust / Axum / Askama", "Serves Zero-JS HTML operator UI, background schedulers, sweeper tasks, and HTTP JSON Worker API endpoints.")
-        ContainerDb(database, "PostgreSQL Database", "PostgreSQL 16", "Stores user credentials, audit logs, automation definitions, steps, schedules, worker metadata, and task run states.")
-        ContainerDb(object_storage, "RustFS Object Storage", "S3-Compatible Storage", "Stores reference bitmaps, region crops, and execution screenshots.")
+        ContainerDb(database, "PostgreSQL Database", "PostgreSQL 18", "Stores user credentials, audit logs, automation definitions, steps, schedules, worker metadata, and task run states.")
+        ContainerDb(object_storage, "RustFS Object Storage", "S3-Compatible Storage (v1.0.1)", "Stores reference bitmaps, region crops, and execution screenshots.")
         Container(migration_job, "Init / Migration Job", "DeskDispatch CLI (`setup`)", "Runs database migrations, seeds default admin user, and initializes S3 storage buckets.")
     }
 
@@ -214,9 +214,9 @@ sequenceDiagram
 | --- | --- | --- |
 | **Language** | Rust (2024 edition) | Strong type safety, zero-cost abstractions, memory safety, and high performance |
 | **Web Server** | Axum & Tokio | Asynchronous HTTP routing, Tower middleware ecosystem, and non-blocking I/O |
-| **Database & ORM** | PostgreSQL & SQLx | Async connection pooling, compile-time SQL query validation macro support |
+| **Database & ORM** | PostgreSQL 18 & SQLx | Async connection pooling, compile-time SQL query validation macro support |
 | **Templating Engine** | Askama | Build-time compiled HTML templates with zero runtime parsing overhead |
-| **Object Storage** | RustFS / S3 (aws-sdk-s3) | S3-compatible storage for reference bitmaps and execution screenshots |
+| **Object Storage** | RustFS 1.0.1 / S3 (aws-sdk-s3) | S3-compatible storage for reference bitmaps and execution screenshots |
 | **Password Hashing** | Argon2id | Memory-hard key derivation function for operator passwords |
 | **API Authentication** | SHA-256 Hashes | Fast, high-entropy hashing for machine worker bearer tokens |
 | **Cron Math** | Croner | Standard 5-field cron parsing and next-run evaluation |
@@ -311,7 +311,8 @@ docker compose down -v
 
 ### Failsafe & Healthcheck Architecture
 
-The Docker setup incorporates multi-layered health checks and fail-fast guarantees:
+The Docker setup incorporates multi-layered health checks, build caching optimizations, and fail-fast guarantees:
+- **Multi-Stage Cargo Build Caching:** `Dockerfile` optimizes builder stage layer caching by pre-compiling workspace Cargo dependencies using manifest stubs before copying full application source files.
 - **Dependency Chains (`depends_on`):** Service dependencies use explicit `condition: service_healthy` and `condition: service_completed_successfully` clauses to eliminate race conditions during boot.
 - **Database Readiness (`pg_isready`):** `deskdispatch-postgres` performs health checks every 5 seconds to ensure PostgreSQL accepts connection pools before application startup.
 - **Storage Readiness (`curl`):** `deskdispatch-rustfs` validates HTTP storage layer health before migrations or application startup.
