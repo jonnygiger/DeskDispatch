@@ -7,3 +7,7 @@ Action: Test task run duration calculations, status badge classes, step result b
 ## 2025-03-11 Automation UI Types Formatting & Badge Class Coverage
 Learning: The automation UI data structures (`AutomationListItem`, `AutomationDetail`, `StepViewItem`, `StepOption`, and selection helper options) contain multiple conditional formatting paths (such as post-delay conversion from ms to seconds, status badge mappings for active/archived/draft/lost/cancelling, datetime formatting for missing vs present last runs, and label trimming) that are synchronous and best tested at the unit level.
 Action: Write pure unit tests for domain DTO formatting and selection methods directly in `src/routes/automations/types.rs` without requiring database fixtures or network setup.
+
+## 2025-03-12 Domain Enums Display, FromStr Parsing and Serde Edge Cases Coverage
+Learning: Domain status enums (`WorkerStatus`, `TaskRunStatus`, `StepResultStatus`) use `sqlx(rename_all = ...)` for DB mapping and custom `FromStr`/`Display` implementations for case-insensitive, whitespace-trimmed string parsing and lowercase display output, while Serde default derivations preserve PascalCase variant names.
+Action: In unit tests for domain status enums, test `Display`, case-insensitive and whitespace-tolerant `FromStr` parsing, and Serde JSON serialization/deserialization separately to ensure string parsing edge cases do not break.
