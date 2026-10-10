@@ -318,18 +318,23 @@ pub async fn get_recording_status_handler(
     user: AuthUser,
     axum::extract::Query(query): axum::extract::Query<RecordingStatusQuery>,
 ) -> impl IntoResponse {
-    let session = match fetch_recording_session_detail(&state.db, id).await {
+    // Bolt Optimization: Run recording session detail query and event count query concurrently
+    // using `tokio::join!`, halving database wait latency for recording status frame updates.
+    let (session_res, event_count_res) = tokio::join!(
+        fetch_recording_session_detail(&state.db, id),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM recording_events WHERE recording_session_id = $1"
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+    );
+
+    let session = match session_res {
         Ok(Some(s)) => s,
         _ => return Redirect::to("/workers").into_response(),
     };
 
-    let event_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM recording_events WHERE recording_session_id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(0);
-
+    let event_count = event_count_res.unwrap_or(0);
     let paused = query.paused.unwrap_or(false);
 
     HtmlTemplate(RecordingStatusTemplate {
@@ -384,25 +389,30 @@ pub async fn get_recording_review_handler(
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    let session = match fetch_recording_session_detail(&state.db, id).await {
+    // Bolt Optimization: Run recording session detail query and event list query concurrently
+    // using `tokio::join!`, halving database wait latency for recording review page loads.
+    let (session_res, event_rows_res) = tokio::join!(
+        fetch_recording_session_detail(&state.db, id),
+        sqlx::query(
+            r#"
+            SELECT
+                id, recording_session_id, sequence_number, event_type,
+                x, y, button, key_combo, screenshot_object_key, captured_at
+            FROM recording_events
+            WHERE recording_session_id = $1
+            ORDER BY sequence_number ASC, id ASC
+            "#,
+        )
+        .bind(id)
+        .fetch_all(&state.db)
+    );
+
+    let session = match session_res {
         Ok(Some(s)) => s,
         _ => return Redirect::to("/workers").into_response(),
     };
 
-    let event_rows = match sqlx::query(
-        r#"
-        SELECT
-            id, recording_session_id, sequence_number, event_type,
-            x, y, button, key_combo, screenshot_object_key, captured_at
-        FROM recording_events
-        WHERE recording_session_id = $1
-        ORDER BY sequence_number ASC, id ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    {
+    let event_rows = match event_rows_res {
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!("Error fetching recording_events: {}", e);
