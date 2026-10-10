@@ -109,7 +109,7 @@ DeskDispatch accomplishes rich interactive functionality entirely without client
 ## Prerequisites & Environment Configuration
 
 ### Prerequisites
-- **Rust Toolchain:** 1.85+ (2024 edition support)
+- **Rust Toolchain:** 1.99+ (2024 edition support)
 - **Docker & Docker Compose:** For running PostgreSQL and RustFS object storage locally
 
 ### Environment Variables (`.env`)

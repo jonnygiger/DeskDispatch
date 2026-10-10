@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for DeskDispatch Rust task server
 
 # Stage 1: Builder
-FROM rust:1.85-slim-bookworm AS builder
+FROM rust:1.99-slim-bookworm AS builder
 
 WORKDIR /usr/src/app
 
