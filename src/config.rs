@@ -207,7 +207,6 @@ mod tests {
         assert!(!config.is_production());
     }
 
-
     #[test]
     fn test_production_secure_config_succeeds() {
         let config = create_valid_prod_config();

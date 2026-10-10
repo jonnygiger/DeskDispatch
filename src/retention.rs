@@ -137,7 +137,10 @@ pub async fn prune_old_screenshots(
             }
             Ok(_) => {}
             Err(e) => {
-                error!("Failed to delete screenshot DB row step_id {}: {}", item.step_id, e);
+                error!(
+                    "Failed to delete screenshot DB row step_id {}: {}",
+                    item.step_id, e
+                );
             }
         }
     }

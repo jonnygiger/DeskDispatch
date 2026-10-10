@@ -655,8 +655,10 @@ pub async fn get_run_detail_handler(
         })
         .collect();
 
-    let parameter_overrides_json: Option<serde_json::Value> = run_row.try_get("parameter_overrides").ok().flatten();
-    let dispatched_json: Option<serde_json::Value> = run_row.try_get("dispatched_automation_json").ok().flatten();
+    let parameter_overrides_json: Option<serde_json::Value> =
+        run_row.try_get("parameter_overrides").ok().flatten();
+    let dispatched_json: Option<serde_json::Value> =
+        run_row.try_get("dispatched_automation_json").ok().flatten();
 
     let mut parameters = Vec::new();
     let overrides_map = parameter_overrides_json

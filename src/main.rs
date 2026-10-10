@@ -41,13 +41,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Some("setup") => {
-            info!("Running full setup (migrations, admin user, S3 bucket) with failsafes and retries...");
+            info!(
+                "Running full setup (migrations, admin user, S3 bucket) with failsafes and retries..."
+            );
             let mut retries = 10;
             let pool = loop {
                 match connect_db(&config).await {
                     Ok(p) => break p,
                     Err(e) if retries > 0 => {
-                        error!("Database connection attempt failed during setup ({} retries left): {}. Sleeping 2s...", retries, e);
+                        error!(
+                            "Database connection attempt failed during setup ({} retries left): {}. Sleeping 2s...",
+                            retries, e
+                        );
                         retries -= 1;
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     }
@@ -61,7 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match run_migrations(&pool).await {
                     Ok(()) => break,
                     Err(e) if mig_retries > 0 => {
-                        error!("Database migration attempt failed ({} retries left): {}. Sleeping 3s...", mig_retries, e);
+                        error!(
+                            "Database migration attempt failed ({} retries left): {}. Sleeping 3s...",
+                            mig_retries, e
+                        );
                         mig_retries -= 1;
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                     }
@@ -80,7 +88,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match ensure_s3_bucket(&s3_client, &config.s3_bucket).await {
                     Ok(()) => break,
                     Err(e) if s3_retries > 0 => {
-                        error!("S3 bucket init attempt failed ({} retries left): {}. Sleeping 2s...", s3_retries, e);
+                        error!(
+                            "S3 bucket init attempt failed ({} retries left): {}. Sleeping 2s...",
+                            s3_retries, e
+                        );
                         s3_retries -= 1;
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     }
@@ -380,7 +391,10 @@ async fn verify_database_schema(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::
         .await?;
 
         if !exists {
-            let err_msg = format!("Startup schema failsafe error: Required table '{}' is missing from the database.", table);
+            let err_msg = format!(
+                "Startup schema failsafe error: Required table '{}' is missing from the database.",
+                table
+            );
             error!("{}", err_msg);
             return Err(err_msg.into());
         }
@@ -405,7 +419,10 @@ async fn verify_database_schema(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::
         .await?;
 
         if !exists {
-            let err_msg = format!("Startup schema failsafe error: Required column '{}.{}' is missing from the database.", table, column);
+            let err_msg = format!(
+                "Startup schema failsafe error: Required column '{}.{}' is missing from the database.",
+                table, column
+            );
             error!("{}", err_msg);
             return Err(err_msg.into());
         }
