@@ -41,12 +41,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Some("setup") => {
-            info!("Running full setup (migrations, admin user, S3 bucket)...");
-            let pool = connect_db(&config).await?;
-            run_migrations(&pool).await?;
+            info!("Running full setup (migrations, admin user, S3 bucket) with failsafes and retries...");
+            let mut retries = 10;
+            let pool = loop {
+                match connect_db(&config).await {
+                    Ok(p) => break p,
+                    Err(e) if retries > 0 => {
+                        error!("Database connection attempt failed during setup ({} retries left): {}. Sleeping 2s...", retries, e);
+                        retries -= 1;
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                    Err(e) => return Err(e),
+                }
+            };
+
+            // Run migrations with retry failsafe
+            let mut mig_retries = 5;
+            loop {
+                match run_migrations(&pool).await {
+                    Ok(()) => break,
+                    Err(e) if mig_retries > 0 => {
+                        error!("Database migration attempt failed ({} retries left): {}. Sleeping 3s...", mig_retries, e);
+                        mig_retries -= 1;
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+
+            // Pause briefly to ensure PostgreSQL transaction state and schema changes finalize
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
             create_admin_user(&pool).await?;
+
             let s3_client = build_s3_client(&config);
-            ensure_s3_bucket(&s3_client, &config.s3_bucket).await?;
+            let mut s3_retries = 5;
+            loop {
+                match ensure_s3_bucket(&s3_client, &config.s3_bucket).await {
+                    Ok(()) => break,
+                    Err(e) if s3_retries > 0 => {
+                        error!("S3 bucket init attempt failed ({} retries left): {}. Sleeping 2s...", s3_retries, e);
+                        s3_retries -= 1;
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             info!("Full setup completed successfully.");
             return Ok(());
         }
@@ -75,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = connect_db(&config).await?;
     run_migrations(&pool).await?;
+    verify_database_schema(&pool).await?;
     let s3_client = build_s3_client(&config);
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
@@ -299,6 +342,77 @@ async fn run_migrations(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::E
             error!("Failed to run database migrations: {}", e);
             e
         })?;
+
+    verify_database_schema(pool).await?;
+    Ok(())
+}
+
+async fn verify_database_schema(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Verifying required database constructs and schema failsafes...");
+
+    let required_tables = [
+        "users",
+        "sessions",
+        "audit_log",
+        "automations",
+        "automation_steps",
+        "automation_variables",
+        "automation_parameters",
+        "bitmaps",
+        "step_screenshots",
+        "screenshots",
+        "task_worker_pcs",
+        "worker_groups",
+        "worker_group_members",
+        "schedules",
+        "task_runs",
+        "task_run_steps",
+        "task_run_variable_values",
+        "recording_sessions",
+        "recording_events",
+    ];
+
+    for table in required_tables {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)",
+        )
+        .bind(table)
+        .fetch_one(pool)
+        .await?;
+
+        if !exists {
+            let err_msg = format!("Startup schema failsafe error: Required table '{}' is missing from the database.", table);
+            error!("{}", err_msg);
+            return Err(err_msg.into());
+        }
+    }
+
+    let required_columns = [
+        ("sessions", "last_active_at"),
+        ("task_runs", "parameter_overrides"),
+        ("task_runs", "cancel_requested_at"),
+        ("task_runs", "target_worker_group_id"),
+        ("task_runs", "dispatched_automation_json"),
+        ("users", "must_change_password"),
+    ];
+
+    for (table, column) in required_columns {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2)",
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if !exists {
+            let err_msg = format!("Startup schema failsafe error: Required column '{}.{}' is missing from the database.", table, column);
+            error!("{}", err_msg);
+            return Err(err_msg.into());
+        }
+    }
+
+    info!("Database schema verification passed successfully.");
     Ok(())
 }
 

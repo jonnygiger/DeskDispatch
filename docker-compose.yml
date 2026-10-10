@@ -104,7 +104,7 @@ services:
       ADMIN_PASSWORD: test
       ADMIN_DISPLAY_NAME: Admin
       APP_ENV: production
-    entrypoint: ["/app/deskdispatch", "setup"]
+    entrypoint: ["/bin/sh", "-c", "sleep 2 && /app/deskdispatch setup && sleep 1"]
     logging:
       driver: "json-file"
       options:
