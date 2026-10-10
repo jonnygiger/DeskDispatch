@@ -443,7 +443,7 @@ pub async fn get_next_assignment_handler(
             let task_run_id: i64 = row.get("task_run_id");
             let automation_id: i64 = row.get("automation_id");
 
-            let automation_json = fetch_full_automation_json(&mut *tx, automation_id).await?;
+            let automation_json = fetch_full_automation_json(&mut tx, automation_id).await?;
 
             sqlx::query(
                 r#"
@@ -594,7 +594,7 @@ pub async fn post_step_result_handler(
         payload
             .captured_rgb
             .as_ref()
-            .and_then(|v| v.get(0).copied())
+            .and_then(|v| v.first().copied())
     });
     let captured_g = payload.captured_g.or_else(|| {
         payload
@@ -609,9 +609,12 @@ pub async fn post_step_result_handler(
             .and_then(|v| v.get(2).copied())
     });
 
-    let captured_x = payload
-        .captured_x
-        .or_else(|| payload.captured_xy.as_ref().and_then(|v| v.get(0).copied()));
+    let captured_x = payload.captured_x.or_else(|| {
+        payload
+            .captured_xy
+            .as_ref()
+            .and_then(|v| v.first().copied())
+    });
     let captured_y = payload
         .captured_y
         .or_else(|| payload.captured_xy.as_ref().and_then(|v| v.get(1).copied()));
@@ -683,18 +686,19 @@ pub async fn post_step_result_handler(
         .execute(&mut *tx)
         .await?;
 
-    if let Some(updates) = payload.variable_updates {
-        if !updates.is_empty() {
-            let var_ids: Vec<i64> = updates.iter().map(|u| u.variable_id).collect();
-            let var_vals: Vec<String> = updates
-                .iter()
-                .map(|u| match &u.value {
-                    serde_json::Value::String(s) => s.clone(),
-                    v => v.to_string(),
-                })
-                .collect();
+    if let Some(updates) = payload.variable_updates
+        && !updates.is_empty()
+    {
+        let var_ids: Vec<i64> = updates.iter().map(|u| u.variable_id).collect();
+        let var_vals: Vec<String> = updates
+            .iter()
+            .map(|u| match &u.value {
+                serde_json::Value::String(s) => s.clone(),
+                v => v.to_string(),
+            })
+            .collect();
 
-            sqlx::query(
+        sqlx::query(
                 r#"
                 INSERT INTO task_run_variable_values (task_run_id, variable_id, value, set_at_step_id, set_at)
                 SELECT $1, u.variable_id, u.value, $2, now()
@@ -711,7 +715,6 @@ pub async fn post_step_result_handler(
             .bind(&var_vals)
             .execute(&mut *tx)
             .await?;
-        }
     }
 
     tx.commit().await?;
@@ -1141,7 +1144,7 @@ pub async fn get_task_run_handler(
 
             let automation_json = match dispatched_json {
                 Some(json) => json,
-                None => fetch_full_automation_json(&mut *conn, automation_id).await?,
+                None => fetch_full_automation_json(&mut conn, automation_id).await?,
             };
 
             Ok(Json(TaskRunResponse {

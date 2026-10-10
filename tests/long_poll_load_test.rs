@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use axum::{extract::State, response::IntoResponse};
 use deskdispatch::{
     AppState, auth::WorkerAuth, config::Config, routes::api_workers::get_next_assignment_handler,

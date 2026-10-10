@@ -670,7 +670,7 @@ pub async fn get_run_detail_handler(
                 serde_json::Value::Number(n) => n.to_string(),
                 _ => v.to_string(),
             };
-            let is_override = overrides_map.map_or(false, |m| m.contains_key(k));
+            let is_override = overrides_map.is_some_and(|m| m.contains_key(k));
             parameters.push(RunParameterItem {
                 name: k.clone(),
                 value: val_str,

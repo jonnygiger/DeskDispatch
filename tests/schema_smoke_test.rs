@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 // Compile-time and schema validation smoke test
 use sqlx::PgPool;
 
@@ -9,6 +10,7 @@ async fn get_test_pool() -> Option<PgPool> {
 }
 
 #[test]
+#[allow(clippy::const_is_empty)]
 fn test_schema_queries_syntax() {
     let select_users =
         "SELECT id, username, password_hash, display_name, role, is_active FROM users";

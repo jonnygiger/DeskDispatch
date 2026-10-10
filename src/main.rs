@@ -190,22 +190,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Optional separate Prometheus metrics listener
-    if let Some(metrics_addr_str) = &config.metrics_bind_address {
-        if let Ok(metrics_addr) = metrics_addr_str.parse::<SocketAddr>() {
-            let metrics_app =
-                axum::Router::new().route("/metrics", axum::routing::get(metrics_handler));
-            let metrics_cancel = cancel_token.clone();
-            tasks.spawn(async move {
-                if let Ok(metrics_listener) = tokio::net::TcpListener::bind(metrics_addr).await {
-                    info!("Metrics server listening on {}", metrics_addr);
-                    let _ = axum::serve(metrics_listener, metrics_app)
-                        .with_graceful_shutdown(async move {
-                            metrics_cancel.cancelled().await;
-                        })
-                        .await;
-                }
-            });
-        }
+    if let Some(metrics_addr_str) = &config.metrics_bind_address
+        && let Ok(metrics_addr) = metrics_addr_str.parse::<SocketAddr>()
+    {
+        let metrics_app =
+            axum::Router::new().route("/metrics", axum::routing::get(metrics_handler));
+        let metrics_cancel = cancel_token.clone();
+        tasks.spawn(async move {
+            if let Ok(metrics_listener) = tokio::net::TcpListener::bind(metrics_addr).await {
+                info!("Metrics server listening on {}", metrics_addr);
+                let _ = axum::serve(metrics_listener, metrics_app)
+                    .with_graceful_shutdown(async move {
+                        metrics_cancel.cancelled().await;
+                    })
+                    .await;
+            }
+        });
     }
 
     let app = build_router(state);

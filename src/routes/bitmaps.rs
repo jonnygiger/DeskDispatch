@@ -574,10 +574,8 @@ pub fn validate_bitmap_key(key: &str, user_id: i64) -> bool {
     if !key.starts_with("bitmaps/") || !key.ends_with(".png") || key.contains("..") {
         return false;
     }
-    if key.starts_with("bitmaps/user_") {
-        if !key.starts_with(&format!("bitmaps/user_{}_", user_id)) {
-            return false;
-        }
+    if key.starts_with("bitmaps/user_") && !key.starts_with(&format!("bitmaps/user_{}_", user_id)) {
+        return false;
     }
     true
 }
@@ -1230,72 +1228,65 @@ async fn crop_image_region(
 
     // Attempt 1: If image_url starts with /static/, try loading from StaticAssets
     let mut image_bytes: Option<Vec<u8>> = None;
-    if let Some(static_path) = image_url.strip_prefix("/static/") {
-        if let Some(asset) = crate::routes::static_assets::Assets::get(static_path) {
-            image_bytes = Some(asset.data.to_vec());
-        }
+    if let Some(static_path) = image_url.strip_prefix("/static/")
+        && let Some(asset) = crate::routes::static_assets::Assets::get(static_path)
+    {
+        image_bytes = Some(asset.data.to_vec());
     }
 
     // Attempt 2: If image_url matches /media/screenshots/{id} or /media/bitmaps/{id}
     if image_bytes.is_none() {
-        if let Some(id_str) = image_url.strip_prefix("/media/screenshots/") {
-            if let Ok(id) = id_str.parse::<i64>() {
-                if let Ok(Some(row)) = sqlx::query(
-                    "SELECT object_storage_key FROM step_screenshots WHERE step_id = $1",
-                )
-                .bind(id)
-                .fetch_optional(&state.db)
+        if let Some(id_str) = image_url.strip_prefix("/media/screenshots/")
+            && let Ok(id) = id_str.parse::<i64>()
+            && let Ok(Some(row)) =
+                sqlx::query("SELECT object_storage_key FROM step_screenshots WHERE step_id = $1")
+                    .bind(id)
+                    .fetch_optional(&state.db)
+                    .await
+        {
+            let key: String = row.get("object_storage_key");
+            if let Ok(res) = state
+                .s3_client
+                .get_object()
+                .bucket(&state.config.s3_bucket)
+                .key(&key)
+                .send()
                 .await
-                {
-                    let key: String = row.get("object_storage_key");
-                    if let Ok(res) = state
-                        .s3_client
-                        .get_object()
-                        .bucket(&state.config.s3_bucket)
-                        .key(&key)
-                        .send()
-                        .await
-                    {
-                        if let Ok(data) = res.body.collect().await {
-                            image_bytes = Some(data.into_bytes().to_vec());
-                        }
-                    }
-                }
+                && let Ok(data) = res.body.collect().await
+            {
+                image_bytes = Some(data.into_bytes().to_vec());
             }
-        } else if let Some(id_str) = image_url.strip_prefix("/media/bitmaps/") {
-            if let Ok(id) = id_str.parse::<i64>() {
-                if let Ok(Some(row)) =
-                    sqlx::query("SELECT object_storage_key FROM bitmaps WHERE id = $1")
-                        .bind(id)
-                        .fetch_optional(&state.db)
-                        .await
-                {
-                    let key: String = row.get("object_storage_key");
-                    if let Ok(res) = state
-                        .s3_client
-                        .get_object()
-                        .bucket(&state.config.s3_bucket)
-                        .key(&key)
-                        .send()
-                        .await
-                    {
-                        if let Ok(data) = res.body.collect().await {
-                            image_bytes = Some(data.into_bytes().to_vec());
-                        }
-                    }
-                }
+        } else if let Some(id_str) = image_url.strip_prefix("/media/bitmaps/")
+            && let Ok(id) = id_str.parse::<i64>()
+            && let Ok(Some(row)) =
+                sqlx::query("SELECT object_storage_key FROM bitmaps WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&state.db)
+                    .await
+        {
+            let key: String = row.get("object_storage_key");
+            if let Ok(res) = state
+                .s3_client
+                .get_object()
+                .bucket(&state.config.s3_bucket)
+                .key(&key)
+                .send()
+                .await
+                && let Ok(data) = res.body.collect().await
+            {
+                image_bytes = Some(data.into_bytes().to_vec());
             }
         }
     }
 
     // Try decoding and cropping loaded image_bytes
-    if let Some(bytes) = image_bytes {
-        if let Ok(img) = image::load_from_memory(&bytes) {
-            let cropped = img.crop_imm(tl_x, tl_y, crop_w, crop_h);
-            let mut buf = std::io::Cursor::new(Vec::new());
-            if cropped.write_to(&mut buf, image::ImageFormat::Png).is_ok() {
-                return buf.into_inner();
-            }
+    if let Some(bytes) = image_bytes
+        && let Ok(img) = image::load_from_memory(&bytes)
+    {
+        let cropped = img.crop_imm(tl_x, tl_y, crop_w, crop_h);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        if cropped.write_to(&mut buf, image::ImageFormat::Png).is_ok() {
+            return buf.into_inner();
         }
     }
 
@@ -1444,7 +1435,7 @@ pub async fn confirm_region_crop_logic(
                 aid, bitmap_id
             )
         } else {
-            format!("/bitmaps")
+            "/bitmaps".to_string()
         };
         return Redirect::to(&redirect_url).into_response();
     }

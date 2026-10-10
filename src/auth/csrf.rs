@@ -78,12 +78,11 @@ where
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
 
-        if provided_csrf.is_none() {
-            if let Ok(params) =
+        if provided_csrf.is_none()
+            && let Ok(params) =
                 serde_urlencoded::from_bytes::<std::collections::HashMap<String, String>>(&bytes)
-            {
-                provided_csrf = params.get("csrf_token").cloned();
-            }
+        {
+            provided_csrf = params.get("csrf_token").cloned();
         }
 
         let csrf = match provided_csrf {
@@ -132,14 +131,13 @@ pub async fn csrf_origin_middleware(
         .headers()
         .get("Sec-Fetch-Site")
         .and_then(|h| h.to_str().ok())
+        && sec_fetch_site == "cross-site"
     {
-        if sec_fetch_site == "cross-site" {
-            tracing::warn!(
-                path = path,
-                "Rejected cross-site request via Sec-Fetch-Site"
-            );
-            return Err(StatusCode::FORBIDDEN);
-        }
+        tracing::warn!(
+            path = path,
+            "Rejected cross-site request via Sec-Fetch-Site"
+        );
+        return Err(StatusCode::FORBIDDEN);
     }
 
     if let Some(origin_header) = req

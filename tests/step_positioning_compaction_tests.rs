@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use deskdispatch::routes::automations::{
     check_and_compact_positions, compact_positions, reorder_step,
 };

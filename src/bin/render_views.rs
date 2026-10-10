@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use askama::Template;
 use chrono::Utc;
 use deskdispatch::auth::UserRole;

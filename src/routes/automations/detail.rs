@@ -429,7 +429,7 @@ pub async fn post_run_now_automation_handler(
     };
     if let Ok(automation_json) =
         crate::routes::api_workers::fetch_full_automation_json_with_overrides(
-            &mut *tx,
+            &mut tx,
             id,
             overrides_ref,
         )

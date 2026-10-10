@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use deskdispatch::retention::*;
 use sqlx::postgres::PgPoolOptions;
 use std::env;

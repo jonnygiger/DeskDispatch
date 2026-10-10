@@ -1,5 +1,4 @@
 /// Server-side mapping logic for coordinate picking and refinement on screenshots.
-
 /// Maps coarse image-input click coordinates (`click_x`, `click_y`) on a rendered display container
 /// of size (`display_w`, `display_h`) to exact native image pixel coordinates (`native_x`, `native_y`).
 ///

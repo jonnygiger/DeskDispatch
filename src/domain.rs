@@ -113,6 +113,7 @@ impl std::str::FromStr for StepResultStatus {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::str::FromStr;
@@ -133,12 +134,14 @@ mod tests {
 
             // Act & Assert FromStr with case and whitespace variations
             let uppercase_with_spaces = format!("  {}  ", expected_str.to_uppercase());
-            let parsed = WorkerStatus::from_str(&uppercase_with_spaces).expect("parsing valid status");
+            let parsed =
+                WorkerStatus::from_str(&uppercase_with_spaces).expect("parsing valid status");
             assert_eq!(parsed, status);
 
             // Act & Assert Serde JSON roundtrip
             let json = serde_json::to_string(&status).expect("serialization to JSON");
-            let deserialized: WorkerStatus = serde_json::from_str(&json).expect("deserialization from JSON");
+            let deserialized: WorkerStatus =
+                serde_json::from_str(&json).expect("deserialization from JSON");
             assert_eq!(deserialized, status);
         }
 
@@ -166,12 +169,14 @@ mod tests {
 
             // Act & Assert FromStr with case and whitespace variations
             let mixed_case_with_spaces = format!("\t {} \n", expected_str.to_uppercase());
-            let parsed = TaskRunStatus::from_str(&mixed_case_with_spaces).expect("parsing valid status");
+            let parsed =
+                TaskRunStatus::from_str(&mixed_case_with_spaces).expect("parsing valid status");
             assert_eq!(parsed, status);
 
             // Act & Assert Serde JSON roundtrip
             let json = serde_json::to_string(&status).expect("serialization to JSON");
-            let deserialized: TaskRunStatus = serde_json::from_str(&json).expect("deserialization from JSON");
+            let deserialized: TaskRunStatus =
+                serde_json::from_str(&json).expect("deserialization from JSON");
             assert_eq!(deserialized, status);
         }
 
@@ -196,12 +201,14 @@ mod tests {
 
             // Act & Assert FromStr with case and whitespace variations
             let mixed_case_with_spaces = format!("  {}  ", expected_str.to_uppercase());
-            let parsed = StepResultStatus::from_str(&mixed_case_with_spaces).expect("parsing valid status");
+            let parsed =
+                StepResultStatus::from_str(&mixed_case_with_spaces).expect("parsing valid status");
             assert_eq!(parsed, status);
 
             // Act & Assert Serde JSON roundtrip
             let json = serde_json::to_string(&status).expect("serialization to JSON");
-            let deserialized: StepResultStatus = serde_json::from_str(&json).expect("deserialization from JSON");
+            let deserialized: StepResultStatus =
+                serde_json::from_str(&json).expect("deserialization from JSON");
             assert_eq!(deserialized, status);
         }
 

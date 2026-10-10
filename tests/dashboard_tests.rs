@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use argon2::{Argon2, PasswordHasher};
 use axum::{
     body::Body,

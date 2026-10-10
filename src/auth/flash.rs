@@ -1,9 +1,10 @@
 use axum::http::HeaderMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum FlashLevel {
     Success,
     Error,
+    #[default]
     Info,
 }
 
@@ -14,12 +15,6 @@ impl FlashLevel {
             FlashLevel::Error => "error",
             FlashLevel::Info => "info",
         }
-    }
-}
-
-impl Default for FlashLevel {
-    fn default() -> Self {
-        FlashLevel::Info
     }
 }
 
@@ -98,6 +93,7 @@ pub fn clear_flash_cookie() -> (String, String) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
