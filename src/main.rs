@@ -360,7 +360,6 @@ async fn verify_database_schema(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::
         "automation_parameters",
         "bitmaps",
         "step_screenshots",
-        "screenshots",
         "task_worker_pcs",
         "worker_groups",
         "worker_group_members",
