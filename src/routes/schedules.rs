@@ -11,15 +11,18 @@ use sqlx::{FromRow, Row};
 use std::str::FromStr;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
-use axum::routing::{get, post};
+use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/schedules", get(get_schedules_handler).post(post_create_schedule_handler))
+        .route(
+            "/schedules",
+            get(get_schedules_handler).post(post_create_schedule_handler),
+        )
         .route("/schedules/new", get(get_new_schedule_handler))
         .route("/schedules/{id}/edit", get(get_edit_schedule_handler))
         .route("/schedules/{id}", post(post_edit_schedule_handler))
@@ -50,11 +53,13 @@ impl ScheduleItem {
     pub fn formatted_next_run(&self) -> String {
         match self.next_run_at {
             Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => if self.is_enabled {
-                "Pending".to_string()
-            } else {
-                "Disabled".to_string()
-            },
+            None => {
+                if self.is_enabled {
+                    "Pending".to_string()
+                } else {
+                    "Disabled".to_string()
+                }
+            }
         }
     }
 
@@ -160,8 +165,7 @@ pub fn compute_next_run_at(
         .parse()
         .map_err(|_| format!("Invalid timezone: '{}'", tz_name))?;
 
-    let cron = Cron::from_str(cron_expr)
-        .map_err(|e| format!("Invalid cron expression: {}", e))?;
+    let cron = Cron::from_str(cron_expr).map_err(|e| format!("Invalid cron expression: {}", e))?;
 
     let local_from = from_dt.with_timezone(&tz);
 
@@ -232,7 +236,10 @@ pub async fn get_schedules_handler(
 /// concurrently using `tokio::join!`. This reduces HTTP response latency by avoiding sequential database round-trips.
 async fn fetch_schedule_options(
     db: &sqlx::PgPool,
-) -> (Vec<ScheduleAutomationOption>, Vec<ScheduleWorkerGroupOption>) {
+) -> (
+    Vec<ScheduleAutomationOption>,
+    Vec<ScheduleWorkerGroupOption>,
+) {
     let (automations_res, worker_groups_res) = tokio::join!(
         sqlx::query_as::<_, ScheduleAutomationOption>(
             "SELECT id, name FROM automations WHERE status != 'archived' ORDER BY name ASC",
@@ -622,14 +629,13 @@ pub async fn post_toggle_schedule_handler(
         None
     };
 
-    let update_res = sqlx::query(
-        "UPDATE schedules SET is_enabled = $1, next_run_at = $2 WHERE id = $3",
-    )
-    .bind(new_enabled)
-    .bind(next_run_at)
-    .bind(id)
-    .execute(&state.db)
-    .await;
+    let update_res =
+        sqlx::query("UPDATE schedules SET is_enabled = $1, next_run_at = $2 WHERE id = $3")
+            .bind(new_enabled)
+            .bind(next_run_at)
+            .bind(id)
+            .execute(&state.db)
+            .await;
 
     if let Err(e) = update_res {
         tracing::error!("Failed to toggle schedule: {}", e);
@@ -677,7 +683,11 @@ pub async fn post_delete_schedule_handler(
         }
         Err(e) => {
             tracing::error!("Failed to delete schedule: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete schedule").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to delete schedule",
+            )
+                .into_response()
         }
     }
 }
@@ -829,7 +839,10 @@ mod tests {
     fn test_compute_next_run_at_valid_cron() {
         let now = Utc::now();
         let result = compute_next_run_at("0 9 * * MON-FRI", "UTC", &now);
-        assert!(result.is_ok(), "Expected valid cron expression to parse successfully");
+        assert!(
+            result.is_ok(),
+            "Expected valid cron expression to parse successfully"
+        );
         let next_dt = result.unwrap();
         assert!(next_dt > now, "Next run time must be in the future");
     }
@@ -854,7 +867,10 @@ mod tests {
         let base_july = Utc.with_ymd_and_hms(2025, 7, 15, 8, 0, 0).unwrap();
         // 9:00 AM EDT on July 15, 2025 is 13:00:00 UTC
         let res_july_ny = compute_next_run_at("0 9 * * *", "America/New_York", &base_july).unwrap();
-        assert_eq!(res_july_ny, Utc.with_ymd_and_hms(2025, 7, 15, 13, 0, 0).unwrap());
+        assert_eq!(
+            res_july_ny,
+            Utc.with_ymd_and_hms(2025, 7, 15, 13, 0, 0).unwrap()
+        );
     }
 
     #[test]

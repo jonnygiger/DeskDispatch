@@ -79,9 +79,15 @@ pub async fn revoke_user_sessions_except(
 
 pub fn create_session_cookie(session_id: Uuid, secure: bool) -> String {
     if secure {
-        format!("__Host-session_id={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=604800", session_id)
+        format!(
+            "__Host-session_id={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=604800",
+            session_id
+        )
     } else {
-        format!("session_id={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800", session_id)
+        format!(
+            "session_id={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
+            session_id
+        )
     }
 }
 

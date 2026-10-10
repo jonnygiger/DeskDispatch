@@ -91,13 +91,12 @@ pub async fn validate_automation_for_activation(
     }
 
     // Fetch variables and parameters
-    let var_rows = sqlx::query(
-        "SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1",
-    )
-    .bind(automation_id)
-    .fetch_all(db)
-    .await
-    .unwrap_or_default();
+    let var_rows =
+        sqlx::query("SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1")
+            .bind(automation_id)
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
 
     struct VarMeta {
         name: String,
@@ -115,13 +114,12 @@ pub async fn validate_automation_for_activation(
         );
     }
 
-    let param_rows = sqlx::query(
-        "SELECT name, param_type FROM automation_parameters WHERE automation_id = $1",
-    )
-    .bind(automation_id)
-    .fetch_all(db)
-    .await
-    .unwrap_or_default();
+    let param_rows =
+        sqlx::query("SELECT name, param_type FROM automation_parameters WHERE automation_id = $1")
+            .bind(automation_id)
+            .fetch_all(db)
+            .await
+            .unwrap_or_default();
 
     let mut available_params: HashSet<String> = HashSet::new();
     for pr in param_rows {
@@ -310,7 +308,10 @@ pub async fn validate_automation_for_activation(
                             errors.push(AutomationLintError {
                                 step_id: Some(sid),
                                 step_number: Some(step_num),
-                                message: format!("Referenced X coordinate variable ID {} does not exist.", x_vid),
+                                message: format!(
+                                    "Referenced X coordinate variable ID {} does not exist.",
+                                    x_vid
+                                ),
                             });
                         }
                     }
@@ -328,7 +329,10 @@ pub async fn validate_automation_for_activation(
                             errors.push(AutomationLintError {
                                 step_id: Some(sid),
                                 step_number: Some(step_num),
-                                message: format!("Referenced Y coordinate variable ID {} does not exist.", y_vid),
+                                message: format!(
+                                    "Referenced Y coordinate variable ID {} does not exist.",
+                                    y_vid
+                                ),
                             });
                         }
                     }
@@ -340,13 +344,17 @@ pub async fn validate_automation_for_activation(
                         errors.push(AutomationLintError {
                             step_id: Some(sid),
                             step_number: Some(step_num),
-                            message: format!("Pixel coordinates ({}, {}) are outside valid bounds (0..10000).", fp.x, fp.y),
+                            message: format!(
+                                "Pixel coordinates ({}, {}) are outside valid bounds (0..10000).",
+                                fp.x, fp.y
+                            ),
                         });
                     }
 
                     if let Some(out_vid) = fp.output_var_id {
                         if let Some(v) = vars_map.get(&out_vid) {
-                            if !matches!(v.var_type.as_str(), "color" | "point" | "string" | "int") {
+                            if !matches!(v.var_type.as_str(), "color" | "point" | "string" | "int")
+                            {
                                 errors.push(AutomationLintError {
                                     step_id: Some(sid),
                                     step_number: Some(step_num),
@@ -369,7 +377,10 @@ pub async fn validate_automation_for_activation(
                         errors.push(AutomationLintError {
                             step_id: Some(sid),
                             step_number: Some(step_num),
-                            message: format!("References bitmap ID {} which does not exist or has been deleted.", fb.reference_bitmap_id),
+                            message: format!(
+                                "References bitmap ID {} which does not exist or has been deleted.",
+                                fb.reference_bitmap_id
+                            ),
                         });
                     }
 
@@ -378,7 +389,10 @@ pub async fn validate_automation_for_activation(
                             errors.push(AutomationLintError {
                                 step_id: Some(sid),
                                 step_number: Some(step_num),
-                                message: format!("Search X coordinate {} is outside valid bounds.", x),
+                                message: format!(
+                                    "Search X coordinate {} is outside valid bounds.",
+                                    x
+                                ),
                             });
                         }
                     }
@@ -387,7 +401,10 @@ pub async fn validate_automation_for_activation(
                             errors.push(AutomationLintError {
                                 step_id: Some(sid),
                                 step_number: Some(step_num),
-                                message: format!("Search Y coordinate {} is outside valid bounds.", y),
+                                message: format!(
+                                    "Search Y coordinate {} is outside valid bounds.",
+                                    y
+                                ),
                             });
                         }
                     }
@@ -445,7 +462,8 @@ pub async fn validate_automation_for_activation(
                             errors.push(AutomationLintError {
                                 step_id: Some(sid),
                                 step_number: Some(step_num),
-                                message: "Branch step is missing 'On Match' target step.".to_string(),
+                                message: "Branch step is missing 'On Match' target step."
+                                    .to_string(),
                             });
                         }
                     }
@@ -464,7 +482,8 @@ pub async fn validate_automation_for_activation(
                             errors.push(AutomationLintError {
                                 step_id: Some(sid),
                                 step_number: Some(step_num),
-                                message: "Branch step is missing 'On No Match' target step.".to_string(),
+                                message: "Branch step is missing 'On No Match' target step."
+                                    .to_string(),
                             });
                         }
                     }
@@ -482,7 +501,8 @@ pub async fn validate_automation_for_activation(
                             errors.push(AutomationLintError {
                                 step_id: Some(sid),
                                 step_number: Some(step_num),
-                                message: "Bitmap branch condition is missing reference bitmap.".to_string(),
+                                message: "Bitmap branch condition is missing reference bitmap."
+                                    .to_string(),
                             });
                         }
                     } else if b.condition_type == "pixel_rgb" {
@@ -628,7 +648,10 @@ pub async fn validate_automation_for_activation(
             } else {
                 let mut iter = predecessors.iter();
                 if let Some(first) = iter.next() {
-                    let mut set = step_initialized_vars.get(first).cloned().unwrap_or_default();
+                    let mut set = step_initialized_vars
+                        .get(first)
+                        .cloned()
+                        .unwrap_or_default();
                     add_step_writes(*first, &mut set, &fp_map, &fb_map);
 
                     for p in iter {

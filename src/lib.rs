@@ -12,14 +12,10 @@ pub mod routes;
 pub mod storage;
 pub mod validation;
 
+use axum::{Router, middleware, routing::get};
 use config::Config;
 use secrecy::ExposeSecret;
 use sqlx::PgPool;
-use axum::{
-    middleware,
-    routing::get,
-    Router,
-};
 use tower_http::{
     catch_panic::CatchPanicLayer,
     compression::CompressionLayer,
@@ -29,9 +25,7 @@ use tower_http::{
 };
 
 use auth::{csrf_middleware, security_headers_middleware};
-use routes::{
-    dev_magnifier_verify_handler, livez_handler, not_found_handler, readyz_handler,
-};
+use routes::{dev_magnifier_verify_handler, livez_handler, not_found_handler, readyz_handler};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -90,7 +84,10 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .layer(TraceLayer::new_for_http())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
-        .layer(TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, std::time::Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(30),
+        ))
         .layer(CatchPanicLayer::new())
         .with_state(state)
 }

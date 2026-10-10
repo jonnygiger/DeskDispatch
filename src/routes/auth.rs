@@ -1,7 +1,7 @@
 use askama::Template;
 use axum::{
     extract::{ConnectInfo, Form, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Response},
 };
 use serde::Deserialize;
@@ -9,11 +9,11 @@ use sqlx::Row;
 use std::net::{IpAddr, SocketAddr};
 
 use crate::auth::{
-    clear_session_cookie, create_session, create_session_cookie, delete_session, log_audit,
-    session::extract_session_id, verify_password_async, OptionalAuthUser,
+    OptionalAuthUser, clear_session_cookie, create_session, create_session_cookie, delete_session,
+    log_audit, session::extract_session_id, verify_password_async,
 };
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::AppState;
 
@@ -56,8 +56,7 @@ pub struct LoginForm {
     pub password: String,
 }
 
-const DUMMY_ARGON2_HASH: &str =
-    "$argon2id$v=19$m=19456,t=2,p=1$cG03OThscDRvYm9oMDAwMA$R3841R3841R3841R3841R3841R3841R3841R3841";
+const DUMMY_ARGON2_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$cG03OThscDRvYm9oMDAwMA$R3841R3841R3841R3841R3841R3841R3841R3841";
 
 struct UserRow {
     id: i64,
@@ -77,14 +76,13 @@ pub async fn post_login_handler(
     headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
-    let client_ip = extract_client_ip(
-        &headers,
-        Some(&addr),
-        state.config.trust_proxy_headers,
-    );
+    let client_ip = extract_client_ip(&headers, Some(&addr), state.config.trust_proxy_headers);
     let username_trim = form.username.trim();
 
-    if let Err(rate_err) = state.rate_limiter.check_rate_limit(client_ip, username_trim) {
+    if let Err(rate_err) = state
+        .rate_limiter
+        .check_rate_limit(client_ip, username_trim)
+    {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             HtmlTemplate(LoginTemplate {
@@ -112,11 +110,7 @@ pub async fn post_login_handler(
                 password_hash: row.get("password_hash"),
                 is_active: row.get("is_active"),
             };
-            if u.is_active {
-                Some(u)
-            } else {
-                None
-            }
+            if u.is_active { Some(u) } else { None }
         }
         Ok(None) => None,
         Err(e) => {
@@ -208,11 +202,15 @@ pub async fn post_login_handler(
     )
     .await;
 
-    let is_secure = state.config.is_production() || state.config.public_base_url.starts_with("https://");
+    let is_secure =
+        state.config.is_production() || state.config.public_base_url.starts_with("https://");
     let cookie = create_session_cookie(session_id, is_secure);
     (
         StatusCode::SEE_OTHER,
-        [(header::SET_COOKIE, cookie), (header::LOCATION, "/".to_string())],
+        [
+            (header::SET_COOKIE, cookie),
+            (header::LOCATION, "/".to_string()),
+        ],
     )
         .into_response()
 }

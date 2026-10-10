@@ -1,27 +1,22 @@
-use deskdispatch::auth::{
-    generate_csrf_token, UserRole,
-};
-use secrecy::ExposeSecret;
-use deskdispatch::config::Config;
-use deskdispatch::routes::{
-    get_edit_user_handler, get_new_user_handler, get_password_handler, get_reset_password_handler,
-    get_users_handler, post_create_user_handler, post_deactivate_user_handler,
-    post_edit_user_handler, post_login_handler, post_password_handler,
-    post_reset_password_handler, UserListItem,
-};
-use deskdispatch::AppState;
-use argon2::{
-    password_hash::PasswordHasher,
-    Argon2,
-};
+use argon2::{Argon2, password_hash::PasswordHasher};
 use axum::{
+    Router,
     body::Body,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
     middleware,
     routing::{get, post},
-    Router,
 };
 use chrono::Utc;
+use deskdispatch::AppState;
+use deskdispatch::auth::{UserRole, generate_csrf_token};
+use deskdispatch::config::Config;
+use deskdispatch::routes::{
+    UserListItem, get_edit_user_handler, get_new_user_handler, get_password_handler,
+    get_reset_password_handler, get_users_handler, post_create_user_handler,
+    post_deactivate_user_handler, post_edit_user_handler, post_login_handler,
+    post_password_handler, post_reset_password_handler,
+};
+use secrecy::ExposeSecret;
 use sqlx::Row;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -62,8 +57,9 @@ fn test_user_list_item_helpers() {
 }
 
 async fn get_test_pool() -> Option<sqlx::PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     sqlx::PgPool::connect(&db_url).await.ok()
 }
 
@@ -87,14 +83,26 @@ fn build_test_app(pool: sqlx::PgPool, config: Config) -> Router {
     };
 
     Router::new()
-        .route("/login", get(deskdispatch::routes::get_login_handler).post(post_login_handler))
-        .route("/account/password", get(get_password_handler).post(post_password_handler))
-        .route("/users", get(get_users_handler).post(post_create_user_handler))
+        .route(
+            "/login",
+            get(deskdispatch::routes::get_login_handler).post(post_login_handler),
+        )
+        .route(
+            "/account/password",
+            get(get_password_handler).post(post_password_handler),
+        )
+        .route(
+            "/users",
+            get(get_users_handler).post(post_create_user_handler),
+        )
         .route("/users/new", get(get_new_user_handler))
         .route("/users/{id}", post(post_edit_user_handler))
         .route("/users/{id}/edit", get(get_edit_user_handler))
         .route("/users/{id}/deactivate", post(post_deactivate_user_handler))
-        .route("/users/{id}/reset-password", get(get_reset_password_handler).post(post_reset_password_handler))
+        .route(
+            "/users/{id}/reset-password",
+            get(get_reset_password_handler).post(post_reset_password_handler),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
@@ -114,7 +122,10 @@ async fn test_non_admin_forbidden_from_user_management() {
     // Create an editor user
     let editor_username = format!("editor_{}", Uuid::new_v4().simple());
     let pwd = "Password123!";
-    let hash = Argon2::default().hash_password(pwd.as_bytes()).unwrap().to_string();
+    let hash = Argon2::default()
+        .hash_password(pwd.as_bytes())
+        .unwrap()
+        .to_string();
 
     let editor_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role, is_active) VALUES ($1, $2, 'Editor', 'editor', true) RETURNING id",
@@ -139,7 +150,13 @@ async fn test_non_admin_forbidden_from_user_management() {
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let cookie_header = response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap().to_string();
+    let cookie_header = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // Editor trying to GET /users should receive 403 FORBIDDEN
     let req = Request::builder()
@@ -162,7 +179,10 @@ async fn test_non_admin_forbidden_from_user_management() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     // Clean up test editor
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1").bind(editor_id).execute(&pool).await;
+    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(editor_id)
+        .execute(&pool)
+        .await;
 }
 
 #[tokio::test]
@@ -177,7 +197,10 @@ async fn test_full_user_crud_and_last_admin_protection() {
     // Create an initial admin user for the test
     let admin_username = format!("admin_{}", Uuid::new_v4().simple());
     let admin_pwd = "AdminPassword123!";
-    let admin_hash = Argon2::default().hash_password(admin_pwd.as_bytes()).unwrap().to_string();
+    let admin_hash = Argon2::default()
+        .hash_password(admin_pwd.as_bytes())
+        .unwrap()
+        .to_string();
 
     let admin_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role, is_active) VALUES ($1, $2, 'Admin User', 'admin', true) RETURNING id",
@@ -202,7 +225,13 @@ async fn test_full_user_crud_and_last_admin_protection() {
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let cookie_header = response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap().to_string();
+    let cookie_header = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
     let session_id = deskdispatch::auth::session::extract_session_id(&cookie_header).unwrap();
     let csrf_token = generate_csrf_token(session_id, config.session_secret.expose_secret());
 
@@ -236,11 +265,12 @@ async fn test_full_user_crud_and_last_admin_protection() {
     assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/users");
 
     // Retrieve created user
-    let new_user_row = sqlx::query("SELECT id, must_change_password, is_active FROM users WHERE username = $1")
-        .bind(&new_username)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let new_user_row =
+        sqlx::query("SELECT id, must_change_password, is_active FROM users WHERE username = $1")
+            .bind(&new_username)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     let new_user_id: i64 = new_user_row.get("id");
     let must_change: bool = new_user_row.get("must_change_password");
@@ -264,13 +294,17 @@ async fn test_full_user_crud_and_last_admin_protection() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
     // Verify updated display_name and must_change_password
-    let updated_row = sqlx::query("SELECT display_name, must_change_password FROM users WHERE id = $1")
-        .bind(new_user_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let updated_row =
+        sqlx::query("SELECT display_name, must_change_password FROM users WHERE id = $1")
+            .bind(new_user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
-    assert_eq!(updated_row.get::<String, _>("display_name"), "Updated Display Name");
+    assert_eq!(
+        updated_row.get::<String, _>("display_name"),
+        "Updated Display Name"
+    );
     assert!(!updated_row.get::<bool, _>("must_change_password"));
 
     // 5. Reset user password via POST /users/{id}/reset-password
@@ -312,11 +346,12 @@ async fn test_full_user_crud_and_last_admin_protection() {
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let deactivated_is_active: bool = sqlx::query_scalar("SELECT is_active FROM users WHERE id = $1")
-        .bind(new_user_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let deactivated_is_active: bool =
+        sqlx::query_scalar("SELECT is_active FROM users WHERE id = $1")
+            .bind(new_user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     assert!(!deactivated_is_active);
 
@@ -360,7 +395,10 @@ async fn test_forced_password_change_redirect() {
     // Create user with must_change_password = true
     let username = format!("force_pwd_{}", Uuid::new_v4().simple());
     let pwd = "InitialPwd123!";
-    let hash = Argon2::default().hash_password(pwd.as_bytes()).unwrap().to_string();
+    let hash = Argon2::default()
+        .hash_password(pwd.as_bytes())
+        .unwrap()
+        .to_string();
 
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role, is_active, must_change_password) VALUES ($1, $2, 'Force Pwd User', 'editor', true, true) RETURNING id",
@@ -385,7 +423,13 @@ async fn test_forced_password_change_redirect() {
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let cookie_header = response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap().to_string();
+    let cookie_header = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // Attempting to access /users should redirect to /account/password
     let req = Request::builder()
@@ -396,7 +440,10 @@ async fn test_forced_password_change_redirect() {
 
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/account/password");
+    assert_eq!(
+        response.headers().get(header::LOCATION).unwrap(),
+        "/account/password"
+    );
 
     // Accessing /account/password should succeed
     let req = Request::builder()
@@ -429,14 +476,18 @@ async fn test_forced_password_change_redirect() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // Verify must_change_password is now false in DB
-    let must_change: bool = sqlx::query_scalar("SELECT must_change_password FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let must_change: bool =
+        sqlx::query_scalar("SELECT must_change_password FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     assert!(!must_change);
 
     // Clean up
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1").bind(user_id).execute(&pool).await;
+    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await;
 }

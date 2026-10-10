@@ -1,5 +1,5 @@
-use std::env;
 use secrecy::{ExposeSecret, SecretString};
+use std::env;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -32,8 +32,9 @@ impl Config {
     pub fn from_env() -> Result<Self, String> {
         let _ = dotenvy::dotenv();
 
-        let database_url = env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+        });
 
         let public_base_url = env::var("PUBLIC_BASE_URL")
             .ok()
@@ -48,28 +49,25 @@ impl Config {
             .ok()
             .filter(|v| !v.trim().is_empty());
 
-        let s3_bucket = env::var("S3_BUCKET")
-            .unwrap_or_else(|_| "deskdispatch-bucket".to_string());
+        let s3_bucket = env::var("S3_BUCKET").unwrap_or_else(|_| "deskdispatch-bucket".to_string());
 
-        let s3_access_key = env::var("S3_ACCESS_KEY")
-            .unwrap_or_else(|_| "rustfsadmin".to_string());
+        let s3_access_key = env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "rustfsadmin".to_string());
 
-        let s3_secret_key = env::var("S3_SECRET_KEY")
-            .unwrap_or_else(|_| "rustfsadminpassword".to_string());
+        let s3_secret_key =
+            env::var("S3_SECRET_KEY").unwrap_or_else(|_| "rustfsadminpassword".to_string());
 
-        let s3_region = env::var("S3_REGION")
-            .unwrap_or_else(|_| "us-east-1".to_string());
+        let s3_region = env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
 
         let session_secret = env::var("SESSION_SECRET")
             .unwrap_or_else(|_| "default_session_secret_change_me_in_production".to_string());
 
-        let bind_address = env::var("BIND_ADDRESS")
-            .unwrap_or_else(|_| "0.0.0.0:3000".to_string());
+        let bind_address = env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
 
-        let environment = env::var("APP_ENV")
-            .unwrap_or_else(|_| "development".to_string());
+        let environment = env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
 
-        let min_agent_version = env::var("MIN_AGENT_VERSION").ok().filter(|v| !v.trim().is_empty());
+        let min_agent_version = env::var("MIN_AGENT_VERSION")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
 
         let worker_poll_interval_secs = env::var("WORKER_POLL_INTERVAL_SECS")
             .ok()
@@ -178,7 +176,9 @@ impl Config {
             }
 
             if self.database_url.contains("postgrespassword") {
-                return Err("Production environment cannot use default DATABASE_URL password".to_string());
+                return Err(
+                    "Production environment cannot use default DATABASE_URL password".to_string(),
+                );
             }
         }
         Ok(())
@@ -191,7 +191,8 @@ mod tests {
 
     fn create_valid_prod_config() -> Config {
         Config {
-            database_url: "postgres://postgres:securepass123@localhost:5432/deskdispatch".to_string(),
+            database_url: "postgres://postgres:securepass123@localhost:5432/deskdispatch"
+                .to_string(),
             public_base_url: "http://localhost:3000".to_string(),
             s3_endpoint: None,
             s3_public_endpoint: None,
@@ -231,7 +232,8 @@ mod tests {
     #[test]
     fn test_production_default_session_secret_fails() {
         let mut config = create_valid_prod_config();
-        config.session_secret = SecretString::from("default_session_secret_change_me_in_production".to_string());
+        config.session_secret =
+            SecretString::from("default_session_secret_change_me_in_production".to_string());
         let err = config.validate().unwrap_err();
         assert!(err.contains("SESSION_SECRET"));
 
@@ -259,7 +261,8 @@ mod tests {
     #[test]
     fn test_production_default_db_password_fails() {
         let mut config = create_valid_prod_config();
-        config.database_url = "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string();
+        config.database_url =
+            "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string();
         let err = config.validate().unwrap_err();
         assert!(err.contains("DATABASE_URL"));
     }

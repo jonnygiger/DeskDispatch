@@ -1,20 +1,17 @@
-use deskdispatch::{
-    config::Config,
-    routes::*,
-    AppState,
-};
-use secrecy::ExposeSecret;
 use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
     Router,
+    body::Body,
+    http::{Request, StatusCode, header},
 };
+use deskdispatch::{AppState, config::Config, routes::*};
+use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 async fn get_test_pool() -> Option<PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     PgPool::connect(&db_url).await.ok()
 }
 
@@ -46,7 +43,9 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
 #[tokio::test]
 async fn test_run_now_with_worker_group_and_parameter_overrides() {
     let Some(pool) = get_test_pool().await else {
-        println!("Database not available, skipping test_run_now_with_worker_group_and_parameter_overrides");
+        println!(
+            "Database not available, skipping test_run_now_with_worker_group_and_parameter_overrides"
+        );
         return;
     };
 
@@ -68,29 +67,48 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
     };
 
     let app = Router::new()
-        .route("/automations/{id}", axum::routing::get(get_automation_detail_handler))
-        .route("/automations/{id}/run-now", axum::routing::post(post_run_now_automation_handler))
+        .route(
+            "/automations/{id}",
+            axum::routing::get(get_automation_detail_handler),
+        )
+        .route(
+            "/automations/{id}/run-now",
+            axum::routing::post(post_run_now_automation_handler),
+        )
         .route("/runs/{id}", axum::routing::get(get_run_detail_handler))
-        .route("/runs/{id}/status-frame", axum::routing::get(get_run_status_frame_handler))
-        .route("/runs/{id}/cancel", axum::routing::post(post_cancel_run_handler))
+        .route(
+            "/runs/{id}/status-frame",
+            axum::routing::get(get_run_status_frame_handler),
+        )
+        .route(
+            "/runs/{id}/cancel",
+            axum::routing::post(post_cancel_run_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_admin_id, admin_session) = create_test_user(&pool, &format!("run_now_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("run_now_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
 
     // 1. Create worker group
-    let wg_row = sqlx::query("INSERT INTO worker_groups (name, description) VALUES ($1, 'Test Group') RETURNING id")
-        .bind(format!("WG_{}", uuid::Uuid::new_v4().simple()))
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let wg_row = sqlx::query(
+        "INSERT INTO worker_groups (name, description) VALUES ($1, 'Test Group') RETURNING id",
+    )
+    .bind(format!("WG_{}", uuid::Uuid::new_v4().simple()))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     let worker_group_id: i64 = sqlx::Row::get(&wg_row, "id");
 
     // 2. Create active automation
@@ -129,7 +147,9 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("Run Now (Manual Trigger)"));
     assert!(body_str.contains("Target Worker Group"));
@@ -151,8 +171,17 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
-    assert!(location.starts_with("/runs/"), "Expected redirect to /runs/{{id}}, got {}", location);
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        location.starts_with("/runs/"),
+        "Expected redirect to /runs/{{id}}, got {}",
+        location
+    );
 
     let task_run_id: i64 = location.trim_start_matches("/runs/").parse().unwrap();
 
@@ -165,8 +194,10 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
 
     let db_auto_id: i64 = sqlx::Row::get(&run_db_row, "automation_id");
     let db_group_id: Option<i64> = sqlx::Row::get(&run_db_row, "target_worker_group_id");
-    let db_overrides_json: Option<serde_json::Value> = sqlx::Row::get(&run_db_row, "parameter_overrides");
-    let db_dispatched_json: Option<serde_json::Value> = sqlx::Row::get(&run_db_row, "dispatched_automation_json");
+    let db_overrides_json: Option<serde_json::Value> =
+        sqlx::Row::get(&run_db_row, "parameter_overrides");
+    let db_dispatched_json: Option<serde_json::Value> =
+        sqlx::Row::get(&run_db_row, "dispatched_automation_json");
     let db_status: String = sqlx::Row::get(&run_db_row, "status");
 
     assert_eq!(db_auto_id, automation_id);
@@ -174,11 +205,19 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
     assert_eq!(db_status, "queued");
 
     let overrides_obj = db_overrides_json.expect("Expected parameter_overrides JSON");
-    assert_eq!(overrides_obj.get("max_retries").and_then(|v| v.as_str()), Some("10"));
+    assert_eq!(
+        overrides_obj.get("max_retries").and_then(|v| v.as_str()),
+        Some("10")
+    );
 
     let dispatched_obj = db_dispatched_json.expect("Expected dispatched_automation_json");
-    let params_val = dispatched_obj.get("parameters").expect("Expected parameters in dispatched json");
-    assert_eq!(params_val.get("max_retries").and_then(|v| v.as_i64()), Some(10));
+    let params_val = dispatched_obj
+        .get("parameters")
+        .expect("Expected parameters in dispatched json");
+    assert_eq!(
+        params_val.get("max_retries").and_then(|v| v.as_i64()),
+        Some(10)
+    );
 
     // 8. GET /runs/{task_run_id} and check execution parameters section rendered
     let req = Request::builder()
@@ -189,7 +228,9 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("Execution Parameters"));
     assert!(body_str.contains("max_retries"));
@@ -250,7 +291,9 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("Cancelling..."));
     assert!(body_str.contains("cancelling"));

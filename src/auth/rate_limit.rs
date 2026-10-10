@@ -74,7 +74,10 @@ impl LoginRateLimiter {
 
         if let Some(ip_timestamps) = inner.ip_attempts.get(&ip) {
             if ip_timestamps.len() >= self.max_ip_attempts {
-                return Err("Too many failed login attempts from this IP address. Please try again later.".to_string());
+                return Err(
+                    "Too many failed login attempts from this IP address. Please try again later."
+                        .to_string(),
+                );
             }
         }
 

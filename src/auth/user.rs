@@ -1,10 +1,7 @@
-use argon2::{
-    password_hash::phc::PasswordHash,
-    Argon2, PasswordHasher, PasswordVerifier,
-};
+use argon2::{Argon2, PasswordHasher, PasswordVerifier, password_hash::phc::PasswordHash};
 use axum::{
     extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
+    http::{StatusCode, request::Parts},
     response::{IntoResponse, Redirect, Response},
 };
 use secrecy::ExposeSecret;
@@ -210,7 +207,10 @@ impl FromRequestParts<AppState> for AuthUser {
             Redirect::to("/login").into_response()
         })?;
 
-        let csrf_token = super::csrf::generate_csrf_token(record.session_id, state.config.session_secret.expose_secret());
+        let csrf_token = super::csrf::generate_csrf_token(
+            record.session_id,
+            state.config.session_secret.expose_secret(),
+        );
 
         if record.must_change_password
             && parts.uri.path() != "/account/password"

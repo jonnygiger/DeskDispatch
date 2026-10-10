@@ -6,8 +6,9 @@ use std::env;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
 
-    let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
 
     let admin_username = env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string());
     let admin_password = env::var("ADMIN_PASSWORD").unwrap_or_else(|_| "test".to_string());

@@ -8,10 +8,10 @@ use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
+use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
 use crate::magnifier::ImageMagnifier;
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::AppState;
 
@@ -279,7 +279,8 @@ pub async fn get_runs_handler(
     // from the cumulative sum of 3 sequential database round-trips to the duration of the single longest query.
     let (auto_rows_res, worker_rows_res, run_rows_res) = tokio::join!(
         sqlx::query("SELECT id, name FROM automations ORDER BY name ASC").fetch_all(&state.db),
-        sqlx::query("SELECT id, display_name FROM task_worker_pcs ORDER BY display_name ASC").fetch_all(&state.db),
+        sqlx::query("SELECT id, display_name FROM task_worker_pcs ORDER BY display_name ASC")
+            .fetch_all(&state.db),
         sqlx::query(
             r#"
             SELECT
@@ -447,7 +448,10 @@ pub async fn get_run_status_frame_handler(
     };
 
     let paused = query.paused.unwrap_or(false);
-    let auto_refresh = (run_item.status == "queued" || run_item.status == "running" || run_item.status == "cancelling") && !paused;
+    let auto_refresh = (run_item.status == "queued"
+        || run_item.status == "running"
+        || run_item.status == "cancelling")
+        && !paused;
 
     HtmlTemplate(RunStatusFrameTemplate {
         user,
@@ -526,7 +530,9 @@ pub async fn get_run_detail_handler(
         error_message: run_row.get("error_message"),
     };
 
-    let auto_refresh = run_item.status == "queued" || run_item.status == "running" || run_item.status == "cancelling";
+    let auto_refresh = run_item.status == "queued"
+        || run_item.status == "running"
+        || run_item.status == "cancelling";
 
     let step_rows = sqlx::query(
         r#"
@@ -648,9 +654,15 @@ pub async fn get_run_detail_handler(
     let dispatched_json: Option<serde_json::Value> = run_row.get("dispatched_automation_json");
 
     let mut parameters = Vec::new();
-    let overrides_map = parameter_overrides_json.as_ref().and_then(|v| v.as_object());
+    let overrides_map = parameter_overrides_json
+        .as_ref()
+        .and_then(|v| v.as_object());
 
-    if let Some(params_obj) = dispatched_json.as_ref().and_then(|j| j.get("parameters")).and_then(|p| p.as_object()) {
+    if let Some(params_obj) = dispatched_json
+        .as_ref()
+        .and_then(|j| j.get("parameters"))
+        .and_then(|p| p.as_object())
+    {
         for (k, v) in params_obj {
             let val_str = match v {
                 serde_json::Value::String(s) => s.clone(),
@@ -677,7 +689,10 @@ pub async fn get_run_detail_handler(
         for p in param_rows {
             let pname: String = p.get("name");
             let default_val: String = p.get("default_value");
-            let (val_str, is_override) = if let Some(override_val) = overrides_map.and_then(|m| m.get(&pname)).and_then(|v| v.as_str()) {
+            let (val_str, is_override) = if let Some(override_val) = overrides_map
+                .and_then(|m| m.get(&pname))
+                .and_then(|v| v.as_str())
+            {
                 (override_val.to_string(), true)
             } else {
                 (default_val, false)
@@ -709,7 +724,6 @@ pub async fn post_cancel_run_handler(
     Path(id): Path<i64>,
     CsrfForm(_form): CsrfForm<CancelRunForm>,
 ) -> Response {
-
     let update_res = sqlx::query(
         r#"
         UPDATE task_runs
@@ -804,8 +818,14 @@ mod tests {
         };
 
         assert_eq!(step_item.result_badge_class(), "badge-success");
-        assert_eq!(step_item.captured_rgb_display(), Some("RGB(40, 180, 60)".to_string()));
-        assert_eq!(step_item.captured_xy_display(), Some("(824, 391)".to_string()));
+        assert_eq!(
+            step_item.captured_rgb_display(),
+            Some("RGB(40, 180, 60)".to_string())
+        );
+        assert_eq!(
+            step_item.captured_xy_display(),
+            Some("(824, 391)".to_string())
+        );
     }
 
     #[test]
@@ -856,7 +876,12 @@ mod tests {
         ];
         for (status, expected_class) in status_cases {
             item.status = status.to_string();
-            assert_eq!(item.status_badge_class(), expected_class, "Status '{}' mismatch", status);
+            assert_eq!(
+                item.status_badge_class(),
+                expected_class,
+                "Status '{}' mismatch",
+                status
+            );
         }
 
         // 3. ExecutedStepItem result badge classes and partial captures
@@ -882,7 +907,7 @@ mod tests {
         assert_eq!(step.result_badge_class(), "badge-success");
         assert_eq!(step.formatted_completed_at(), "-");
         assert_eq!(step.captured_rgb_display(), None); // Incomplete RGB
-        assert_eq!(step.captured_xy_display(), None);  // Incomplete XY
+        assert_eq!(step.captured_xy_display(), None); // Incomplete XY
 
         step.result = Some("branch_not_matched".to_string());
         assert_eq!(step.result_badge_class(), "badge-info");
@@ -929,12 +954,18 @@ mod tests {
         assert!(!default_list_tmpl.is_status_selected("running"));
 
         // 5. AutomationOption and WorkerOption selection helpers
-        let auto_opt = AutomationOption { id: 42, name: "Auto 42".to_string() };
+        let auto_opt = AutomationOption {
+            id: 42,
+            name: "Auto 42".to_string(),
+        };
         assert!(auto_opt.is_selected(&Some(42)));
         assert!(!auto_opt.is_selected(&Some(10)));
         assert!(!auto_opt.is_selected(&None));
 
-        let worker_opt = WorkerOption { id: 7, display_name: "Worker 7".to_string() };
+        let worker_opt = WorkerOption {
+            id: 7,
+            display_name: "Worker 7".to_string(),
+        };
         assert!(worker_opt.is_selected(&Some(7)));
         assert!(!worker_opt.is_selected(&Some(1)));
         assert!(!worker_opt.is_selected(&None));

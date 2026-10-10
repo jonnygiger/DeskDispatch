@@ -8,28 +8,59 @@ use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
+use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
 use crate::de::deserialize_option_number;
 use crate::magnifier::ImageMagnifier;
 use crate::picker::{map_coarse_click_to_native, map_grid_click_to_native};
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/bitmaps", get(get_bitmaps_handler).post(post_bitmaps_handler))
+        .route(
+            "/bitmaps",
+            get(get_bitmaps_handler).post(post_bitmaps_handler),
+        )
         .route("/bitmaps/{id}/delete", post(post_delete_bitmap_handler))
-        .route("/automations/{id}/bitmaps", get(get_automation_bitmaps_handler).post(post_automation_bitmaps_handler))
-        .route("/automations/{id}/bitmaps/{bid}/delete", post(post_automation_delete_bitmap_handler))
-        .route("/bitmaps/commit", get(get_bitmap_commit_handler).post(post_bitmap_commit_handler))
-        .route("/bitmaps/pick-region", get(get_pick_region_handler).post(post_pick_region_top_left_handler))
-        .route("/bitmaps/pick-region/bottom-right", post(post_pick_region_bottom_right_handler))
-        .route("/bitmaps/pick-region/confirm", post(post_pick_region_confirm_handler))
-        .route("/automations/{id}/bitmaps/pick-region", get(get_automation_pick_region_handler).post(post_automation_pick_region_top_left_handler))
-        .route("/automations/{id}/bitmaps/pick-region/bottom-right", post(post_automation_pick_region_bottom_right_handler))
-        .route("/automations/{id}/bitmaps/pick-region/confirm", post(post_automation_pick_region_confirm_handler))
+        .route(
+            "/automations/{id}/bitmaps",
+            get(get_automation_bitmaps_handler).post(post_automation_bitmaps_handler),
+        )
+        .route(
+            "/automations/{id}/bitmaps/{bid}/delete",
+            post(post_automation_delete_bitmap_handler),
+        )
+        .route(
+            "/bitmaps/commit",
+            get(get_bitmap_commit_handler).post(post_bitmap_commit_handler),
+        )
+        .route(
+            "/bitmaps/pick-region",
+            get(get_pick_region_handler).post(post_pick_region_top_left_handler),
+        )
+        .route(
+            "/bitmaps/pick-region/bottom-right",
+            post(post_pick_region_bottom_right_handler),
+        )
+        .route(
+            "/bitmaps/pick-region/confirm",
+            post(post_pick_region_confirm_handler),
+        )
+        .route(
+            "/automations/{id}/bitmaps/pick-region",
+            get(get_automation_pick_region_handler)
+                .post(post_automation_pick_region_top_left_handler),
+        )
+        .route(
+            "/automations/{id}/bitmaps/pick-region/bottom-right",
+            post(post_automation_pick_region_bottom_right_handler),
+        )
+        .route(
+            "/automations/{id}/bitmaps/pick-region/confirm",
+            post(post_automation_pick_region_confirm_handler),
+        )
 }
 
 #[derive(serde::Deserialize)]
@@ -111,13 +142,29 @@ pub struct PickRegionBottomRightForm {
     pub step_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub reference_bitmap_id: Option<i64>,
-    #[serde(alias = "grid_click.x", default, deserialize_with = "deserialize_option_number")]
+    #[serde(
+        alias = "grid_click.x",
+        default,
+        deserialize_with = "deserialize_option_number"
+    )]
     pub grid_x: Option<u32>,
-    #[serde(alias = "grid_click.y", default, deserialize_with = "deserialize_option_number")]
+    #[serde(
+        alias = "grid_click.y",
+        default,
+        deserialize_with = "deserialize_option_number"
+    )]
     pub grid_y: Option<u32>,
-    #[serde(alias = "coarse_click.x", default, deserialize_with = "deserialize_option_number")]
+    #[serde(
+        alias = "coarse_click.x",
+        default,
+        deserialize_with = "deserialize_option_number"
+    )]
     pub coarse_x: Option<u32>,
-    #[serde(alias = "coarse_click.y", default, deserialize_with = "deserialize_option_number")]
+    #[serde(
+        alias = "coarse_click.y",
+        default,
+        deserialize_with = "deserialize_option_number"
+    )]
     pub coarse_y: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub manual_x: Option<u32>,
@@ -437,7 +484,11 @@ pub async fn post_bitmaps_handler(
         Ok(post) => post,
         Err(e) => {
             tracing::error!("Failed to generate presigned POST policy: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate upload policy").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to generate upload policy",
+            )
+                .into_response();
         }
     };
 
@@ -497,7 +548,11 @@ pub async fn post_automation_bitmaps_handler(
         Ok(post) => post,
         Err(e) => {
             tracing::error!("Failed to generate presigned POST policy: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate upload policy").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to generate upload policy",
+            )
+                .into_response();
         }
     };
 
@@ -542,35 +597,51 @@ pub async fn probe_s3_bitmap_dimensions(
         .send()
         .await
         .map_err(|e| {
-            tracing::error!("Failed to fetch S3 object key {} for dimension probe: {}", key, e);
-            (StatusCode::BAD_REQUEST, "Invalid or missing image in storage")
+            tracing::error!(
+                "Failed to fetch S3 object key {} for dimension probe: {}",
+                key,
+                e
+            );
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid or missing image in storage",
+            )
         })?;
 
     let aggregated = res.body.collect().await.map_err(|e| {
         tracing::error!("Failed to read S3 object body for key {}: {}", key, e);
-        (StatusCode::BAD_REQUEST, "Failed to read image data from storage")
+        (
+            StatusCode::BAD_REQUEST,
+            "Failed to read image data from storage",
+        )
     })?;
 
     let bytes = aggregated.into_bytes();
 
-    let format = image::guess_format(&bytes).map_err(|_| {
-        (StatusCode::BAD_REQUEST, "Failed to determine image format")
-    })?;
+    let format = image::guess_format(&bytes)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Failed to determine image format"))?;
 
     if format != image::ImageFormat::Png {
-        return Err((StatusCode::BAD_REQUEST, "Only PNG images are supported for reference bitmaps"));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Only PNG images are supported for reference bitmaps",
+        ));
     }
 
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(10000);
     limits.max_image_height = Some(10000);
 
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Png);
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Png);
     reader.limits(limits);
 
     let (w, h) = reader.into_dimensions().map_err(|e| {
         tracing::error!("Failed to parse PNG dimensions for key {}: {}", key, e);
-        (StatusCode::BAD_REQUEST, "Failed to parse PNG image dimensions")
+        (
+            StatusCode::BAD_REQUEST,
+            "Failed to parse PNG image dimensions",
+        )
     })?;
 
     Ok((w as i32, h as i32))
@@ -584,7 +655,6 @@ pub async fn get_bitmap_commit_handler(
     RequireEditor(user): RequireEditor,
     Query(query): Query<BitmapCommitQuery>,
 ) -> Response {
-
     if !validate_bitmap_key(&query.key, user.id) {
         return (StatusCode::BAD_REQUEST, "Invalid storage key").into_response();
     }
@@ -614,7 +684,6 @@ pub async fn post_bitmap_commit_handler(
     RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<BitmapCommitForm>,
 ) -> Response {
-
     if form.csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
@@ -629,10 +698,11 @@ pub async fn post_bitmap_commit_handler(
     }
 
     // Idempotency check: if bitmap with this key already exists, return redirect without error
-    if let Ok(Some(existing)) = sqlx::query("SELECT id, automation_id FROM bitmaps WHERE object_storage_key = $1")
-        .bind(&form.key)
-        .fetch_optional(&state.db)
-        .await
+    if let Ok(Some(existing)) =
+        sqlx::query("SELECT id, automation_id FROM bitmaps WHERE object_storage_key = $1")
+            .bind(&form.key)
+            .fetch_optional(&state.db)
+            .await
     {
         let aid: Option<i64> = existing.get("automation_id");
         let redirect_path = match aid.or(form.automation_id) {
@@ -704,15 +774,16 @@ async fn delete_bitmap_logic(
     csrf_token: &str,
     redirect_automation_id: Option<i64>,
 ) -> Response {
-
     if csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
 
-    let bitmap_row = match sqlx::query("SELECT id, automation_id, name, object_storage_key FROM bitmaps WHERE id = $1")
-        .bind(bitmap_id)
-        .fetch_optional(&state.db)
-        .await
+    let bitmap_row = match sqlx::query(
+        "SELECT id, automation_id, name, object_storage_key FROM bitmaps WHERE id = $1",
+    )
+    .bind(bitmap_id)
+    .fetch_optional(&state.db)
+    .await
     {
         Ok(Some(row)) => row,
         Ok(None) => {
@@ -810,11 +881,25 @@ pub fn sanitize_image_url(raw_url: Option<String>) -> String {
         _ => return default_url,
     };
 
-    if url.chars().any(|c| c.is_control() || c == '\'' || c == '"' || c == '\\' || c == '<' || c == '>' || c == ';' || c == '{' || c == '}') {
+    if url.chars().any(|c| {
+        c.is_control()
+            || c == '\''
+            || c == '"'
+            || c == '\\'
+            || c == '<'
+            || c == '>'
+            || c == ';'
+            || c == '{'
+            || c == '}'
+    }) {
         return default_url;
     }
 
-    if url.starts_with("/static/") || url.starts_with("/media/") || url.starts_with("http://") || url.starts_with("https://") {
+    if url.starts_with("/static/")
+        || url.starts_with("/media/")
+        || url.starts_with("http://")
+        || url.starts_with("https://")
+    {
         url
     } else {
         default_url
@@ -906,9 +991,11 @@ pub async fn post_pick_region_top_left_handler(
     let image_url = sanitize_image_url(Some(form.image_url.clone()));
 
     let (top_left_x, top_left_y, is_valid_selection) = match (form.manual_x, form.manual_y) {
-        (Some(mx), Some(my)) => {
-            (mx.min(form.width.saturating_sub(1)), my.min(form.height.saturating_sub(1)), true)
-        }
+        (Some(mx), Some(my)) => (
+            mx.min(form.width.saturating_sub(1)),
+            my.min(form.height.saturating_sub(1)),
+            true,
+        ),
         _ => {
             if form.x == 0 && form.y == 0 {
                 // Keyboard activation of <input type="image"> sends x=0, y=0 without click coordinates.
@@ -1008,9 +1095,11 @@ pub async fn post_pick_region_bottom_right_handler(
     let image_url = sanitize_image_url(Some(form.image_url.clone()));
 
     let (raw_br_x, raw_br_y, is_valid_selection) = match (form.manual_x, form.manual_y) {
-        (Some(mx), Some(my)) => {
-            (mx.min(form.width.saturating_sub(1)), my.min(form.height.saturating_sub(1)), true)
-        }
+        (Some(mx), Some(my)) => (
+            mx.min(form.width.saturating_sub(1)),
+            my.min(form.height.saturating_sub(1)),
+            true,
+        ),
         _ => {
             if let (Some(gx), Some(gy)) = (form.grid_x, form.grid_y) {
                 if gx == 0 && gy == 0 {
@@ -1151,13 +1240,22 @@ async fn crop_image_region(
     if image_bytes.is_none() {
         if let Some(id_str) = image_url.strip_prefix("/media/screenshots/") {
             if let Ok(id) = id_str.parse::<i64>() {
-                if let Ok(Some(row)) = sqlx::query("SELECT object_storage_key FROM step_screenshots WHERE step_id = $1")
-                    .bind(id)
-                    .fetch_optional(&state.db)
-                    .await
+                if let Ok(Some(row)) = sqlx::query(
+                    "SELECT object_storage_key FROM step_screenshots WHERE step_id = $1",
+                )
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await
                 {
                     let key: String = row.get("object_storage_key");
-                    if let Ok(res) = state.s3_client.get_object().bucket(&state.config.s3_bucket).key(&key).send().await {
+                    if let Ok(res) = state
+                        .s3_client
+                        .get_object()
+                        .bucket(&state.config.s3_bucket)
+                        .key(&key)
+                        .send()
+                        .await
+                    {
                         if let Ok(data) = res.body.collect().await {
                             image_bytes = Some(data.into_bytes().to_vec());
                         }
@@ -1166,13 +1264,21 @@ async fn crop_image_region(
             }
         } else if let Some(id_str) = image_url.strip_prefix("/media/bitmaps/") {
             if let Ok(id) = id_str.parse::<i64>() {
-                if let Ok(Some(row)) = sqlx::query("SELECT object_storage_key FROM bitmaps WHERE id = $1")
-                    .bind(id)
-                    .fetch_optional(&state.db)
-                    .await
+                if let Ok(Some(row)) =
+                    sqlx::query("SELECT object_storage_key FROM bitmaps WHERE id = $1")
+                        .bind(id)
+                        .fetch_optional(&state.db)
+                        .await
                 {
                     let key: String = row.get("object_storage_key");
-                    if let Ok(res) = state.s3_client.get_object().bucket(&state.config.s3_bucket).key(&key).send().await {
+                    if let Ok(res) = state
+                        .s3_client
+                        .get_object()
+                        .bucket(&state.config.s3_bucket)
+                        .key(&key)
+                        .send()
+                        .await
+                    {
                         if let Ok(data) = res.body.collect().await {
                             image_bytes = Some(data.into_bytes().to_vec());
                         }
@@ -1257,7 +1363,8 @@ pub async fn confirm_region_crop_logic(
 
     let object_key = format!("bitmaps/crop_{}.png", uuid::Uuid::new_v4());
 
-    let png_bytes = crop_image_region(state, &form.image_url, norm_tl_x, norm_tl_y, crop_w, crop_h).await;
+    let png_bytes =
+        crop_image_region(state, &form.image_url, norm_tl_x, norm_tl_y, crop_w, crop_h).await;
 
     if let Err(e) = state
         .s3_client
@@ -1270,7 +1377,11 @@ pub async fn confirm_region_crop_logic(
         .await
     {
         tracing::error!("Failed to upload cropped bitmap to S3: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to store bitmap image").into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to store bitmap image",
+        )
+            .into_response();
     }
 
     let row = match sqlx::query(
@@ -1319,11 +1430,19 @@ pub async fn confirm_region_crop_logic(
     )
     .await;
 
-    if form.return_to.as_deref() == Some("find_bitmap") || form.return_to.as_deref() == Some("edit_find_bitmap") {
+    if form.return_to.as_deref() == Some("find_bitmap")
+        || form.return_to.as_deref() == Some("edit_find_bitmap")
+    {
         let redirect_url = if let (Some(aid), Some(sid)) = (form.automation_id, form.step_id) {
-            format!("/automations/{}/steps/{}/edit?reference_bitmap_id={}", aid, sid, bitmap_id)
+            format!(
+                "/automations/{}/steps/{}/edit?reference_bitmap_id={}",
+                aid, sid, bitmap_id
+            )
         } else if let Some(aid) = form.automation_id {
-            format!("/automations/{}/steps/new/find_bitmap?reference_bitmap_id={}", aid, bitmap_id)
+            format!(
+                "/automations/{}/steps/new/find_bitmap?reference_bitmap_id={}",
+                aid, bitmap_id
+            )
         } else {
             format!("/bitmaps")
         };
@@ -1360,8 +1479,6 @@ pub async fn post_automation_pick_region_confirm_handler(
     form.automation_id = Some(id);
     confirm_region_crop_logic(&state, &user, form).await
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -1533,7 +1650,8 @@ mod tests {
             manual_y: None,
         };
 
-        let is_no_pick = form_keyboard.x == 0 && form_keyboard.y == 0 && form_keyboard.manual_x.is_none();
+        let is_no_pick =
+            form_keyboard.x == 0 && form_keyboard.y == 0 && form_keyboard.manual_x.is_none();
         assert!(is_no_pick);
     }
 }

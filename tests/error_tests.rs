@@ -1,16 +1,16 @@
-use deskdispatch::auth::{AuthUser, LoginRateLimiter, UserRole};
-use deskdispatch::config::Config;
-use deskdispatch::routes::{
-    get_index_handler, get_login_handler, not_found_handler, InternalServerErrorTemplate,
-    NotFoundTemplate,
-};
-use deskdispatch::AppState;
 use askama::Template;
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
     routing::get,
-    Router,
+};
+use deskdispatch::AppState;
+use deskdispatch::auth::{AuthUser, LoginRateLimiter, UserRole};
+use deskdispatch::config::Config;
+use deskdispatch::routes::{
+    InternalServerErrorTemplate, NotFoundTemplate, get_index_handler, get_login_handler,
+    not_found_handler,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -35,9 +35,7 @@ fn test_not_found_template_rendering() {
     assert!(html_no_user.contains("Return to Dashboard"));
 
     // 2. With user
-    let tmpl_user = NotFoundTemplate {
-        user: Some(user),
-    };
+    let tmpl_user = NotFoundTemplate { user: Some(user) };
     let html_user = tmpl_user.render().unwrap();
     assert!(html_user.contains("404"));
     assert!(html_user.contains("Page Not Found"));

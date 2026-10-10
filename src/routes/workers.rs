@@ -10,25 +10,43 @@ use sqlx::{FromRow, Row};
 
 use super::auth::HtmlTemplate;
 use crate::auth::worker::{generate_registration_token, hash_token};
-use crate::auth::{log_audit, CsrfForm, RequireAdmin};
-use axum::routing::{get, post};
+use crate::auth::{CsrfForm, RequireAdmin, log_audit};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/workers", get(get_workers_handler).post(post_create_worker_handler))
+        .route(
+            "/workers",
+            get(get_workers_handler).post(post_create_worker_handler),
+        )
         .route("/workers/new", get(get_new_worker_handler))
         .route("/workers/{id}", get(get_worker_detail_handler))
-        .route("/workers/{id}/edit", get(get_edit_worker_handler).post(post_edit_worker_handler))
+        .route(
+            "/workers/{id}/edit",
+            get(get_edit_worker_handler).post(post_edit_worker_handler),
+        )
         .route("/workers/{id}/delete", post(post_delete_worker_handler))
-        .route("/workers/{id}/deactivate", post(post_deactivate_worker_handler))
-        .route("/workers/{id}/rotate-key", post(post_rotate_worker_key_handler))
+        .route(
+            "/workers/{id}/deactivate",
+            post(post_deactivate_worker_handler),
+        )
+        .route(
+            "/workers/{id}/rotate-key",
+            post(post_rotate_worker_key_handler),
+        )
         .route("/worker-groups/new", get(get_new_worker_group_handler))
         .route("/worker-groups", post(post_create_worker_group_handler))
-        .route("/worker-groups/{id}/edit", get(get_edit_worker_group_handler).post(post_edit_worker_group_handler))
-        .route("/worker-groups/{id}/delete", post(post_delete_worker_group_handler))
+        .route(
+            "/worker-groups/{id}/edit",
+            get(get_edit_worker_group_handler).post(post_edit_worker_group_handler),
+        )
+        .route(
+            "/worker-groups/{id}/delete",
+            post(post_delete_worker_group_handler),
+        )
 }
 
 #[derive(Debug, Clone)]
@@ -121,7 +139,11 @@ pub async fn post_deactivate_worker_handler(
         }
         Err(e) => {
             tracing::error!("Failed to deactivate worker PC: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to deactivate worker PC").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to deactivate worker PC",
+            )
+                .into_response()
         }
     }
 }
@@ -175,7 +197,11 @@ pub async fn post_rotate_worker_key_handler(
         }
         Err(e) => {
             tracing::error!("Failed to rotate worker key: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to rotate worker key").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to rotate worker key",
+            )
+                .into_response()
         }
     }
 }
@@ -244,7 +270,9 @@ mod tests {
             error: None,
         };
 
-        let rendered = tmpl.render().expect("Failed to render WorkerDetailTemplate");
+        let rendered = tmpl
+            .render()
+            .expect("Failed to render WorkerDetailTemplate");
         assert!(rendered.contains("Worker 42"));
         assert!(rendered.contains("action=\"/workers/42/rotate-key\""));
         assert!(rendered.contains("action=\"/workers/42/deactivate\""));
@@ -526,9 +554,7 @@ pub struct WorkerGroupForm {
 // Handlers
 
 #[tracing::instrument(skip(user))]
-pub async fn get_new_worker_handler(
-    RequireAdmin(user): RequireAdmin,
-) -> impl IntoResponse {
+pub async fn get_new_worker_handler(RequireAdmin(user): RequireAdmin) -> impl IntoResponse {
     HtmlTemplate(WorkerNewTemplate {
         user,
         hostname: String::new(),
@@ -667,11 +693,7 @@ pub async fn get_workers_handler(
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!("Failed to fetch task_worker_pcs: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to load workers",
-            )
-                .into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load workers").into_response();
         }
     };
 
@@ -693,7 +715,10 @@ pub async fn get_workers_handler(
         for r in group_mappings {
             let worker_id: i64 = r.get("worker_id");
             let group_name: String = r.get("name");
-            worker_groups_map.entry(worker_id).or_default().push(group_name);
+            worker_groups_map
+                .entry(worker_id)
+                .or_default()
+                .push(group_name);
         }
     }
 
@@ -722,7 +747,10 @@ pub async fn get_workers_handler(
         for r in member_mappings {
             let group_id: i64 = r.get("group_id");
             let display_name: String = r.get("display_name");
-            group_members_map.entry(group_id).or_default().push(display_name);
+            group_members_map
+                .entry(group_id)
+                .or_default()
+                .push(display_name);
         }
     }
 
@@ -949,7 +977,11 @@ pub async fn post_edit_worker_handler(
     if let Err(e) = update_res {
         tracing::error!("Failed to update worker PC: {}", e);
         let _ = tx.rollback().await;
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update worker PC").into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to update worker PC",
+        )
+            .into_response();
     }
 
     // Replace group memberships
@@ -964,13 +996,12 @@ pub async fn post_edit_worker_handler(
     }
 
     for group_id in &form.group_ids {
-        if let Err(e) = sqlx::query(
-            "INSERT INTO worker_group_members (worker_id, group_id) VALUES ($1, $2)",
-        )
-        .bind(id)
-        .bind(group_id)
-        .execute(&mut *tx)
-        .await
+        if let Err(e) =
+            sqlx::query("INSERT INTO worker_group_members (worker_id, group_id) VALUES ($1, $2)")
+                .bind(id)
+                .bind(group_id)
+                .execute(&mut *tx)
+                .await
         {
             tracing::error!("Failed to assign worker group {}: {}", group_id, e);
             let _ = tx.rollback().await;
@@ -1026,7 +1057,11 @@ pub async fn post_delete_worker_handler(
         }
         Err(e) => {
             tracing::error!("Failed to delete worker PC: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete worker PC").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to delete worker PC",
+            )
+                .into_response()
         }
     }
 }
@@ -1070,11 +1105,7 @@ pub async fn post_create_worker_group_handler(
     let description = form.description.trim();
 
     if name.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Group name cannot be empty",
-        )
-            .into_response();
+        return (StatusCode::BAD_REQUEST, "Group name cannot be empty").into_response();
     }
 
     let mut tx = match state.db.begin().await {
@@ -1111,13 +1142,12 @@ pub async fn post_create_worker_group_handler(
     };
 
     for worker_id in &form.worker_ids {
-        if let Err(e) = sqlx::query(
-            "INSERT INTO worker_group_members (worker_id, group_id) VALUES ($1, $2)",
-        )
-        .bind(worker_id)
-        .bind(group_id)
-        .execute(&mut *tx)
-        .await
+        if let Err(e) =
+            sqlx::query("INSERT INTO worker_group_members (worker_id, group_id) VALUES ($1, $2)")
+                .bind(worker_id)
+                .bind(group_id)
+                .execute(&mut *tx)
+                .await
         {
             tracing::error!("Failed to insert worker group member: {}", e);
             let _ = tx.rollback().await;
@@ -1217,11 +1247,7 @@ pub async fn post_edit_worker_group_handler(
     let description = form.description.trim();
 
     if name.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Group name cannot be empty",
-        )
-            .into_response();
+        return (StatusCode::BAD_REQUEST, "Group name cannot be empty").into_response();
     }
 
     let mut tx = match state.db.begin().await {
@@ -1266,13 +1292,12 @@ pub async fn post_edit_worker_group_handler(
     }
 
     for worker_id in &form.worker_ids {
-        if let Err(e) = sqlx::query(
-            "INSERT INTO worker_group_members (worker_id, group_id) VALUES ($1, $2)",
-        )
-        .bind(worker_id)
-        .bind(id)
-        .execute(&mut *tx)
-        .await
+        if let Err(e) =
+            sqlx::query("INSERT INTO worker_group_members (worker_id, group_id) VALUES ($1, $2)")
+                .bind(worker_id)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
         {
             tracing::error!("Failed to insert worker group member: {}", e);
             let _ = tx.rollback().await;
@@ -1328,7 +1353,11 @@ pub async fn post_delete_worker_group_handler(
         }
         Err(e) => {
             tracing::error!("Failed to delete worker group: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete worker group").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to delete worker group",
+            )
+                .into_response()
         }
     }
 }

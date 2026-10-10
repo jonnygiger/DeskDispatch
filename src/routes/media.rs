@@ -1,18 +1,18 @@
-use std::time::Duration;
 use askama::Template;
 use axum::{
     extract::{Path, Query, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::IntoResponse,
 };
 use serde::Deserialize;
 use sqlx::Row;
+use std::time::Duration;
 
 use crate::auth::AuthUser;
 use crate::magnifier::ImageMagnifier;
 use crate::routes::auth::HtmlTemplate;
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 
 use crate::AppState;
 
@@ -53,9 +53,7 @@ pub async fn dev_magnifier_verify_handler(
 
     let magnifier = ImageMagnifier::new(url, native_w, native_h, target_x, target_y);
 
-    HtmlTemplate(DevMagnifierTemplate {
-        magnifier,
-    })
+    HtmlTemplate(DevMagnifierTemplate { magnifier })
 }
 
 /// GET /media/screenshots/{id}
@@ -88,8 +86,16 @@ pub async fn get_media_screenshot_handler(
                 )
                     .into_response(),
                 Err(err) => {
-                    tracing::error!("Failed to generate presigned GET URL for screenshot {}: {}", id, err);
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate media URL").into_response()
+                    tracing::error!(
+                        "Failed to generate presigned GET URL for screenshot {}: {}",
+                        id,
+                        err
+                    );
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to generate media URL",
+                    )
+                        .into_response()
                 }
             }
         }
@@ -131,8 +137,16 @@ pub async fn get_media_bitmap_handler(
                 )
                     .into_response(),
                 Err(err) => {
-                    tracing::error!("Failed to generate presigned GET URL for bitmap {}: {}", id, err);
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate media URL").into_response()
+                    tracing::error!(
+                        "Failed to generate presigned GET URL for bitmap {}: {}",
+                        id,
+                        err
+                    );
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to generate media URL",
+                    )
+                        .into_response()
                 }
             }
         }

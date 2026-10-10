@@ -4,7 +4,11 @@ use proptest::prelude::*;
 /// Pure helper for step position compaction logic (mirroring DB compaction)
 fn compact_step_positions(positions: &[f64]) -> Vec<f64> {
     let mut sorted_indices: Vec<usize> = (0..positions.len()).collect();
-    sorted_indices.sort_by(|&a, &b| positions[a].partial_cmp(&positions[b]).unwrap_or(std::cmp::Ordering::Equal));
+    sorted_indices.sort_by(|&a, &b| {
+        positions[a]
+            .partial_cmp(&positions[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut compacted = vec![0.0; positions.len()];
     for (new_rank, &orig_idx) in sorted_indices.iter().enumerate() {
@@ -54,7 +58,10 @@ fn is_valid_state_transition(from: TaskRunStatus, to: TaskRunStatus) -> bool {
 fn is_terminal_status(status: TaskRunStatus) -> bool {
     matches!(
         status,
-        TaskRunStatus::Succeeded | TaskRunStatus::Failed | TaskRunStatus::Cancelled | TaskRunStatus::Lost
+        TaskRunStatus::Succeeded
+            | TaskRunStatus::Failed
+            | TaskRunStatus::Cancelled
+            | TaskRunStatus::Lost
     )
 }
 

@@ -10,22 +10,26 @@ use sqlx::Row;
 use std::str::FromStr;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{
-    hash_password_async, log_audit, AuthUser, CsrfForm, RequireAdmin, UserRole,
-};
-use axum::routing::{get, post};
+use crate::auth::{AuthUser, CsrfForm, RequireAdmin, UserRole, hash_password_async, log_audit};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/users", get(get_users_handler).post(post_create_user_handler))
+        .route(
+            "/users",
+            get(get_users_handler).post(post_create_user_handler),
+        )
         .route("/users/new", get(get_new_user_handler))
         .route("/users/{id}", post(post_edit_user_handler))
         .route("/users/{id}/edit", get(get_edit_user_handler))
         .route("/users/{id}/deactivate", post(post_deactivate_user_handler))
-        .route("/users/{id}/reset-password", get(get_reset_password_handler).post(post_reset_password_handler))
+        .route(
+            "/users/{id}/reset-password",
+            get(get_reset_password_handler).post(post_reset_password_handler),
+        )
 }
 
 #[derive(Debug, Clone)]
@@ -196,9 +200,7 @@ pub async fn get_users_handler(
 }
 
 #[tracing::instrument(skip(user))]
-pub async fn get_new_user_handler(
-    RequireAdmin(user): RequireAdmin,
-) -> impl IntoResponse {
+pub async fn get_new_user_handler(RequireAdmin(user): RequireAdmin) -> impl IntoResponse {
     HtmlTemplate(NewUserTemplate {
         user,
         username: String::new(),
@@ -302,26 +304,23 @@ pub async fn post_create_user_handler(
         .into_response();
     }
 
-    let password_hash = match hash_password_async(
-        state.rate_limiter.argon2_semaphore.clone(),
-        form.password,
-    )
-    .await
-    {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("Password hashing error: {}", e);
-            return HtmlTemplate(NewUserTemplate {
-                user,
-                username: username.to_string(),
-                display_name: display_name.to_string(),
-                role: role_str.to_string(),
-                must_change_password: form.must_change_password,
-                error: Some("Failed to hash password.".to_string()),
-            })
-            .into_response();
-        }
-    };
+    let password_hash =
+        match hash_password_async(state.rate_limiter.argon2_semaphore.clone(), form.password).await
+        {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("Password hashing error: {}", e);
+                return HtmlTemplate(NewUserTemplate {
+                    user,
+                    username: username.to_string(),
+                    display_name: display_name.to_string(),
+                    role: role_str.to_string(),
+                    must_change_password: form.must_change_password,
+                    error: Some("Failed to hash password.".to_string()),
+                })
+                .into_response();
+            }
+        };
 
     let row = sqlx::query(
         r#"
@@ -416,20 +415,19 @@ pub async fn post_edit_user_handler(
     let display_name = form.display_name.trim();
     let new_role_str = form.role.trim();
 
-    let target_row = match sqlx::query(
-        "SELECT id, username, role, is_active FROM users WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    {
-        Ok(Some(r)) => r,
-        Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
-        Err(e) => {
-            tracing::error!("Failed to fetch target user: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
-        }
-    };
+    let target_row =
+        match sqlx::query("SELECT id, username, role, is_active FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(Some(r)) => r,
+            Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
+            Err(e) => {
+                tracing::error!("Failed to fetch target user: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+            }
+        };
 
     let target_username: String = target_row.get("username");
     let current_role_str: String = target_row.get("role");
@@ -637,12 +635,10 @@ pub async fn get_reset_password_handler(
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let row = match sqlx::query(
-        "SELECT id, username, display_name FROM users WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
+    let row = match sqlx::query("SELECT id, username, display_name FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
     {
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
@@ -670,12 +666,10 @@ pub async fn post_reset_password_handler(
     RequireAdmin(user): RequireAdmin,
     CsrfForm(form): CsrfForm<ResetPasswordForm>,
 ) -> impl IntoResponse {
-    let row = match sqlx::query(
-        "SELECT id, username, display_name FROM users WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
+    let row = match sqlx::query("SELECT id, username, display_name FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
     {
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
@@ -733,14 +727,13 @@ pub async fn post_reset_password_handler(
         }
     };
 
-    let update_res = sqlx::query(
-        "UPDATE users SET password_hash = $1, must_change_password = $2 WHERE id = $3",
-    )
-    .bind(password_hash)
-    .bind(form.must_change_password)
-    .bind(id)
-    .execute(&state.db)
-    .await;
+    let update_res =
+        sqlx::query("UPDATE users SET password_hash = $1, must_change_password = $2 WHERE id = $3")
+            .bind(password_hash)
+            .bind(form.must_change_password)
+            .bind(id)
+            .execute(&state.db)
+            .await;
 
     if let Err(e) = update_res {
         tracing::error!("Failed to reset password: {}", e);

@@ -1,35 +1,62 @@
 use std::collections::HashMap;
 
 use axum::{
+    Json,
     extract::{Path, State},
     response::IntoResponse,
-    Json,
 };
+pub use deskdispatch_protocol::*;
 use sqlx::Row;
 use uuid::Uuid;
-pub use deskdispatch_protocol::*;
 
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::auth::worker::{generate_worker_api_key, hash_token};
 use crate::domain::{StepResultStatus, WorkerStatus};
 use crate::error::AppError;
-use crate::{auth::AuthWorker, AppState};
+use crate::{AppState, auth::AuthWorker};
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/workers/register", post(post_register_worker_handler))
+        .route(
+            "/api/v1/workers/register",
+            post(post_register_worker_handler),
+        )
         .route("/api/v1/workers/heartbeat", post(post_heartbeat_handler))
-        .route("/api/v1/workers/next-assignment", get(get_next_assignment_handler))
+        .route(
+            "/api/v1/workers/next-assignment",
+            get(get_next_assignment_handler),
+        )
         .route("/api/v1/workers/task-runs/{id}", get(get_task_run_handler))
-        .route("/api/v1/workers/task-runs/{id}/step-result", post(post_step_result_handler))
-        .route("/api/v1/workers/task-runs/{id}/complete", post(post_complete_task_run_handler))
-        .route("/api/v1/workers/task-runs/{id}/screenshot-upload-url", get(get_task_run_screenshot_upload_url_handler))
-        .route("/api/v1/workers/task-runs/{id}/screenshots/commit", post(post_task_run_screenshot_commit_handler))
-        .route("/api/v1/workers/recordings/{id}/events", post(post_recording_events_handler))
-        .route("/api/v1/workers/recordings/{id}/screenshot-upload-url", get(get_recording_screenshot_upload_url_handler))
-        .route("/api/v1/workers/recordings/{id}/stop", post(post_worker_stop_recording_handler))
+        .route(
+            "/api/v1/workers/task-runs/{id}/step-result",
+            post(post_step_result_handler),
+        )
+        .route(
+            "/api/v1/workers/task-runs/{id}/complete",
+            post(post_complete_task_run_handler),
+        )
+        .route(
+            "/api/v1/workers/task-runs/{id}/screenshot-upload-url",
+            get(get_task_run_screenshot_upload_url_handler),
+        )
+        .route(
+            "/api/v1/workers/task-runs/{id}/screenshots/commit",
+            post(post_task_run_screenshot_commit_handler),
+        )
+        .route(
+            "/api/v1/workers/recordings/{id}/events",
+            post(post_recording_events_handler),
+        )
+        .route(
+            "/api/v1/workers/recordings/{id}/screenshot-upload-url",
+            get(get_recording_screenshot_upload_url_handler),
+        )
+        .route(
+            "/api/v1/workers/recordings/{id}/stop",
+            post(post_worker_stop_recording_handler),
+        )
 }
 
 #[tracing::instrument(skip(conn))]
@@ -46,12 +73,11 @@ pub async fn fetch_full_automation_json_with_overrides(
     automation_id: i64,
     overrides: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<serde_json::Value, sqlx::Error> {
-    let auto_row = sqlx::query(
-        "SELECT id, name, description, status FROM automations WHERE id = $1",
-    )
-    .bind(automation_id)
-    .fetch_optional(&mut *conn)
-    .await?;
+    let auto_row =
+        sqlx::query("SELECT id, name, description, status FROM automations WHERE id = $1")
+            .bind(automation_id)
+            .fetch_optional(&mut *conn)
+            .await?;
 
     let (id, name, description, status) = match auto_row {
         Some(row) => (
@@ -86,7 +112,10 @@ pub async fn fetch_full_automation_json_with_overrides(
             .unwrap_or(default_val_str);
 
         let val = match ptype.as_str() {
-            "int" => pval_str.parse::<i64>().map(serde_json::Value::from).unwrap_or(serde_json::Value::String(pval_str)),
+            "int" => pval_str
+                .parse::<i64>()
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::String(pval_str)),
             "bool" => {
                 let lower = pval_str.to_lowercase();
                 serde_json::Value::Bool(matches!(lower.as_str(), "true" | "1" | "yes"))
@@ -236,8 +265,10 @@ pub async fn fetch_full_automation_json_with_overrides(
                 if let Some(r) = mouse_clicks_map.get(&step_id) {
                     step_json["x"] = serde_json::json!(r.get::<Option<i32>, _>("x"));
                     step_json["y"] = serde_json::json!(r.get::<Option<i32>, _>("y"));
-                    step_json["x_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("x_variable_id"));
-                    step_json["y_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("y_variable_id"));
+                    step_json["x_variable_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("x_variable_id"));
+                    step_json["y_variable_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("y_variable_id"));
                     step_json["button"] = serde_json::json!(r.get::<String, _>("button"));
                     step_json["click_type"] = serde_json::json!(r.get::<String, _>("click_type"));
                 }
@@ -251,23 +282,32 @@ pub async fn fetch_full_automation_json_with_overrides(
                 if let Some(r) = find_pixel_map.get(&step_id) {
                     step_json["x"] = serde_json::json!(r.get::<i32, _>("x"));
                     step_json["y"] = serde_json::json!(r.get::<i32, _>("y"));
-                    step_json["output_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_variable_id"));
+                    step_json["output_variable_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("output_variable_id"));
                     step_json["timeout_ms"] = serde_json::json!(5000);
                     step_json["retry_interval_ms"] = serde_json::json!(250);
                 }
             }
             "find_bitmap" => {
                 if let Some(r) = find_bitmap_map.get(&step_id) {
-                    step_json["reference_bitmap_id"] = serde_json::json!(r.get::<i64, _>("reference_bitmap_id"));
-                    step_json["reference_bitmap_key"] = serde_json::json!(r.get::<Option<String>, _>("reference_bitmap_key"));
+                    step_json["reference_bitmap_id"] =
+                        serde_json::json!(r.get::<i64, _>("reference_bitmap_id"));
+                    step_json["reference_bitmap_key"] =
+                        serde_json::json!(r.get::<Option<String>, _>("reference_bitmap_key"));
                     step_json["search_x"] = serde_json::json!(r.get::<Option<i32>, _>("search_x"));
                     step_json["search_y"] = serde_json::json!(r.get::<Option<i32>, _>("search_y"));
-                    step_json["search_width"] = serde_json::json!(r.get::<Option<i32>, _>("search_width"));
-                    step_json["search_height"] = serde_json::json!(r.get::<Option<i32>, _>("search_height"));
-                    step_json["match_threshold"] = serde_json::json!(r.get::<f32, _>("match_threshold"));
-                    step_json["output_found_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_found_variable_id"));
-                    step_json["output_x_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_x_variable_id"));
-                    step_json["output_y_variable_id"] = serde_json::json!(r.get::<Option<i64>, _>("output_y_variable_id"));
+                    step_json["search_width"] =
+                        serde_json::json!(r.get::<Option<i32>, _>("search_width"));
+                    step_json["search_height"] =
+                        serde_json::json!(r.get::<Option<i32>, _>("search_height"));
+                    step_json["match_threshold"] =
+                        serde_json::json!(r.get::<f32, _>("match_threshold"));
+                    step_json["output_found_variable_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("output_found_variable_id"));
+                    step_json["output_x_variable_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("output_x_variable_id"));
+                    step_json["output_y_variable_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("output_y_variable_id"));
                     step_json["timeout_ms"] = serde_json::json!(5000);
                     step_json["retry_interval_ms"] = serde_json::json!(250);
                 }
@@ -307,8 +347,10 @@ pub async fn fetch_full_automation_json_with_overrides(
                     };
 
                     step_json["condition"] = condition_obj;
-                    step_json["on_match_step_id"] = serde_json::json!(r.get::<Option<i64>, _>("on_match_step_id"));
-                    step_json["on_no_match_step_id"] = serde_json::json!(r.get::<Option<i64>, _>("on_no_match_step_id"));
+                    step_json["on_match_step_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("on_match_step_id"));
+                    step_json["on_no_match_step_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("on_no_match_step_id"));
                     step_json["timeout_ms"] = serde_json::json!(5000);
                     step_json["retry_interval_ms"] = serde_json::json!(250);
                 }
@@ -335,16 +377,22 @@ pub async fn get_next_assignment_handler(
     worker: AuthWorker,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, AppError> {
-    if let Err(e) = sqlx::query("UPDATE task_worker_pcs SET last_heartbeat_at = now() WHERE id = $1")
-        .bind(worker.id)
-        .execute(&state.db)
-        .await
+    if let Err(e) =
+        sqlx::query("UPDATE task_worker_pcs SET last_heartbeat_at = now() WHERE id = $1")
+            .bind(worker.id)
+            .execute(&state.db)
+            .await
     {
-        tracing::error!(worker_id = worker.id, "Failed to update worker heartbeat in next-assignment: {}", e);
+        tracing::error!(
+            worker_id = worker.id,
+            "Failed to update worker heartbeat in next-assignment: {}",
+            e
+        );
     }
 
     let start_time = std::time::Instant::now();
-    let timeout_duration = std::time::Duration::from_secs(state.config.worker_long_poll_timeout_secs);
+    let timeout_duration =
+        std::time::Duration::from_secs(state.config.worker_long_poll_timeout_secs);
     let mut rx_notify = state.task_queue_notifier.subscribe();
 
     loop {
@@ -481,12 +529,11 @@ pub async fn post_step_result_handler(
         }
     };
 
-    let step_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1",
-    )
-    .bind(task_run_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let step_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1")
+            .bind(task_run_id)
+            .fetch_one(&mut *tx)
+            .await?;
 
     if step_count >= 1000 {
         sqlx::query(
@@ -505,16 +552,17 @@ pub async fn post_step_result_handler(
             "Failing task run due to exceeding max step count limit (1000 steps)"
         );
 
-        return Err(AppError::BadRequest("Exceeded maximum allowed step count limit (1000 steps)".to_string()));
+        return Err(AppError::BadRequest(
+            "Exceeded maximum allowed step count limit (1000 steps)".to_string(),
+        ));
     }
 
-    let step_valid: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM automation_steps WHERE id = $1 AND automation_id = $2",
-    )
-    .bind(payload.step_id)
-    .bind(automation_id)
-    .fetch_optional(&mut *tx)
-    .await?;
+    let step_valid: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM automation_steps WHERE id = $1 AND automation_id = $2")
+            .bind(payload.step_id)
+            .bind(automation_id)
+            .fetch_optional(&mut *tx)
+            .await?;
 
     if step_valid.is_none() {
         return Err(AppError::BadRequest(format!(
@@ -561,18 +609,12 @@ pub async fn post_step_result_handler(
             .and_then(|v| v.get(2).copied())
     });
 
-    let captured_x = payload.captured_x.or_else(|| {
-        payload
-            .captured_xy
-            .as_ref()
-            .and_then(|v| v.get(0).copied())
-    });
-    let captured_y = payload.captured_y.or_else(|| {
-        payload
-            .captured_xy
-            .as_ref()
-            .and_then(|v| v.get(1).copied())
-    });
+    let captured_x = payload
+        .captured_x
+        .or_else(|| payload.captured_xy.as_ref().and_then(|v| v.get(0).copied()));
+    let captured_y = payload
+        .captured_y
+        .or_else(|| payload.captured_xy.as_ref().and_then(|v| v.get(1).copied()));
 
     let completed_at = payload
         .completed_at
@@ -629,17 +671,17 @@ pub async fn post_step_result_handler(
                 }
             }
 
-            return Err(AppError::Internal("Failed to record step result".to_string()));
+            return Err(AppError::Internal(
+                "Failed to record step result".to_string(),
+            ));
         }
     };
 
-    sqlx::query(
-        "UPDATE task_runs SET current_step_id = $1 WHERE id = $2",
-    )
-    .bind(payload.step_id)
-    .bind(task_run_id)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("UPDATE task_runs SET current_step_id = $1 WHERE id = $2")
+        .bind(payload.step_id)
+        .bind(task_run_id)
+        .execute(&mut *tx)
+        .await?;
 
     if let Some(updates) = payload.variable_updates {
         if !updates.is_empty() {
@@ -755,7 +797,10 @@ pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::E
 
     let count = result.rows_affected();
     if count > 0 {
-        tracing::info!(count = count, "Swept stalled task runs with silent heartbeats to lost status");
+        tracing::info!(
+            count = count,
+            "Swept stalled task runs with silent heartbeats to lost status"
+        );
     }
 
     let timed_out_result = sqlx::query(
@@ -774,7 +819,10 @@ pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::E
 
     let timeout_count = timed_out_result.rows_affected();
     if timeout_count > 0 {
-        tracing::info!(count = timeout_count, "Swept timed out task runs (>3600s) to failed status");
+        tracing::info!(
+            count = timeout_count,
+            "Swept timed out task runs (>3600s) to failed status"
+        );
     }
 
     let rec_result = sqlx::query(
@@ -794,7 +842,10 @@ pub async fn sweep_stalled_task_runs(pool: &sqlx::PgPool) -> Result<u64, sqlx::E
 
     let rec_count = rec_result.rows_affected();
     if rec_count > 0 {
-        tracing::info!(count = rec_count, "Swept stuck recording sessions with silent worker heartbeats to discarded status");
+        tracing::info!(
+            count = rec_count,
+            "Swept stuck recording sessions with silent worker heartbeats to discarded status"
+        );
     }
 
     Ok(count + rec_count)
@@ -806,13 +857,12 @@ pub async fn get_task_run_screenshot_upload_url_handler(
     State(state): State<AppState>,
     Path(task_run_id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
-    let run_exists: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM task_runs WHERE id = $1 AND worker_id = $2",
-    )
-    .bind(task_run_id)
-    .bind(worker.id)
-    .fetch_optional(&state.db)
-    .await?;
+    let run_exists: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM task_runs WHERE id = $1 AND worker_id = $2")
+            .bind(task_run_id)
+            .bind(worker.id)
+            .fetch_optional(&state.db)
+            .await?;
 
     if run_exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -844,13 +894,12 @@ pub async fn post_recording_events_handler(
 ) -> Result<impl IntoResponse, AppError> {
     let mut tx = state.db.begin().await?;
 
-    let session_row: Option<(String,)> = sqlx::query_as(
-        "SELECT status FROM recording_sessions WHERE id = $1 AND worker_id = $2",
-    )
-    .bind(session_id)
-    .bind(worker.id)
-    .fetch_optional(&mut *tx)
-    .await?;
+    let session_row: Option<(String,)> =
+        sqlx::query_as("SELECT status FROM recording_sessions WHERE id = $1 AND worker_id = $2")
+            .bind(session_id)
+            .bind(worker.id)
+            .fetch_optional(&mut *tx)
+            .await?;
 
     let session_status = match session_row {
         Some((status,)) => status,
@@ -915,13 +964,12 @@ pub async fn get_recording_screenshot_upload_url_handler(
     State(state): State<AppState>,
     Path(session_id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
-    let session_exists: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM recording_sessions WHERE id = $1 AND worker_id = $2",
-    )
-    .bind(session_id)
-    .bind(worker.id)
-    .fetch_optional(&state.db)
-    .await?;
+    let session_exists: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM recording_sessions WHERE id = $1 AND worker_id = $2")
+            .bind(session_id)
+            .bind(worker.id)
+            .fetch_optional(&state.db)
+            .await?;
 
     if session_exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -996,13 +1044,12 @@ pub async fn post_task_run_screenshot_commit_handler(
         height: None,
     });
 
-    let run_exists: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM task_runs WHERE id = $1 AND worker_id = $2",
-    )
-    .bind(task_run_id)
-    .bind(worker.id)
-    .fetch_optional(&state.db)
-    .await?;
+    let run_exists: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM task_runs WHERE id = $1 AND worker_id = $2")
+            .bind(task_run_id)
+            .bind(worker.id)
+            .fetch_optional(&state.db)
+            .await?;
 
     if run_exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -1011,7 +1058,9 @@ pub async fn post_task_run_screenshot_commit_handler(
         )));
     }
 
-    let object_key = req.object_key.unwrap_or_else(|| format!("runs/{}/step.png", task_run_id));
+    let object_key = req
+        .object_key
+        .unwrap_or_else(|| format!("runs/{}/step.png", task_run_id));
 
     if let Some(step_id) = req.step_id {
         if let Err(e) = sqlx::query(
@@ -1101,7 +1150,10 @@ pub async fn get_task_run_handler(
                 automation: automation_json,
             }))
         }
-        None => Err(AppError::NotFound(format!("Task run {} not found", task_run_id))),
+        None => Err(AppError::NotFound(format!(
+            "Task run {} not found",
+            task_run_id
+        ))),
     }
 }
 
@@ -1122,7 +1174,11 @@ pub fn is_agent_version_outdated(agent_version: Option<&str>, min_version: Optio
 
     let parse_version = |v: &str| -> Vec<u64> {
         v.split('.')
-            .map(|part| part.chars().take_while(|c| c.is_ascii_digit()).collect::<String>())
+            .map(|part| {
+                part.chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+            })
             .map(|s| s.parse::<u64>().unwrap_or(0))
             .collect()
     };
@@ -1242,7 +1298,9 @@ pub async fn post_register_worker_handler(
         .unwrap_or_default();
 
     if token.is_empty() {
-        return Err(AppError::BadRequest("registration_token is required".to_string()));
+        return Err(AppError::BadRequest(
+            "registration_token is required".to_string(),
+        ));
     }
 
     let token_hash = hash_token(&token);
@@ -1285,7 +1343,9 @@ pub async fn post_register_worker_handler(
                 api_key,
             }))
         }
-        None => Err(AppError::Unauthorized("Invalid or expired registration token".to_string())),
+        None => Err(AppError::Unauthorized(
+            "Invalid or expired registration token".to_string(),
+        )),
     }
 }
 
@@ -1391,17 +1451,22 @@ mod tests {
     #[test]
     fn test_next_assignment_response_serialization() {
         let resp = NextAssignmentResponse::None;
-        let json_str = serde_json::to_string(&resp).expect("Failed to serialize NextAssignmentResponse");
+        let json_str =
+            serde_json::to_string(&resp).expect("Failed to serialize NextAssignmentResponse");
         assert_eq!(json_str, r#"{"type":"none"}"#);
 
         let rec_resp = NextAssignmentResponse::StartRecording {
             recording_session_id: 101,
         };
-        let rec_json = serde_json::to_string(&rec_resp).expect("Failed to serialize StartRecording");
-        assert_eq!(rec_json, r#"{"type":"start_recording","recording_session_id":101}"#);
+        let rec_json =
+            serde_json::to_string(&rec_resp).expect("Failed to serialize StartRecording");
+        assert_eq!(
+            rec_json,
+            r#"{"type":"start_recording","recording_session_id":101}"#
+        );
 
-        let rec_deserialized: NextAssignmentResponse = serde_json::from_str(&rec_json)
-            .expect("Failed to deserialize StartRecording");
+        let rec_deserialized: NextAssignmentResponse =
+            serde_json::from_str(&rec_json).expect("Failed to deserialize StartRecording");
         assert_eq!(rec_deserialized, rec_resp);
 
         let deserialized: NextAssignmentResponse = serde_json::from_str(r#"{"type":"none"}"#)
@@ -1415,13 +1480,14 @@ mod tests {
                 "parameters": { "click_tolerance": 8 }
             }),
         };
-        let exec_json = serde_json::to_string(&exec_resp).expect("Failed to serialize ExecuteAutomation");
+        let exec_json =
+            serde_json::to_string(&exec_resp).expect("Failed to serialize ExecuteAutomation");
         assert!(exec_json.contains(r#""type":"execute_automation""#));
         assert!(exec_json.contains(r#""task_run_id":4821"#));
         assert!(exec_json.contains(r#""automation":{"id":12,"parameters":{"click_tolerance":8}}"#));
 
-        let exec_deserialized: NextAssignmentResponse = serde_json::from_str(&exec_json)
-            .expect("Failed to deserialize ExecuteAutomation");
+        let exec_deserialized: NextAssignmentResponse =
+            serde_json::from_str(&exec_json).expect("Failed to deserialize ExecuteAutomation");
         assert_eq!(exec_deserialized, exec_resp);
     }
 
@@ -1560,7 +1626,9 @@ mod tests {
     #[test]
     fn test_screenshot_upload_url_response_serialization() {
         let resp = ScreenshotUploadUrlResponse {
-            upload_url: "http://localhost:9000/deskdispatch-bucket/runs/1/step_123.png?X-Amz-Signature=abc".to_string(),
+            upload_url:
+                "http://localhost:9000/deskdispatch-bucket/runs/1/step_123.png?X-Amz-Signature=abc"
+                    .to_string(),
             object_key: "runs/1/step_123.png".to_string(),
         };
 
@@ -1568,7 +1636,8 @@ mod tests {
         assert!(json_str.contains(r#""upload_url":"http://localhost:9000/deskdispatch-bucket/runs/1/step_123.png?X-Amz-Signature=abc""#));
         assert!(json_str.contains(r#""object_key":"runs/1/step_123.png""#));
 
-        let deserialized: ScreenshotUploadUrlResponse = serde_json::from_str(&json_str).expect("Deserialization failed");
+        let deserialized: ScreenshotUploadUrlResponse =
+            serde_json::from_str(&json_str).expect("Deserialization failed");
         assert_eq!(deserialized, resp);
     }
 
@@ -1581,7 +1650,8 @@ mod tests {
             "height": 1080
         }"#;
 
-        let req: CommitScreenshotRequest = serde_json::from_str(json_data).expect("Deserialization failed");
+        let req: CommitScreenshotRequest =
+            serde_json::from_str(json_data).expect("Deserialization failed");
         assert_eq!(req.step_id, Some(101));
         assert_eq!(req.object_key.as_deref(), Some("runs/1/step_101.png"));
         assert_eq!(req.width, Some(1920));
@@ -1622,7 +1692,8 @@ mod tests {
             ]
         }"#;
 
-        let req: PostRecordingEventsRequest = serde_json::from_str(json_req).expect("Deserialization failed");
+        let req: PostRecordingEventsRequest =
+            serde_json::from_str(json_req).expect("Deserialization failed");
         assert_eq!(req.events.len(), 2);
         assert_eq!(req.events[0].sequence_number, 1);
         assert_eq!(req.events[0].event_type, "mouse_click");
@@ -1658,7 +1729,8 @@ mod tests {
             "status": "succeeded",
             "error_message": null
         }"#;
-        let req: CompleteTaskRunRequest = serde_json::from_str(json_data).expect("Deserialization failed");
+        let req: CompleteTaskRunRequest =
+            serde_json::from_str(json_data).expect("Deserialization failed");
         assert_eq!(req.status, "succeeded");
         assert_eq!(req.error_message, None);
 
@@ -1666,7 +1738,8 @@ mod tests {
             "status": "failed",
             "error_message": "Bitmap not found on target screen"
         }"#;
-        let req_failed: CompleteTaskRunRequest = serde_json::from_str(json_failed).expect("Deserialization failed");
+        let req_failed: CompleteTaskRunRequest =
+            serde_json::from_str(json_failed).expect("Deserialization failed");
         assert_eq!(req_failed.status, "failed");
         assert_eq!(
             req_failed.error_message.as_deref(),

@@ -176,14 +176,21 @@ pub async fn cleanup_abandoned_tmp_uploads(
                 let should_delete = match obj.last_modified {
                     Some(lm) => {
                         let sec = lm.as_secs_f64();
-                        let obj_time = DateTime::from_timestamp(sec as i64, 0).unwrap_or(Utc::now());
+                        let obj_time =
+                            DateTime::from_timestamp(sec as i64, 0).unwrap_or(Utc::now());
                         obj_time < cutoff
                     }
                     None => true,
                 };
 
                 if should_delete {
-                    if let Err(e) = s3_client.delete_object().bucket(bucket).key(&key).send().await {
+                    if let Err(e) = s3_client
+                        .delete_object()
+                        .bucket(bucket)
+                        .key(&key)
+                        .send()
+                        .await
+                    {
                         error!("Failed to delete abandoned tmp object '{}': {}", key, e);
                     } else {
                         count += 1;
@@ -194,7 +201,10 @@ pub async fn cleanup_abandoned_tmp_uploads(
     }
 
     if count > 0 {
-        info!("Cleaned up {} abandoned tmp upload object(s) from S3", count);
+        info!(
+            "Cleaned up {} abandoned tmp upload object(s) from S3",
+            count
+        );
     }
 
     Ok(count)

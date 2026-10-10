@@ -1,7 +1,12 @@
+use askama::Template;
+use chrono::Utc;
 use deskdispatch::auth::UserRole;
 use deskdispatch::routes::account::AccountPasswordTemplate;
 use deskdispatch::routes::auth::LoginTemplate;
-use deskdispatch::routes::bitmaps::{BitmapListItem, BitmapsConfirmTemplate, BitmapsListTemplate, BitmapsUploadTemplate, RegionPickerTopLeftTemplate};
+use deskdispatch::routes::bitmaps::{
+    BitmapListItem, BitmapsConfirmTemplate, BitmapsListTemplate, BitmapsUploadTemplate,
+    RegionPickerTopLeftTemplate,
+};
 use deskdispatch::routes::errors::{InternalServerErrorTemplate, NotFoundTemplate};
 use deskdispatch::routes::home::{IndexTemplate, RecentRunItem};
 use deskdispatch::routes::media::DevMagnifierTemplate;
@@ -10,22 +15,28 @@ use deskdispatch::routes::runs::*;
 use deskdispatch::routes::schedules::*;
 use deskdispatch::routes::users::*;
 use deskdispatch::routes::workers::*;
-use askama::Template;
-use chrono::Utc;
 use std::fs;
 
 fn main() {
     fs::create_dir_all("rendered_templates").unwrap();
 
     let login_tmpl = LoginTemplate { error: None };
-    fs::write("rendered_templates/login.html", login_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/login.html",
+        login_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let pwd_tmpl = AccountPasswordTemplate {
         csrf_token: "test_csrf_token_12345".to_string(),
         error: None,
         success: Some("Password updated successfully.".to_string()),
     };
-    fs::write("rendered_templates/account_password.html", pwd_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/account_password.html",
+        pwd_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let user = deskdispatch::auth::AuthUser {
         id: 1,
@@ -76,7 +87,11 @@ fn main() {
         failed_lost_runs_today_count: 1,
         recent_runs: sample_runs,
     };
-    fs::write("rendered_templates/index.html", index_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/index.html",
+        index_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let not_found_tmpl = NotFoundTemplate {
         user: Some(user.clone()),
@@ -114,7 +129,11 @@ fn main() {
     let dev_mag_tmpl = DevMagnifierTemplate {
         magnifier: mag.clone(),
     };
-    fs::write("rendered_templates/dev_magnifier.html", dev_mag_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/dev_magnifier.html",
+        dev_mag_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let sample_bitmap = BitmapListItem {
         id: 1,
@@ -143,7 +162,11 @@ fn main() {
         automation_id: None,
         automation_name: None,
     };
-    fs::write("rendered_templates/bitmaps_list.html", bitmaps_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/bitmaps_list.html",
+        bitmaps_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let upload_tmpl = BitmapsUploadTemplate {
         user: user.clone(),
@@ -156,9 +179,15 @@ fn main() {
             ("key".to_string(), "bitmaps/sample.png".to_string()),
             ("policy".to_string(), "sample_policy".to_string()),
         ],
-        redirect_url: "http://localhost:3000/bitmaps/commit?key=bitmaps/sample.png&name=Login%20Button".to_string(),
+        redirect_url:
+            "http://localhost:3000/bitmaps/commit?key=bitmaps/sample.png&name=Login%20Button"
+                .to_string(),
     };
-    fs::write("rendered_templates/bitmaps_upload.html", upload_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/bitmaps_upload.html",
+        upload_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let confirm_tmpl = BitmapsConfirmTemplate {
         user: user.clone(),
@@ -169,7 +198,11 @@ fn main() {
         height: 40,
         automation_id: None,
     };
-    fs::write("rendered_templates/bitmaps_confirm.html", confirm_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/bitmaps_confirm.html",
+        confirm_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let pick_region_tmpl = RegionPickerTopLeftTemplate {
         user: user.clone(),
@@ -198,7 +231,11 @@ fn main() {
         reference_bitmap_id: None,
         error_msg: None,
     };
-    fs::write("rendered_templates/bitmaps_pick_region.html", pick_region_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/bitmaps_pick_region.html",
+        pick_region_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let pick_region_stage3_tmpl = RegionPickerTopLeftTemplate {
         user: user.clone(),
@@ -227,13 +264,21 @@ fn main() {
         reference_bitmap_id: None,
         error_msg: None,
     };
-    fs::write("rendered_templates/bitmaps_pick_region_stage3.html", pick_region_stage3_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/bitmaps_pick_region_stage3.html",
+        pick_region_stage3_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let step_picker_tmpl = deskdispatch::routes::automations::StepTypePickerTemplate {
         user: user.clone(),
         automation_id: 1,
     };
-    fs::write("rendered_templates/step_type_picker.html", step_picker_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/step_type_picker.html",
+        step_picker_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let worker_item = WorkerPcItem {
         id: 1,
@@ -260,7 +305,11 @@ fn main() {
         workers: vec![worker_item],
         worker_groups: vec![group_item],
     };
-    fs::write("rendered_templates/workers_index.html", workers_idx_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/workers_index.html",
+        workers_idx_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let worker_detail = WorkerDetail {
         id: 1,
@@ -285,7 +334,11 @@ fn main() {
         worker: worker_detail.clone(),
         error: None,
     };
-    fs::write("rendered_templates/workers_detail.html", worker_detail_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/workers_detail.html",
+        worker_detail_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let worker_new_tmpl = WorkerNewTemplate {
         user: user.clone(),
@@ -293,7 +346,11 @@ fn main() {
         display_name: "Warehouse Worker PC 2".to_string(),
         error: None,
     };
-    fs::write("rendered_templates/workers_new.html", worker_new_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/workers_new.html",
+        worker_new_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let worker_edit_tmpl = WorkerEditTemplate {
         user: user.clone(),
@@ -305,7 +362,11 @@ fn main() {
         }],
         error: None,
     };
-    fs::write("rendered_templates/workers_edit.html", worker_edit_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/workers_edit.html",
+        worker_edit_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let group_form_tmpl = WorkerGroupFormTemplate {
         user: user.clone(),
@@ -321,7 +382,11 @@ fn main() {
         error: None,
         is_edit: true,
     };
-    fs::write("rendered_templates/worker_group_form.html", group_form_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/worker_group_form.html",
+        group_form_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let sample_run_item = TaskRunListItem {
         id: 4821,
@@ -358,7 +423,11 @@ fn main() {
         next_id: None,
         has_next_page: false,
     };
-    fs::write("rendered_templates/runs_list.html", runs_list_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/runs_list.html",
+        runs_list_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let sample_exec_step = ExecutedStepItem {
         id: 1,
@@ -397,7 +466,11 @@ fn main() {
         parameters: vec![],
         auto_refresh: false,
     };
-    fs::write("rendered_templates/runs_detail.html", run_detail_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/runs_detail.html",
+        run_detail_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let rec_session = RecordingSessionDetail {
         id: 10,
@@ -417,7 +490,11 @@ fn main() {
         worker: worker_detail.clone(),
         error: None,
     };
-    fs::write("rendered_templates/recordings_start.html", rec_start_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/recordings_start.html",
+        rec_start_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let rec_status_tmpl = RecordingStatusTemplate {
         user: user.clone(),
@@ -426,7 +503,11 @@ fn main() {
         error: None,
         paused: false,
     };
-    fs::write("rendered_templates/recordings_status.html", rec_status_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/recordings_status.html",
+        rec_status_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let rec_review_tmpl = RecordingReviewTemplate {
         user: user.clone(),
@@ -435,7 +516,11 @@ fn main() {
         default_automation_name: "Recorded Automation - Warehouse Worker PC".to_string(),
         error: None,
     };
-    fs::write("rendered_templates/recordings_review.html", rec_review_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/recordings_review.html",
+        rec_review_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let sample_schedule = ScheduleItem {
         id: 1,
@@ -459,7 +544,11 @@ fn main() {
         user: user.clone(),
         schedules: vec![sample_schedule],
     };
-    fs::write("rendered_templates/schedules_index.html", schedules_idx_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/schedules_index.html",
+        schedules_idx_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let schedule_form_tmpl = ScheduleFormTemplate {
         user: user.clone(),
@@ -483,7 +572,11 @@ fn main() {
         }],
         error: None,
     };
-    fs::write("rendered_templates/schedules_form.html", schedule_form_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/schedules_form.html",
+        schedule_form_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let users_idx_tmpl = UsersIndexTemplate {
         user: user.clone(),
@@ -500,7 +593,11 @@ fn main() {
         error: None,
         success: None,
     };
-    fs::write("rendered_templates/users_index.html", users_idx_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/users_index.html",
+        users_idx_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let user_new_tmpl = NewUserTemplate {
         user: user.clone(),
@@ -510,7 +607,11 @@ fn main() {
         must_change_password: true,
         error: None,
     };
-    fs::write("rendered_templates/users_new.html", user_new_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/users_new.html",
+        user_new_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let user_edit_tmpl = EditUserTemplate {
         user: user.clone(),
@@ -522,7 +623,11 @@ fn main() {
         must_change_password: false,
         error: None,
     };
-    fs::write("rendered_templates/users_edit.html", user_edit_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/users_edit.html",
+        user_edit_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     let user_reset_tmpl = ResetPasswordTemplate {
         user: user.clone(),
@@ -532,7 +637,11 @@ fn main() {
         must_change_password: true,
         error: None,
     };
-    fs::write("rendered_templates/users_reset_password.html", user_reset_tmpl.render().unwrap()).unwrap();
+    fs::write(
+        "rendered_templates/users_reset_password.html",
+        user_reset_tmpl.render().unwrap(),
+    )
+    .unwrap();
 
     println!("Successfully rendered Askama templates to rendered_templates/");
 }

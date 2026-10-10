@@ -1,5 +1,5 @@
-use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::Client;
+use aws_sdk_s3::presigning::PresigningConfig;
 use base64::Engine;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
@@ -126,10 +126,7 @@ impl StorageService {
         self
     }
 
-    pub fn with_public_endpoint(
-        mut self,
-        public_endpoint_url: Option<impl Into<String>>,
-    ) -> Self {
+    pub fn with_public_endpoint(mut self, public_endpoint_url: Option<impl Into<String>>) -> Self {
         self.public_endpoint_url = public_endpoint_url.map(|e| e.into());
         self
     }
@@ -149,7 +146,8 @@ impl StorageService {
         object_key: &str,
         expires_in: Duration,
     ) -> Result<String, StorageError> {
-        let url = get_presigned_get_url(&self.s3_client, &self.bucket, object_key, expires_in).await?;
+        let url =
+            get_presigned_get_url(&self.s3_client, &self.bucket, object_key, expires_in).await?;
         Ok(rewrite_url_with_public_endpoint(
             url,
             self.endpoint_url.as_deref(),
@@ -164,7 +162,8 @@ impl StorageService {
         object_key: &str,
         expires_in: Duration,
     ) -> Result<String, StorageError> {
-        let url = get_presigned_put_url(&self.s3_client, &self.bucket, object_key, expires_in).await?;
+        let url =
+            get_presigned_put_url(&self.s3_client, &self.bucket, object_key, expires_in).await?;
         Ok(rewrite_url_with_public_endpoint(
             url,
             self.endpoint_url.as_deref(),
@@ -271,13 +270,17 @@ pub fn generate_presigned_post_policy(
         serde_json::json!({ "x-amz-algorithm": "AWS4-HMAC-SHA256" }),
         serde_json::json!({ "x-amz-credential": credential }),
         serde_json::json!({ "x-amz-date": amz_date }),
-        serde_json::json!([ "content-length-range", 0, max_content_length ]),
+        serde_json::json!(["content-length-range", 0, max_content_length]),
     ];
 
     if let Some(redirect) = success_action_redirect {
         conditions.push(serde_json::json!({ "success_action_redirect": redirect }));
     } else {
-        conditions.push(serde_json::json!([ "starting-with", "$success_action_redirect", "" ]));
+        conditions.push(serde_json::json!([
+            "starting-with",
+            "$success_action_redirect",
+            ""
+        ]));
     }
 
     let policy_json = serde_json::json!({
@@ -300,7 +303,10 @@ pub fn generate_presigned_post_policy(
 
     let mut fields = HashMap::new();
     fields.insert("key".to_string(), object_key.to_string());
-    fields.insert("x-amz-algorithm".to_string(), "AWS4-HMAC-SHA256".to_string());
+    fields.insert(
+        "x-amz-algorithm".to_string(),
+        "AWS4-HMAC-SHA256".to_string(),
+    );
     fields.insert("x-amz-credential".to_string(), credential.clone());
     fields.insert("x-amz-date".to_string(), amz_date.clone());
     if let Some(redirect) = success_action_redirect {
@@ -311,7 +317,10 @@ pub fn generate_presigned_post_policy(
 
     let mut ordered_fields = vec![
         ("key".to_string(), object_key.to_string()),
-        ("x-amz-algorithm".to_string(), "AWS4-HMAC-SHA256".to_string()),
+        (
+            "x-amz-algorithm".to_string(),
+            "AWS4-HMAC-SHA256".to_string(),
+        ),
         ("x-amz-credential".to_string(), credential),
         ("x-amz-date".to_string(), amz_date),
     ];
@@ -481,12 +490,16 @@ mod tests {
         assert!(policy_json.get("expiration").is_some());
         let conditions = policy_json.get("conditions").unwrap().as_array().unwrap();
 
-        assert!(conditions
-            .iter()
-            .any(|c| c.get("bucket") == Some(&serde_json::json!("test-bucket"))));
-        assert!(conditions
-            .iter()
-            .any(|c| c.get("key") == Some(&serde_json::json!("bitmaps/button.png"))));
+        assert!(
+            conditions
+                .iter()
+                .any(|c| c.get("bucket") == Some(&serde_json::json!("test-bucket")))
+        );
+        assert!(
+            conditions
+                .iter()
+                .any(|c| c.get("key") == Some(&serde_json::json!("bitmaps/button.png")))
+        );
     }
 
     #[tokio::test]
@@ -526,11 +539,12 @@ mod tests {
 
         assert_eq!(post.url, "http://s3.local:9000/deskdispatch-bucket");
         assert_eq!(post.fields.get("key").unwrap(), "bitmaps/upload_1.png");
-        assert!(post
-            .fields
-            .get("x-amz-credential")
-            .unwrap()
-            .starts_with("my_key/"));
+        assert!(
+            post.fields
+                .get("x-amz-credential")
+                .unwrap()
+                .starts_with("my_key/")
+        );
     }
 
     #[test]
@@ -542,10 +556,7 @@ mod tests {
             Some("http://minio.internal:9000/"),
             Some("https://s3.public.com/"),
         );
-        assert_eq!(
-            rewritten,
-            "https://s3.public.com/bucket/key.png?sig=123"
-        );
+        assert_eq!(rewritten, "https://s3.public.com/bucket/key.png?sig=123");
 
         // 2. Missing internal or public endpoint
         assert_eq!(
@@ -588,7 +599,12 @@ mod tests {
 
         let s3_client = Client::from_conf(s3_config);
         let storage = StorageService::new(s3_client, "test-bucket")
-            .with_credentials("key", "secret", "us-east-1", Some("http://minio.internal:9000"))
+            .with_credentials(
+                "key",
+                "secret",
+                "us-east-1",
+                Some("http://minio.internal:9000"),
+            )
             .with_public_endpoint(Some("https://s3.public.com"));
 
         // GET URL rewriting

@@ -1,19 +1,13 @@
 #![forbid(unsafe_code)]
 
-use deskdispatch::{
-    auth::LoginRateLimiter,
-    build_router,
-    config::Config,
-    routes::*,
-    AppState,
-};
-use secrecy::ExposeSecret;
 use argon2::{Argon2, PasswordHasher};
+use deskdispatch::{AppState, auth::LoginRateLimiter, build_router, config::Config, routes::*};
+use secrecy::ExposeSecret;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::net::SocketAddr;
 use tracing::{error, info};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,7 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Some("healthcheck") => {
-            let addr: SocketAddr = config.bind_address.parse().unwrap_or_else(|_| "127.0.0.1:3000".parse().expect("Valid socket address"));
+            let addr: SocketAddr = config
+                .bind_address
+                .parse()
+                .unwrap_or_else(|_| "127.0.0.1:3000".parse().expect("Valid socket address"));
             match check_health(&addr).await {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
@@ -195,7 +192,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Optional separate Prometheus metrics listener
     if let Some(metrics_addr_str) = &config.metrics_bind_address {
         if let Ok(metrics_addr) = metrics_addr_str.parse::<SocketAddr>() {
-            let metrics_app = axum::Router::new().route("/metrics", axum::routing::get(metrics_handler));
+            let metrics_app =
+                axum::Router::new().route("/metrics", axum::routing::get(metrics_handler));
             let metrics_cancel = cancel_token.clone();
             tasks.spawn(async move {
                 if let Ok(metrics_listener) = tokio::net::TcpListener::bind(metrics_addr).await {
@@ -270,7 +268,10 @@ async fn shutdown_signal() {
 pub async fn metrics_handler() -> impl axum::response::IntoResponse {
     let metrics = "# HELP deskdispatch_up Process uptime status\n# TYPE deskdispatch_up gauge\ndeskdispatch_up 1\n";
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         metrics,
     )
 }
@@ -278,7 +279,9 @@ pub async fn metrics_handler() -> impl axum::response::IntoResponse {
 async fn connect_db(config: &Config) -> Result<sqlx::PgPool, Box<dyn std::error::Error>> {
     let pool = PgPoolOptions::new()
         .max_connections(config.database_max_connections)
-        .acquire_timeout(std::time::Duration::from_secs(config.database_acquire_timeout_secs))
+        .acquire_timeout(std::time::Duration::from_secs(
+            config.database_acquire_timeout_secs,
+        ))
         .connect(&config.database_url)
         .await
         .map_err(|e| {
@@ -346,7 +349,9 @@ fn build_s3_client(config: &Config) -> aws_sdk_s3::Client {
         .region(aws_sdk_s3::config::Region::new(config.s3_region.clone()));
 
     if let Some(endpoint) = &config.s3_endpoint {
-        s3_config_builder = s3_config_builder.endpoint_url(endpoint).force_path_style(true);
+        s3_config_builder = s3_config_builder
+            .endpoint_url(endpoint)
+            .force_path_style(true);
     }
 
     aws_sdk_s3::Client::from_conf(s3_config_builder.build())
@@ -362,11 +367,7 @@ async fn ensure_s3_bucket(
         }
         Err(_) => {
             info!("S3 bucket '{}' not found, creating...", bucket_name);
-            s3_client
-                .create_bucket()
-                .bucket(bucket_name)
-                .send()
-                .await?;
+            s3_client.create_bucket().bucket(bucket_name).send().await?;
             info!("S3 bucket '{}' created successfully.", bucket_name);
         }
     }
@@ -399,9 +400,15 @@ async fn ensure_s3_bucket(
                 .send()
                 .await
             {
-                tracing::warn!("Failed to set S3 bucket lifecycle policy (may be unsupported by mock/RustFS): {}", e);
+                tracing::warn!(
+                    "Failed to set S3 bucket lifecycle policy (may be unsupported by mock/RustFS): {}",
+                    e
+                );
             } else {
-                info!("S3 lifecycle configuration set for 'tmp/' prefix on bucket '{}'", bucket_name);
+                info!(
+                    "S3 lifecycle configuration set for 'tmp/' prefix on bucket '{}'",
+                    bucket_name
+                );
             }
         }
     }
@@ -410,8 +417,7 @@ async fn ensure_s3_bucket(
 }
 
 fn init_tracing(config: &Config) {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     if config.is_production() {
         tracing_subscriber::registry()
@@ -431,7 +437,10 @@ async fn check_health(addr: &SocketAddr) -> Result<(), Box<dyn std::error::Error
     use tokio::net::TcpStream;
 
     let mut stream = TcpStream::connect(addr).await?;
-    let request = format!("GET /livez HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", addr);
+    let request = format!(
+        "GET /livez HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        addr
+    );
     stream.write_all(request.as_bytes()).await?;
 
     let mut buffer = [0u8; 1024];
@@ -449,12 +458,17 @@ pub async fn livez_handler() -> impl axum::response::IntoResponse {
     (axum::http::StatusCode::OK, "OK")
 }
 
-pub async fn readyz_handler(axum::extract::State(state): axum::extract::State<AppState>) -> impl axum::response::IntoResponse {
+pub async fn readyz_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> impl axum::response::IntoResponse {
     match sqlx::query("SELECT 1").execute(&state.db).await {
         Ok(_) => (axum::http::StatusCode::OK, "OK"),
         Err(err) => {
             tracing::error!("Readyz check failed: {}", err);
-            (axum::http::StatusCode::SERVICE_UNAVAILABLE, "Database connection error")
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "Database connection error",
+            )
         }
     }
 }

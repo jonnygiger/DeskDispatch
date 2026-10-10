@@ -13,10 +13,18 @@ mod tests {
 
     #[test]
     fn test_audit_action_formatting() {
-        let soft_delete_audit = if true { "soft_delete_step" } else { "delete_step" };
+        let soft_delete_audit = if true {
+            "soft_delete_step"
+        } else {
+            "delete_step"
+        };
         assert_eq!(soft_delete_audit, "soft_delete_step");
 
-        let hard_delete_audit = if false { "soft_delete_step" } else { "delete_step" };
+        let hard_delete_audit = if false {
+            "soft_delete_step"
+        } else {
+            "delete_step"
+        };
         assert_eq!(hard_delete_audit, "delete_step");
     }
 }

@@ -1,20 +1,17 @@
-use deskdispatch::{
-    config::Config,
-    routes::*,
-    AppState,
-};
-use secrecy::ExposeSecret;
 use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
     Router,
+    body::Body,
+    http::{Request, StatusCode, header},
 };
+use deskdispatch::{AppState, config::Config, routes::*};
+use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 async fn get_test_pool() -> Option<PgPool> {
-    let db_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string());
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     let connect_opts = db_url
         .parse::<sqlx::postgres::PgConnectOptions>()
         .ok()?
@@ -76,26 +73,70 @@ async fn test_automations_crud_and_steps_ordering() {
     };
 
     let app = Router::new()
-        .route("/automations", axum::routing::get(get_automations_handler).post(post_automations_handler))
-        .route("/automations/new", axum::routing::get(get_new_automation_handler))
-        .route("/automations/{id}", axum::routing::get(get_automation_detail_handler).post(post_automation_edit_handler))
-        .route("/automations/{id}/delete", axum::routing::get(get_automation_delete_handler).post(post_automation_delete_handler))
-        .route("/automations/{id}/steps/new", axum::routing::get(get_step_type_picker_handler))
-        .route("/automations/{id}/steps/new/key_press", axum::routing::get(get_new_key_press_step_handler))
-        .route("/automations/{id}/steps/new/mouse_click", axum::routing::get(get_new_mouse_click_step_handler))
-        .route("/automations/{id}/steps", axum::routing::post(post_create_step_handler))
-        .route("/automations/{id}/steps/{sid}/edit", axum::routing::get(get_edit_step_handler))
-        .route("/automations/{id}/steps/{sid}", axum::routing::post(post_edit_step_handler))
-        .route("/automations/{id}/steps/{sid}/move-up", axum::routing::post(post_move_step_up_handler))
-        .route("/automations/{id}/steps/{sid}/move-down", axum::routing::post(post_move_step_down_handler))
-        .route("/automations/{id}/steps/{sid}/delete", axum::routing::post(post_delete_step_handler))
+        .route(
+            "/automations",
+            axum::routing::get(get_automations_handler).post(post_automations_handler),
+        )
+        .route(
+            "/automations/new",
+            axum::routing::get(get_new_automation_handler),
+        )
+        .route(
+            "/automations/{id}",
+            axum::routing::get(get_automation_detail_handler).post(post_automation_edit_handler),
+        )
+        .route(
+            "/automations/{id}/delete",
+            axum::routing::get(get_automation_delete_handler).post(post_automation_delete_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new",
+            axum::routing::get(get_step_type_picker_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new/key_press",
+            axum::routing::get(get_new_key_press_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new/mouse_click",
+            axum::routing::get(get_new_mouse_click_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps",
+            axum::routing::post(post_create_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/edit",
+            axum::routing::get(get_edit_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}",
+            axum::routing::post(post_edit_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/move-up",
+            axum::routing::post(post_move_step_up_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/move-down",
+            axum::routing::post(post_move_step_down_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/delete",
+            axum::routing::post(post_delete_step_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_admin_id, admin_session) = create_test_user(&pool, &format!("auto_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("auto_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
@@ -116,9 +157,17 @@ async fn test_automations_crud_and_steps_ordering() {
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(location.starts_with("/automations/"));
-    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+    let automation_id: i64 = location
+        .trim_start_matches("/automations/")
+        .parse()
+        .unwrap();
 
     // 2. Fetch automation details
     let req = Request::builder()
@@ -131,7 +180,10 @@ async fn test_automations_crud_and_steps_ordering() {
     assert_eq!(res.status(), StatusCode::OK);
 
     // 3. Add Step 1 (key_press: F5)
-    let step1_body = format!("key_combo=F5&label=Refresh&post_delay_seconds=1.0&csrf_token={}", csrf_token);
+    let step1_body = format!(
+        "key_combo=F5&label=Refresh&post_delay_seconds=1.0&csrf_token={}",
+        csrf_token
+    );
     let req = Request::builder()
         .method("POST")
         .uri(format!("/automations/{}/steps", automation_id))
@@ -143,7 +195,10 @@ async fn test_automations_crud_and_steps_ordering() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Add Step 2 (key_press: enter)
-    let step2_body = format!("key_combo=enter&label=Confirm&post_delay_seconds=0.5&csrf_token={}", csrf_token);
+    let step2_body = format!(
+        "key_combo=enter&label=Confirm&post_delay_seconds=0.5&csrf_token={}",
+        csrf_token
+    );
     let req = Request::builder()
         .method("POST")
         .uri(format!("/automations/{}/steps", automation_id))
@@ -155,11 +210,13 @@ async fn test_automations_crud_and_steps_ordering() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify steps in DB
-    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC")
-        .bind(automation_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+    let steps = sqlx::query(
+        "SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
     assert_eq!(steps.len(), 2);
     let step1_id: i64 = sqlx::Row::get(&steps[0], "id");
     let step2_id: i64 = sqlx::Row::get(&steps[1], "id");
@@ -168,7 +225,10 @@ async fn test_automations_crud_and_steps_ordering() {
     let move_body = format!("csrf_token={}", csrf_token);
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}/move-up", automation_id, step2_id))
+        .uri(format!(
+            "/automations/{}/steps/{}/move-up",
+            automation_id, step2_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(move_body.clone()))
@@ -177,18 +237,23 @@ async fn test_automations_crud_and_steps_ordering() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify step 2 is now first
-    let steps_after_move = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC")
-        .bind(automation_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+    let steps_after_move = sqlx::query(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
     let first_id: i64 = sqlx::Row::get(&steps_after_move[0], "id");
     assert_eq!(first_id, step2_id);
 
     // 5. Delete step 1
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}/delete", automation_id, step1_id))
+        .uri(format!(
+            "/automations/{}/steps/{}/delete",
+            automation_id, step1_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(move_body.clone()))
@@ -247,26 +312,52 @@ async fn test_mouse_click_step_crud_and_validation() {
     };
 
     let app = Router::new()
-        .route("/automations", axum::routing::get(get_automations_handler).post(post_automations_handler))
-        .route("/automations/{id}", axum::routing::get(get_automation_detail_handler))
-        .route("/automations/{id}/steps/new/mouse_click", axum::routing::get(get_new_mouse_click_step_handler))
-        .route("/automations/{id}/steps", axum::routing::post(post_create_step_handler))
-        .route("/automations/{id}/steps/{sid}/edit", axum::routing::get(get_edit_step_handler))
-        .route("/automations/{id}/steps/{sid}", axum::routing::post(post_edit_step_handler))
+        .route(
+            "/automations",
+            axum::routing::get(get_automations_handler).post(post_automations_handler),
+        )
+        .route(
+            "/automations/{id}",
+            axum::routing::get(get_automation_detail_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new/mouse_click",
+            axum::routing::get(get_new_mouse_click_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps",
+            axum::routing::post(post_create_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/edit",
+            axum::routing::get(get_edit_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}",
+            axum::routing::post(post_edit_step_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_admin_id, admin_session) = create_test_user(&pool, &format!("mc_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("mc_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
-    let create_body = format!("name=Mouse+Click+Automation&description=Test&csrf_token={}", csrf_token);
+    let create_body = format!(
+        "name=Mouse+Click+Automation&description=Test&csrf_token={}",
+        csrf_token
+    );
     let req = Request::builder()
         .method("POST")
         .uri("/automations")
@@ -277,13 +368,24 @@ async fn test_mouse_click_step_crud_and_validation() {
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
-    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let automation_id: i64 = location
+        .trim_start_matches("/automations/")
+        .parse()
+        .unwrap();
 
     // 2. GET new mouse_click step page with query params
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/automations/{}/steps/new/mouse_click?x=824&y=391", automation_id))
+        .uri(format!(
+            "/automations/{}/steps/new/mouse_click?x=824&y=391",
+            automation_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
         .unwrap();
@@ -291,7 +393,10 @@ async fn test_mouse_click_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::OK);
 
     // 3. POST invalid mouse_click (missing X coordinate)
-    let invalid_body = format!("step_type=mouse_click&x_mode=fixed&y_mode=fixed&y=100&csrf_token={}", csrf_token);
+    let invalid_body = format!(
+        "step_type=mouse_click&x_mode=fixed&y_mode=fixed&y=100&csrf_token={}",
+        csrf_token
+    );
     let req = Request::builder()
         .method("POST")
         .uri(format!("/automations/{}/steps", automation_id))
@@ -318,11 +423,13 @@ async fn test_mouse_click_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify DB insertion
-    let step_row = sqlx::query("SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1")
-        .bind(automation_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let step_row = sqlx::query(
+        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1",
+    )
+    .bind(automation_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     let step_id: i64 = sqlx::Row::get(&step_row, "id");
     let step_type: String = sqlx::Row::get(&step_row, "step_type");
     let label: Option<String> = sqlx::Row::get(&step_row, "label");
@@ -351,7 +458,10 @@ async fn test_mouse_click_step_crud_and_validation() {
     // 5. GET edit mouse_click page
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/automations/{}/steps/{}/edit", automation_id, step_id))
+        .uri(format!(
+            "/automations/{}/steps/{}/edit",
+            automation_id, step_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
         .unwrap();
@@ -408,7 +518,9 @@ async fn test_mouse_click_step_crud_and_validation() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("Click («target_x», 400) [right, double]"));
 }
@@ -438,26 +550,52 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     };
 
     let app = Router::new()
-        .route("/automations", axum::routing::get(get_automations_handler).post(post_automations_handler))
-        .route("/automations/{id}", axum::routing::get(get_automation_detail_handler))
-        .route("/automations/{id}/steps/new/find_pixel_rgb", axum::routing::get(get_new_find_pixel_rgb_step_handler))
-        .route("/automations/{id}/steps", axum::routing::post(post_create_step_handler))
-        .route("/automations/{id}/steps/{sid}/edit", axum::routing::get(get_edit_step_handler))
-        .route("/automations/{id}/steps/{sid}", axum::routing::post(post_edit_step_handler))
+        .route(
+            "/automations",
+            axum::routing::get(get_automations_handler).post(post_automations_handler),
+        )
+        .route(
+            "/automations/{id}",
+            axum::routing::get(get_automation_detail_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new/find_pixel_rgb",
+            axum::routing::get(get_new_find_pixel_rgb_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps",
+            axum::routing::post(post_create_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/edit",
+            axum::routing::get(get_edit_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}",
+            axum::routing::post(post_edit_step_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_admin_id, admin_session) = create_test_user(&pool, &format!("fp_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("fp_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
-    let create_body = format!("name=Pixel+RGB+Automation&description=Test&csrf_token={}", csrf_token);
+    let create_body = format!(
+        "name=Pixel+RGB+Automation&description=Test&csrf_token={}",
+        csrf_token
+    );
     let req = Request::builder()
         .method("POST")
         .uri("/automations")
@@ -468,13 +606,24 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
-    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let automation_id: i64 = location
+        .trim_start_matches("/automations/")
+        .parse()
+        .unwrap();
 
     // 2. GET new find_pixel_rgb step page
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/automations/{}/steps/new/find_pixel_rgb?x=100&y=200", automation_id))
+        .uri(format!(
+            "/automations/{}/steps/new/find_pixel_rgb?x=100&y=200",
+            automation_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
         .unwrap();
@@ -509,11 +658,13 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify DB insertion
-    let step_row = sqlx::query("SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1")
-        .bind(automation_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let step_row = sqlx::query(
+        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1",
+    )
+    .bind(automation_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     let step_id: i64 = sqlx::Row::get(&step_row, "id");
     let step_type: String = sqlx::Row::get(&step_row, "step_type");
     let label: Option<String> = sqlx::Row::get(&step_row, "label");
@@ -523,11 +674,12 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     assert_eq!(label.as_deref(), Some("Sample Pixel"));
     assert_eq!(post_delay_ms, 500);
 
-    let fp_row = sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
-        .bind(step_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let fp_row =
+        sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
+            .bind(step_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     let x: i32 = sqlx::Row::get(&fp_row, "x");
     let y: i32 = sqlx::Row::get(&fp_row, "y");
@@ -540,7 +692,10 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     // 5. GET edit page
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/automations/{}/steps/{}/edit", automation_id, step_id))
+        .uri(format!(
+            "/automations/{}/steps/{}/edit",
+            automation_id, step_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
         .unwrap();
@@ -570,11 +725,12 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify updated values in DB
-    let updated_fp_row = sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
-        .bind(step_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let updated_fp_row =
+        sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
+            .bind(step_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     let updated_x: i32 = sqlx::Row::get(&updated_fp_row, "x");
     let updated_y: i32 = sqlx::Row::get(&updated_fp_row, "y");
@@ -593,7 +749,9 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("Read pixel at (150, 250) → store as «bg_color»"));
 }
@@ -623,14 +781,22 @@ async fn test_step_type_picker_interface() {
     };
 
     let app = Router::new()
-        .route("/automations/{id}/steps/new", axum::routing::get(get_step_type_picker_handler))
+        .route(
+            "/automations/{id}/steps/new",
+            axum::routing::get(get_step_type_picker_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_admin_id, admin_session) = create_test_user(&pool, &format!("picker_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("picker_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
 
     let req = Request::builder()
         .method("GET")
@@ -642,7 +808,9 @@ async fn test_step_type_picker_interface() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     assert!(body_str.contains("Select Step Type"));
@@ -659,7 +827,9 @@ async fn test_step_type_picker_interface() {
 #[tokio::test]
 async fn test_branch_step_target_selectors_and_foreign_keys() {
     let Some(pool) = get_test_pool().await else {
-        println!("Database not available, skipping test_branch_step_target_selectors_and_foreign_keys");
+        println!(
+            "Database not available, skipping test_branch_step_target_selectors_and_foreign_keys"
+        );
         return;
     };
 
@@ -681,26 +851,52 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     };
 
     let app = Router::new()
-        .route("/automations", axum::routing::get(get_automations_handler).post(post_automations_handler))
-        .route("/automations/{id}", axum::routing::get(get_automation_detail_handler))
-        .route("/automations/{id}/steps/new/branch", axum::routing::get(get_new_branch_step_handler))
-        .route("/automations/{id}/steps", axum::routing::post(post_create_step_handler))
-        .route("/automations/{id}/steps/{sid}/edit", axum::routing::get(get_edit_step_handler))
-        .route("/automations/{id}/steps/{sid}", axum::routing::post(post_edit_step_handler))
+        .route(
+            "/automations",
+            axum::routing::get(get_automations_handler).post(post_automations_handler),
+        )
+        .route(
+            "/automations/{id}",
+            axum::routing::get(get_automation_detail_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new/branch",
+            axum::routing::get(get_new_branch_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps",
+            axum::routing::post(post_create_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/edit",
+            axum::routing::get(get_edit_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}",
+            axum::routing::post(post_edit_step_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_admin_id, admin_session) = create_test_user(&pool, &format!("branch_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("branch_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
-    let create_body = format!("name=Branch+Target+Automation&description=Test&csrf_token={}", csrf_token);
+    let create_body = format!(
+        "name=Branch+Target+Automation&description=Test&csrf_token={}",
+        csrf_token
+    );
     let req = Request::builder()
         .method("POST")
         .uri("/automations")
@@ -711,8 +907,16 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
-    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let automation_id: i64 = location
+        .trim_start_matches("/automations/")
+        .parse()
+        .unwrap();
 
     // 2. Add Step 1 (key_press)
     let step1_body = format!("key_combo=F5&label=Step+Alpha&csrf_token={}", csrf_token);
@@ -739,11 +943,13 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Fetch step IDs
-    let steps = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC")
-        .bind(automation_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+    let steps = sqlx::query(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
     assert_eq!(steps.len(), 2);
     let step1_id: i64 = sqlx::Row::get(&steps[0], "id");
     let step2_id: i64 = sqlx::Row::get(&steps[1], "id");
@@ -757,7 +963,9 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     assert!(body_str.contains("Step 1 (Step Alpha)"));
@@ -779,11 +987,13 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Fetch branch step ID
-    let steps_all = sqlx::query("SELECT id, step_type FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC")
-        .bind(automation_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+    let steps_all = sqlx::query(
+        "SELECT id, step_type FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
     assert_eq!(steps_all.len(), 3);
     let branch_step_id: i64 = sqlx::Row::get(&steps_all[2], "id");
 
@@ -807,7 +1017,10 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     // 5. GET edit branch step page and check selected targets
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/automations/{}/steps/{}/edit", automation_id, branch_step_id))
+        .uri(format!(
+            "/automations/{}/steps/{}/edit",
+            automation_id, branch_step_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
         .unwrap();
@@ -821,7 +1034,10 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, branch_step_id))
+        .uri(format!(
+            "/automations/{}/steps/{}",
+            automation_id, branch_step_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(branch_edit_body))
@@ -830,14 +1046,17 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify updated foreign keys in step_branches
-    let updated_branch_row = sqlx::query("SELECT on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1")
-        .bind(branch_step_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let updated_branch_row = sqlx::query(
+        "SELECT on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1",
+    )
+    .bind(branch_step_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     let updated_match_target: Option<i64> = sqlx::Row::get(&updated_branch_row, "on_match_step_id");
-    let updated_no_match_target: Option<i64> = sqlx::Row::get(&updated_branch_row, "on_no_match_step_id");
+    let updated_no_match_target: Option<i64> =
+        sqlx::Row::get(&updated_branch_row, "on_no_match_step_id");
 
     assert_eq!(updated_match_target, Some(step2_id));
     assert_eq!(updated_no_match_target, Some(step1_id));
@@ -851,7 +1070,9 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     assert!(body_str.contains("BRANCH: if pixel at (100, 200) ≈ RGB(10,20,30) ±5 → go to Step 2 (Step Beta), else → go to Step 1 (Step Alpha)"));
 }
@@ -881,24 +1102,45 @@ async fn test_automation_parameters_crud_and_validation() {
     };
 
     let app = Router::new()
-        .route("/automations", axum::routing::get(get_automations_handler).post(post_automations_handler))
-        .route("/automations/{id}/parameters", axum::routing::get(get_automation_parameters_handler).post(post_create_automation_parameter_handler))
-        .route("/automations/{id}/parameters/{pid}", axum::routing::post(post_update_automation_parameter_handler))
-        .route("/automations/{id}/parameters/{pid}/delete", axum::routing::post(post_delete_automation_parameter_handler))
+        .route(
+            "/automations",
+            axum::routing::get(get_automations_handler).post(post_automations_handler),
+        )
+        .route(
+            "/automations/{id}/parameters",
+            axum::routing::get(get_automation_parameters_handler)
+                .post(post_create_automation_parameter_handler),
+        )
+        .route(
+            "/automations/{id}/parameters/{pid}",
+            axum::routing::post(post_update_automation_parameter_handler),
+        )
+        .route(
+            "/automations/{id}/parameters/{pid}/delete",
+            axum::routing::post(post_delete_automation_parameter_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
         .with_state(state);
 
-    let (_admin_id, admin_session) = create_test_user(&pool, &format!("param_admin_{}", uuid::Uuid::new_v4().simple()), "admin").await;
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("param_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
     );
 
     // 1. Create automation
-    let create_body = format!("name=Param+Test+Automation&description=Test&csrf_token={}", csrf_token);
+    let create_body = format!(
+        "name=Param+Test+Automation&description=Test&csrf_token={}",
+        csrf_token
+    );
     let req = Request::builder()
         .method("POST")
         .uri("/automations")
@@ -909,8 +1151,16 @@ async fn test_automation_parameters_crud_and_validation() {
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
-    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let automation_id: i64 = location
+        .trim_start_matches("/automations/")
+        .parse()
+        .unwrap();
 
     // 2. GET /automations/{id}/parameters
     let req = Request::builder()
@@ -974,7 +1224,10 @@ async fn test_automation_parameters_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/parameters/{}", automation_id, param_id))
+        .uri(format!(
+            "/automations/{}/parameters/{}",
+            automation_id, param_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(update_param_body))
@@ -982,11 +1235,12 @@ async fn test_automation_parameters_crud_and_validation() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
-    let updated_row = sqlx::query("SELECT default_value, description FROM automation_parameters WHERE id = $1")
-        .bind(param_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let updated_row =
+        sqlx::query("SELECT default_value, description FROM automation_parameters WHERE id = $1")
+            .bind(param_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     let updated_val: String = sqlx::Row::get(&updated_row, "default_value");
     let updated_desc: String = sqlx::Row::get(&updated_row, "description");
     assert_eq!(updated_val, "15");
@@ -996,7 +1250,10 @@ async fn test_automation_parameters_crud_and_validation() {
     let delete_param_body = format!("csrf_token={}", csrf_token);
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/parameters/{}/delete", automation_id, param_id))
+        .uri(format!(
+            "/automations/{}/parameters/{}/delete",
+            automation_id, param_id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(delete_param_body))
@@ -1004,10 +1261,11 @@ async fn test_automation_parameters_crud_and_validation() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM automation_parameters WHERE automation_id = $1")
-        .bind(automation_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM automation_parameters WHERE automation_id = $1")
+            .bind(automation_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(count, 0);
 }

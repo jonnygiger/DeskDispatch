@@ -10,22 +10,31 @@ use sqlx::Row;
 
 use super::auth::HtmlTemplate;
 use super::workers::WorkerDetail;
-use crate::auth::{log_audit, AuthUser, CsrfForm, RequireEditor};
+use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
 use crate::magnifier::ImageMagnifier;
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/workers/{id}/record", get(get_worker_record_start_handler))
-        .route("/workers/{id}/record/start", post(post_worker_record_start_handler))
+        .route(
+            "/workers/{id}/record/start",
+            post(post_worker_record_start_handler),
+        )
         .route("/recordings/{id}", get(get_recording_status_handler))
         .route("/recordings/{id}/stop", post(post_recording_stop_handler))
         .route("/recordings/{id}/review", get(get_recording_review_handler))
-        .route("/recordings/{id}/discard", post(post_recording_discard_handler))
-        .route("/recordings/{id}/convert", post(post_recording_convert_handler))
+        .route(
+            "/recordings/{id}/discard",
+            post(post_recording_discard_handler),
+        )
+        .route(
+            "/recordings/{id}/convert",
+            post(post_recording_convert_handler),
+        )
 }
 
 #[derive(Debug, Clone)]
@@ -238,7 +247,11 @@ pub async fn post_worker_record_start_handler(
         Ok(r) => r.get("id"),
         Err(e) => {
             tracing::error!("Failed to create recording_session: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to start recording session").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to start recording session",
+            )
+                .into_response();
         }
     };
 
@@ -311,13 +324,12 @@ pub async fn get_recording_status_handler(
         _ => return Redirect::to("/workers").into_response(),
     };
 
-    let event_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM recording_events WHERE recording_session_id = $1",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    let event_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM recording_events WHERE recording_session_id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
 
     let paused = query.paused.unwrap_or(false);
 
@@ -416,7 +428,10 @@ pub async fn get_recording_review_handler(
 
         let mut magnifier = None;
         if let Some(ref key) = screenshot_object_key {
-            if let Ok(presigned_url) = storage.generate_presigned_get_url(key, std::time::Duration::from_secs(3600)).await {
+            if let Ok(presigned_url) = storage
+                .generate_presigned_get_url(key, std::time::Duration::from_secs(3600))
+                .await
+            {
                 magnifier = Some(ImageMagnifier::new(
                     presigned_url,
                     1920,
@@ -464,12 +479,11 @@ pub async fn post_recording_discard_handler(
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    let update_res = sqlx::query(
-        "UPDATE recording_sessions SET status = 'discarded' WHERE id = $1",
-    )
-    .bind(id)
-    .execute(&state.db)
-    .await;
+    let update_res =
+        sqlx::query("UPDATE recording_sessions SET status = 'discarded' WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await;
 
     if update_res.is_ok() {
         let _ = log_audit(
@@ -499,7 +513,11 @@ pub async fn post_recording_convert_handler(
         return Redirect::to(&format!("/recordings/{}/review", id)).into_response();
     }
 
-    let auto_desc = form.automation_description.unwrap_or_default().trim().to_string();
+    let auto_desc = form
+        .automation_description
+        .unwrap_or_default()
+        .trim()
+        .to_string();
 
     let _session = match fetch_recording_session_detail(&state.db, id).await {
         Ok(Some(s)) => s,
@@ -509,7 +527,10 @@ pub async fn post_recording_convert_handler(
     let mut tx = match state.db.begin().await {
         Ok(t) => t,
         Err(e) => {
-            tracing::error!("Failed to begin transaction for recording conversion: {}", e);
+            tracing::error!(
+                "Failed to begin transaction for recording conversion: {}",
+                e
+            );
             return Redirect::to(&format!("/recordings/{}/review", id)).into_response();
         }
     };
@@ -714,7 +735,10 @@ mod tests {
             magnifier: None,
         };
 
-        assert_eq!(event_click.description(), "Mouse Click at (824, 391) [left]");
+        assert_eq!(
+            event_click.description(),
+            "Mouse Click at (824, 391) [left]"
+        );
 
         let event_key = RecordingEventDetail {
             id: 11,
@@ -787,9 +811,13 @@ mod tests {
             "exclude_event_ids": [10, 12]
         }"#;
 
-        let form: ConvertRecordingForm = serde_json::from_str(json_data).expect("Failed to deserialize ConvertRecordingForm");
+        let form: ConvertRecordingForm =
+            serde_json::from_str(json_data).expect("Failed to deserialize ConvertRecordingForm");
         assert_eq!(form.automation_name, "My Recorded Flow");
-        assert_eq!(form.automation_description.as_deref(), Some("Imported from worker 1"));
+        assert_eq!(
+            form.automation_description.as_deref(),
+            Some("Imported from worker 1")
+        );
         assert_eq!(form.exclude_event_ids, vec![10, 12]);
     }
 

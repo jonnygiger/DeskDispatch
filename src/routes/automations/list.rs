@@ -6,9 +6,9 @@ use axum::{
 use sqlx::Row;
 
 use super::types::*;
-use crate::auth::{log_audit, AuthUser, CsrfForm};
-use crate::routes::auth::HtmlTemplate;
 use crate::AppState;
+use crate::auth::{AuthUser, CsrfForm, log_audit};
+use crate::routes::auth::HtmlTemplate;
 
 /// GET /automations
 #[tracing::instrument(skip(state, user))]
@@ -50,12 +50,18 @@ pub async fn get_automations_handler(
     );
 
     if status_filter != "all" {
-        sql.push_str(&format!(" AND a.status = '{}'", status_filter.replace('\'', "''")));
+        sql.push_str(&format!(
+            " AND a.status = '{}'",
+            status_filter.replace('\'', "''")
+        ));
     }
 
     if !search_query.trim().is_empty() {
         let escaped = search_query.trim().replace('\'', "''");
-        sql.push_str(&format!(" AND (a.name ILIKE '%{}%' OR a.description ILIKE '%{}%')", escaped, escaped));
+        sql.push_str(&format!(
+            " AND (a.name ILIKE '%{}%' OR a.description ILIKE '%{}%')",
+            escaped, escaped
+        ));
     }
 
     sql.push_str(" ORDER BY a.updated_at DESC, a.id DESC");
