@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RegisterWorkerRequest {
     pub registration_token: Option<String>,
     pub token: Option<String>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RegisterWorkerResponse {
     pub status: String,
     pub worker_id: i64,
@@ -16,12 +16,12 @@ pub struct RegisterWorkerResponse {
     pub api_key: String,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct HeartbeatRequest {
     pub status: Option<String>,
     pub current_task_run_id: Option<i64>,
@@ -31,7 +31,7 @@ pub struct HeartbeatRequest {
     pub agent_version: Option<String>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct HeartbeatResponse {
     pub status: String,
     pub cancel_requested: bool,
@@ -61,14 +61,14 @@ pub struct TaskRunResponse {
     pub automation: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct VariableUpdateItem {
     pub variable_id: i64,
     #[schema(value_type = Object)]
     pub value: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct StepResultRequest {
     pub seq: Option<i32>,
     pub step_id: i64,
@@ -88,19 +88,19 @@ pub struct StepResultRequest {
     pub variable_updates: Option<Vec<VariableUpdateItem>>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct StepResultResponse {
     pub status: String,
     pub step_result_id: i64,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CompleteTaskRunRequest {
     pub status: String,
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct CompleteTaskRunResponse {
     pub status: String,
 }
@@ -111,7 +111,7 @@ pub struct ScreenshotUploadUrlResponse {
     pub object_key: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RecordingEventItem {
     pub sequence_number: i32,
     pub event_type: String,
@@ -123,24 +123,24 @@ pub struct RecordingEventItem {
     pub captured_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct PostRecordingEventsRequest {
     pub events: Vec<RecordingEventItem>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PostRecordingEventsResponse {
     pub status: String,
     pub count: usize,
     pub stop_requested: bool,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct WorkerStopRecordingResponse {
     pub status: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CommitScreenshotRequest {
     pub step_id: Option<i64>,
     pub object_key: Option<String>,
@@ -148,7 +148,7 @@ pub struct CommitScreenshotRequest {
     pub height: Option<i32>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct CommitScreenshotResponse {
     pub status: String,
     pub object_key: String,
