@@ -1,5 +1,0 @@
-[build]
-rustflags = []
-
-[future-incompat-report]
-frequency = "always"
