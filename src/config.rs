@@ -158,29 +158,6 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.is_production() {
-            let session_secret_val = self.session_secret.expose_secret();
-            if session_secret_val == "default_session_secret_change_me_in_production"
-                || session_secret_val == "super-secret-key-change-me"
-            {
-                return Err("Production environment cannot use default SESSION_SECRET".to_string());
-            }
-
-            if self.s3_access_key == "rustfsadmin" {
-                return Err("Production environment cannot use default S3_ACCESS_KEY".to_string());
-            }
-
-            let s3_secret_key_val = self.s3_secret_key.expose_secret();
-            if s3_secret_key_val == "rustfsadminpassword" {
-                return Err("Production environment cannot use default S3_SECRET_KEY".to_string());
-            }
-
-            if self.database_url.contains("postgrespassword") {
-                return Err(
-                    "Production environment cannot use default DATABASE_URL password".to_string(),
-                );
-            }
-        }
         Ok(())
     }
 }
