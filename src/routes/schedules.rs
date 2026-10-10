@@ -12,6 +12,7 @@ use std::str::FromStr;
 
 use super::auth::HtmlTemplate;
 use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
+use crate::de::deserialize_option_number;
 use axum::Router;
 use axum::routing::{get, post};
 
@@ -134,9 +135,11 @@ pub struct ScheduleForm {
     pub cron_expression: String,
     #[serde(default = "default_timezone")]
     pub timezone: String,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub worker_group_id: Option<i64>,
     #[serde(default = "default_overlap_policy")]
     pub overlap_policy: String,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub max_queue_age_secs: Option<i32>,
     #[serde(default)]
     pub is_enabled: bool,
