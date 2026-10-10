@@ -347,7 +347,7 @@ FOR EACH ROW
 WHEN (NEW.status = 'queued')
 EXECUTE FUNCTION notify_task_queue_changed();
 
-CREATE TRIGGER trg_notify_recording_sessions ON recording_sessions
+CREATE TRIGGER trg_notify_recording_sessions
 AFTER INSERT OR UPDATE OF status ON recording_sessions
 FOR EACH ROW
 WHEN (NEW.status = 'recording')
