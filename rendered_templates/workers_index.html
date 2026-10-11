@@ -49,7 +49,17 @@
         <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Manage registered task workers and group assignments.</p>
     </div>
 
-    <div style="display: flex; gap: 0.75rem;">
+    <div style="display: flex; gap: 0.75rem; align-items: center;">
+        <form method="post" action="/workers/wps/toggle" style="margin: 0;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+
+                <button type="submit" class="btn btn-outline" title="Click to Enable Unattended Registration via PSK">
+                    🔒 WPS Registration: DISABLED
+                </button>
+
+        </form>
         <a href="/workers/new" class="btn btn-primary">+ Register New Worker</a>
         <a href="/worker-groups/new" class="btn btn-outline">+ New Worker Group</a>
     </div>
@@ -84,7 +94,7 @@
                         <span class="badge badge-success">online</span>
                     </td>
                     <td style="padding: 0.75rem 1rem; font-size: 0.875rem; color: var(--color-text-muted);">
-                        2026-10-11 10:44:01 UTC
+                        2026-10-11 12:53:28 UTC
                     </td>
                     <td style="padding: 0.75rem 1rem;">
 

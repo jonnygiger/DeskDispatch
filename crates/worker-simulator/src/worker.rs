@@ -32,6 +32,7 @@ pub struct WorkerConfig {
     pub hostname: String,
     pub display_name: String,
     pub registration_token: Option<String>,
+    pub psk: Option<String>,
     pub api_key: Option<String>,
     pub profile: WorkerProfile,
     pub server_url: String,
@@ -74,8 +75,25 @@ impl SimulatedWorker {
 
         // Step 1: Register worker if no API key is set
         if self.api_key.is_none() {
-            if let Some(ref reg_token) = self.config.registration_token {
-                match self.register_worker(reg_token).await {
+            if let Some(ref psk) = self.config.psk {
+                match self.register_worker(None, Some(psk)).await {
+                    Ok(key) => {
+                        info!(
+                            worker_idx = self.config.worker_index,
+                            "Unattended worker registered successfully via PSK"
+                        );
+                        self.api_key = Some(key);
+                    }
+                    Err(e) => {
+                        error!(
+                            worker_idx = self.config.worker_index,
+                            "Failed to register worker via PSK: {}", e
+                        );
+                        return;
+                    }
+                }
+            } else if let Some(ref reg_token) = self.config.registration_token {
+                match self.register_worker(Some(reg_token), None).await {
                     Ok(key) => {
                         info!(
                             worker_idx = self.config.worker_index,
@@ -94,7 +112,7 @@ impl SimulatedWorker {
             } else {
                 error!(
                     worker_idx = self.config.worker_index,
-                    "Worker has neither API key nor registration token. Exiting."
+                    "Worker has neither API key, PSK, nor registration token. Exiting."
                 );
                 return;
             }
@@ -299,11 +317,16 @@ impl SimulatedWorker {
         }
     }
 
-    async fn register_worker(&self, token: &str) -> Result<String, String> {
+    async fn register_worker(&self, token: Option<&str>, psk: Option<&str>) -> Result<String, String> {
         let url = format!("{}/api/v1/workers/register", self.config.server_url);
         let req = RegisterWorkerRequest {
-            registration_token: Some(token.to_string()),
+            registration_token: token.map(|s| s.to_string()),
             token: None,
+            psk: psk.map(|s| s.to_string()),
+            pre_shared_key: None,
+            hostname: Some(self.config.hostname.clone()),
+            display_name: Some(self.config.display_name.clone()),
+            mac_address: None,
         };
 
         let resp = self
@@ -695,6 +718,7 @@ mod tests {
             hostname: "sim-worker-1.local".to_string(),
             display_name: "Simulated Worker 1".to_string(),
             registration_token: Some("dd_reg_test123".to_string()),
+            psk: None,
             api_key: Some("dd_pk_testkey123".to_string()),
             profile: WorkerProfile::Normal,
             server_url: "http://127.0.0.1:3000".to_string(),

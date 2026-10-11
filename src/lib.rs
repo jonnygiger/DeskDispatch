@@ -13,6 +13,9 @@ pub mod storage;
 pub mod validation;
 pub mod wol;
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
 use axum::{Router, middleware, routing::get};
 use config::Config;
 use secrecy::ExposeSecret;
@@ -35,6 +38,7 @@ pub struct AppState {
     pub config: Config,
     pub rate_limiter: auth::LoginRateLimiter,
     pub task_queue_notifier: tokio::sync::broadcast::Sender<()>,
+    pub wps_enabled: Arc<AtomicBool>,
 }
 
 impl AppState {

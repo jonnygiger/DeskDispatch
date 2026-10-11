@@ -129,6 +129,7 @@ async fn test_dashboard_stats_tiles() {
         config: config.clone(),
         rate_limiter: LoginRateLimiter::default(),
         task_queue_notifier: tx_notify,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = deskdispatch::build_router(state);

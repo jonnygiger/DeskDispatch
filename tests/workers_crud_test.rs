@@ -90,6 +90,7 @@ fn test_worker_templates_rendering() {
         user: user.clone(),
         workers: vec![worker_item.clone()],
         worker_groups: vec![group_item],
+        wps_enabled: false,
     };
     let index_html = index_tmpl.render().unwrap();
     assert!(index_html.contains("Task Worker PCs"));
@@ -264,6 +265,7 @@ async fn test_admin_workers_crud_and_rbac() {
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = deskdispatch::build_router(state);

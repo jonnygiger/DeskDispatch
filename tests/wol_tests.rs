@@ -141,6 +141,7 @@ async fn test_worker_mac_and_manual_wol_wake() {
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = deskdispatch::build_router(state);

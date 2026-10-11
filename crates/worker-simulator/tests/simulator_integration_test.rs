@@ -10,6 +10,7 @@ fn test_simulator_worker_config_and_profiles() {
             hostname: format!("sim-worker-{:03}.local", idx + 1),
             display_name: format!("Simulated Worker {:03}", idx + 1),
             registration_token: Some(format!("dd_reg_test_{}", idx)),
+            psk: None,
             api_key: None,
             profile,
             server_url: "http://127.0.0.1:3000".to_string(),

@@ -14,7 +14,19 @@
         <p style="color: var(--color-text-muted); margin-top: 0.25rem;">Manage registered task workers and group assignments.</p>
     </div>
     {% if user.role.is_admin() %}
-    <div style="display: flex; gap: 0.75rem;">
+    <div style="display: flex; gap: 0.75rem; align-items: center;">
+        <form method="post" action="/workers/wps/toggle" style="margin: 0;">
+            {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+            {% if wps_enabled %}
+                <button type="submit" class="btn btn-warning" title="WPS Unattended Registration is Active. Click to Disable.">
+                    ⚡ WPS Registration: ENABLED
+                </button>
+            {% else %}
+                <button type="submit" class="btn btn-outline" title="Click to Enable Unattended Registration via PSK">
+                    🔒 WPS Registration: DISABLED
+                </button>
+            {% endif %}
+        </form>
         <a href="/workers/new" class="btn btn-primary">+ Register New Worker</a>
         <a href="/worker-groups/new" class="btn btn-outline">+ New Worker Group</a>
     </div>

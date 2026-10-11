@@ -18,6 +18,10 @@ pub struct SimCliArgs {
     #[arg(long)]
     pub registration_tokens: Option<String>,
 
+    /// Pre-shared key for WPS unattended registration
+    #[arg(long, env = "UNATTENDED_REGISTRATION_PSK")]
+    pub psk: Option<String>,
+
     /// Comma-separated list of pre-existing API keys (dd_pk_...)
     #[arg(long)]
     pub api_keys: Option<String>,

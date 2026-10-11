@@ -5,6 +5,11 @@ use utoipa::ToSchema;
 pub struct RegisterWorkerRequest {
     pub registration_token: Option<String>,
     pub token: Option<String>,
+    pub psk: Option<String>,
+    pub pre_shared_key: Option<String>,
+    pub hostname: Option<String>,
+    pub display_name: Option<String>,
+    pub mac_address: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

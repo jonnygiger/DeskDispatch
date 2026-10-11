@@ -81,6 +81,7 @@ fn build_test_app(pool: sqlx::PgPool, config: Config) -> Router {
         config,
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tx_notify,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     Router::new()

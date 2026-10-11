@@ -66,6 +66,7 @@ async fn test_media_screenshot_redirects() {
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tx,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = deskdispatch::build_router(state);

@@ -65,6 +65,7 @@ async fn test_bitmaps_list_routes() {
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()
@@ -207,6 +208,7 @@ async fn test_bitmap_upload_flow() {
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()
@@ -416,6 +418,7 @@ async fn test_bitmap_deletion_flow() {
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()
@@ -615,6 +618,7 @@ async fn test_region_picker_top_left_flow() {
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()
@@ -710,6 +714,7 @@ async fn test_region_picker_confirm_crop_flow() {
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()

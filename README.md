@@ -12,6 +12,14 @@ DeskDispatch is a high-performance, zero-JavaScript task server for managing and
   - [1. Worker Task Assignment, Execution, and Screenshot Upload](#1-worker-task-assignment-execution-and-screenshot-upload)
   - [2. Desktop Recording Capture and Automation Conversion](#2-desktop-recording-capture-and-automation-conversion)
   - [3. Scheduled Cron Execution & Stalled Sweeper Failsafe](#3-scheduled-cron-execution--stalled-sweeper-failsafe)
+- [Entity State Machines](#entity-state-machines)
+  - [1. Task Worker PC State Machine](#1-task-worker-pc-state-machine)
+  - [2. Task Run State Machine](#2-task-run-state-machine)
+  - [3. Automation Definition State Machine](#3-automation-definition-state-machine)
+  - [4. Recording Session State Machine](#4-recording-session-state-machine)
+  - [5. Schedule State Machine](#5-schedule-state-machine)
+  - [6. User Session State Machine](#6-user-session-state-machine)
+  - [7. WPS Unattended Registration Mode State Machine](#7-wps-unattended-registration-mode-state-machine)
 - [Technology Stack](#technology-stack)
 - [Zero-JavaScript Interface Design](#zero-javascript-interface-design)
 - [Docker Management & Automated Operations](#docker-management--automated-operations)
@@ -204,6 +212,139 @@ sequenceDiagram
         Sweeper->>DB: Query running task_runs where worker heartbeat > 90s
         Sweeper->>DB: UPDATE task_runs SET status = 'lost', error_message
     end
+```
+
+---
+
+## Entity State Machines
+
+DeskDispatch implements explicit, state-machine driven entity lifecycles across both the core server control plane and simulated worker agents.
+
+### 1. Task Worker PC State Machine
+
+Manages worker machine registration, heartbeat tracking, task processing, and failsafe eviction. Includes WPS unattended registration via static PSK.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unregistered : Agent Boot
+    Unregistered --> Offline : Token Registration\n(POST /api/v1/workers/register)
+    Unregistered --> Offline : WPS Unattended PSK Reg\n(WPS Mode ENABLED + Valid PSK)
+    Offline --> Online : First Heartbeat / Poll\n(POST /heartbeat or GET /next-assignment)
+    Online --> Busy : Claim Task Assignment / Start Recording
+    Busy --> Online : Step/Run Completed / Cancelled
+    Online --> Error : Execution Exception / Version Mismatch (426)
+    Busy --> Error : Execution Fault / Outdated Agent
+    Error --> Offline : Re-initialization / Recovery
+    Online --> Offline : Heartbeat Lost (>90s) / Deactivated
+    Busy --> Offline : Disconnected (>90s Sweeper) / Key Rotation
+```
+
+**State Transition Triggers:**
+- **`Unregistered` → `Offline`:** Successful token registration or WPS unattended PSK registration (`POST /api/v1/workers/register`).
+- **`Offline` → `Online`:** Worker submits valid heartbeat (`POST /api/v1/workers/heartbeat`) or claims assignment.
+- **`Online` → `Busy`:** Worker claims a queued task run (`GET /api/v1/workers/next-assignment`) or initiates a recording session.
+- **`Busy` → `Online`:** Worker completes task run (`POST /task-runs/{id}/complete`) or recording session.
+- **`Online`/`Busy` → `Error`:** Mismatched agent version (< `MIN_AGENT_VERSION`), network fault, or step error.
+- **`Any` → `Offline`:** Admin deactivates worker (`POST /workers/{id}/deactivate`), rotates API key (`POST /workers/{id}/rotate-key`), or background sweeper detects heartbeat timeout (>90s).
+
+### 2. Task Run State Machine
+
+Tracks execution progress from queuing to completion or failsafe loss recovery.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Queued : Manual Trigger / Cron Schedule
+    Queued --> Running : Worker Claims Assignment\n(FOR UPDATE SKIP LOCKED)
+    Queued --> Cancelled : Operator Cancels Before Claim
+    Running --> Cancelling : Operator Requests Cancel\n(POST /runs/{id}/cancel)
+    Cancelling --> Cancelled : Worker Acknowledges Cancel
+    Running --> Succeeded : All Steps Completed Successfully
+    Running --> Failed : Step Error / Max Steps Exceeded (1000) / Timeout (>3600s)
+    Cancelling --> Failed : Step Error During Cancellation
+    Running --> Lost : Silent Heartbeat (>90s Sweeper)
+    Cancelling --> Lost : Silent Heartbeat (>90s Sweeper)
+```
+
+**State Transition Triggers:**
+- **`[*] → Queued`:** Operator triggers manual run (`POST /automations/{id}/run-now`) or cron scheduler enqueues run.
+- **`Queued → Running`:** Worker claims task run during long-poll assignment (`GET /api/v1/workers/next-assignment`).
+- **`Running → Cancelling`:** Operator requests cancellation in UI (`POST /runs/{id}/cancel`).
+- **`Cancelling → Cancelled`:** Executing worker handles cancel flag on heartbeat or step completion.
+- **`Running → Succeeded`:** Worker finishes all steps without error (`POST /task-runs/{id}/complete`).
+- **`Running → Failed`:** Execution error, step limit (>1000 steps), or hard timeout (>3600s).
+- **`Running/Cancelling → Lost`:** Stalled sweeper detects missing worker heartbeat (>90s).
+
+### 3. Automation Definition State Machine
+
+Governs automation lifecycle from draft creation to activation and archiving.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Draft : Created by Editor
+    Draft --> Active : Activated\n(Passes Pre-activation Linting)
+    Active --> Draft : Demoted to Edit Steps
+    Active --> Archived : Soft Deleted / Archived
+    Draft --> Archived : Soft Deleted / Archived
+    Archived --> [*]
+```
+
+**State Transition Triggers:**
+- **`Draft → Active`:** Passes pre-activation structural linting (valid branches, no cycles, coordinates bounded).
+- **`Active → Draft`:** Editor demotes automation to modify steps or parameters.
+- **`Active/Draft → Archived`:** Automation deleted or archived by operator.
+
+### 4. Recording Session State Machine
+
+Coordinates remote desktop event stream capture and draft automation conversion.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Recording : Admin/Editor Dispatches Recording
+    Recording --> Completed : Operator / Worker Stops Recording\n(POST /recordings/{id}/stop)
+    Recording --> Discarded : Silent Heartbeat (>90s Sweeper) / Operator Discard
+    Completed --> Imported : Converted to Draft Automation
+    Completed --> Discarded : Discarded in Review UI
+```
+
+**State Transition Triggers:**
+- **`[*] → Recording`:** Dispatched via operator UI (`POST /workers/{id}/record/start`).
+- **`Recording → Completed`:** Stopped by operator or worker notification.
+- **`Recording → Discarded`:** Disconnected worker (>90s sweeper) or abandoned session.
+- **`Completed → Imported`:** Converted into a new draft automation (`POST /recordings/{id}/convert`).
+
+### 5. Schedule State Machine
+
+Controls automated cron trigger evaluation and execution dispatch.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disabled : Created (Disabled)
+    [*] --> Enabled : Created (Enabled)
+    Disabled --> Enabled : Operator Enables Schedule\n(POST /schedules/{id}/toggle)
+    Enabled --> Disabled : Operator Disables Schedule\n(POST /schedules/{id}/toggle)
+```
+
+### 6. User Session State Machine
+
+Manages operator web sessions, idle expiration, and security revocations.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active : User Authenticates (POST /login)
+    Active --> Active : Activity Within Idle Window (<2 Hours)
+    Active --> Expired : Idle Timeout (>2 Hours) / Max Age (>7 Days)
+    Active --> Revoked : Explicit Logout / Password Reset / Deactivation
+```
+
+### 7. WPS Unattended Registration Mode State Machine
+
+Controls server-wide WPS unattended worker registration via static pre-shared key (PSK).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disabled : Server Default Startup
+    Disabled --> Enabled : Admin Toggles WPS Mode ON\n(POST /workers/wps/toggle)
+    Enabled --> Disabled : Admin Toggles WPS Mode OFF\n(POST /workers/wps/toggle)
 ```
 
 ---

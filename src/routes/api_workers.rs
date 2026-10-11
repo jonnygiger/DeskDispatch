@@ -1298,6 +1298,80 @@ pub async fn post_register_worker_handler(
     State(state): State<AppState>,
     Json(payload): Json<RegisterWorkerRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    use secrecy::ExposeSecret;
+    use std::sync::atomic::Ordering;
+
+    let psk = payload
+        .psk
+        .or(payload.pre_shared_key)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    if let Some(provided_psk) = psk {
+        if !state.wps_enabled.load(Ordering::Relaxed) {
+            return Err(AppError::Unauthorized(
+                "Unattended WPS registration is currently disabled".to_string(),
+            ));
+        }
+
+        let expected_psk = state.config.unattended_registration_psk.expose_secret();
+        if provided_psk != expected_psk.as_str() {
+            return Err(AppError::Unauthorized(
+                "Invalid pre-shared key".to_string(),
+            ));
+        }
+
+        let hostname = payload
+            .hostname
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "worker-unattended".to_string());
+        let display_name = payload
+            .display_name
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| hostname.clone());
+        let mac_address = payload
+            .mac_address
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let api_key = generate_worker_api_key();
+        let api_key_hash = hash_token(&api_key);
+
+        let row = sqlx::query(
+            r#"
+            INSERT INTO task_worker_pcs (hostname, display_name, mac_address, api_key_hash, status)
+            VALUES ($1, $2, $3, $4, 'offline')
+            RETURNING id, hostname, display_name
+            "#,
+        )
+        .bind(&hostname)
+        .bind(&display_name)
+        .bind(mac_address)
+        .bind(&api_key_hash)
+        .fetch_one(&state.db)
+        .await?;
+
+        let worker_id: i64 = row.get("id");
+        let hostname: String = row.get("hostname");
+        let display_name: String = row.get("display_name");
+
+        tracing::info!(
+            worker_id = worker_id,
+            hostname = %hostname,
+            "Unattended worker PC registered successfully using WPS pre-shared key"
+        );
+
+        return Ok(Json(RegisterWorkerResponse {
+            status: "success".to_string(),
+            worker_id,
+            hostname,
+            display_name,
+            api_key,
+        }));
+    }
+
     let token = payload
         .registration_token
         .or(payload.token)
@@ -1306,7 +1380,7 @@ pub async fn post_register_worker_handler(
 
     if token.is_empty() {
         return Err(AppError::BadRequest(
-            "registration_token is required".to_string(),
+            "registration_token or psk is required".to_string(),
         ));
     }
 
@@ -1367,12 +1441,26 @@ mod tests {
             serde_json::from_str(json_data).expect("Failed to deserialize registration_token");
         assert_eq!(req.registration_token.as_deref(), Some("token-123"));
         assert_eq!(req.token, None);
+        assert_eq!(req.psk, None);
 
         let json_data_alt = r#"{"token": "token-456"}"#;
         let req_alt: RegisterWorkerRequest =
             serde_json::from_str(json_data_alt).expect("Failed to deserialize token");
         assert_eq!(req_alt.registration_token, None);
         assert_eq!(req_alt.token.as_deref(), Some("token-456"));
+
+        let json_psk = r#"{
+            "psk": "deskdispatch_wps_psk_secret",
+            "hostname": "unattended-node-01",
+            "display_name": "Unattended Worker 01",
+            "mac_address": "00:11:22:33:44:55"
+        }"#;
+        let req_psk: RegisterWorkerRequest =
+            serde_json::from_str(json_psk).expect("Failed to deserialize psk registration");
+        assert_eq!(req_psk.psk.as_deref(), Some("deskdispatch_wps_psk_secret"));
+        assert_eq!(req_psk.hostname.as_deref(), Some("unattended-node-01"));
+        assert_eq!(req_psk.display_name.as_deref(), Some("Unattended Worker 01"));
+        assert_eq!(req_psk.mac_address.as_deref(), Some("00:11:22:33:44:55"));
     }
 
     #[test]
