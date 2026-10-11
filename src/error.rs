@@ -58,3 +58,67 @@ impl IntoResponse for AppError {
         (status, Json(ErrorResponse { error: message })).into_response()
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+
+    #[tokio::test]
+    async fn test_app_error_into_response_status_and_json_payload() {
+        let cases = vec![
+            (
+                AppError::BadRequest("invalid query parameter".to_string()),
+                StatusCode::BAD_REQUEST,
+                "invalid query parameter",
+            ),
+            (
+                AppError::NotFound("worker not found".to_string()),
+                StatusCode::NOT_FOUND,
+                "worker not found",
+            ),
+            (
+                AppError::Unauthorized("invalid api key".to_string()),
+                StatusCode::UNAUTHORIZED,
+                "invalid api key",
+            ),
+            (
+                AppError::Forbidden("admin privileges required".to_string()),
+                StatusCode::FORBIDDEN,
+                "admin privileges required",
+            ),
+            (
+                AppError::Conflict("worker hostname exists".to_string()),
+                StatusCode::CONFLICT,
+                "worker hostname exists",
+            ),
+            (
+                AppError::UpgradeRequired("worker agent version outdated".to_string()),
+                StatusCode::UPGRADE_REQUIRED,
+                "worker agent version outdated",
+            ),
+            (
+                AppError::Internal("failed to process job".to_string()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to process job",
+            ),
+            (
+                AppError::Database(sqlx::Error::RowNotFound),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error",
+            ),
+        ];
+
+        for (err, expected_status, expected_msg) in cases {
+            let response = err.into_response();
+            assert_eq!(response.status(), expected_status);
+
+            let body_bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+            assert_eq!(json_body["error"], expected_msg);
+        }
+    }
+}

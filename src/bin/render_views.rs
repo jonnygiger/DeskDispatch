@@ -181,9 +181,7 @@ fn main() {
             ("key".to_string(), "bitmaps/sample.png".to_string()),
             ("policy".to_string(), "sample_policy".to_string()),
         ],
-        redirect_url:
-            "http://localhost:3000/bitmaps/commit?name=Login%20Button"
-                .to_string(),
+        redirect_url: "http://localhost:3000/bitmaps/commit?name=Login%20Button".to_string(),
     };
     fs::write(
         "rendered_templates/bitmaps_upload.html",
