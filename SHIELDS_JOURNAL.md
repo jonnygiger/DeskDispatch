@@ -11,3 +11,7 @@ Action: Write pure unit tests for domain DTO formatting and selection methods di
 ## 2025-03-12 Domain Enums Display, FromStr Parsing and Serde Edge Cases Coverage
 Learning: Domain status enums (`WorkerStatus`, `TaskRunStatus`, `StepResultStatus`) use `sqlx(rename_all = ...)` for DB mapping and custom `FromStr`/`Display` implementations for case-insensitive, whitespace-trimmed string parsing and lowercase display output, while Serde default derivations preserve PascalCase variant names.
 Action: In unit tests for domain status enums, test `Display`, case-insensitive and whitespace-tolerant `FromStr` parsing, and Serde JSON serialization/deserialization separately to ensure string parsing edge cases do not break.
+
+## 2025-03-13 AppError HTTP Status Mapping & JSON Error Response Payload Coverage
+Learning: Testing `AppError::into_response()` using `axum::body::to_bytes` and `serde_json::from_slice` allows verifying HTTP status code mappings and JSON error response formatting for all application error variants without requiring database or network fixtures.
+Action: Test error handling response transformations directly via `into_response()` assertions in `src/error.rs` whenever new error variants or response fields are added.
