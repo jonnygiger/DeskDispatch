@@ -254,6 +254,10 @@ impl VariableOption {
     pub fn is_selected_found(&self, found_var_id: &Option<i64>) -> bool {
         *found_var_id == Some(self.id)
     }
+
+    pub fn is_selected_region(&self, region_var_id: &Option<i64>) -> bool {
+        *region_var_id == Some(self.id)
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize, sqlx::FromRow)]
@@ -319,6 +323,8 @@ pub struct StepMouseClickTemplate {
     pub y_mode: String,
     pub y: Option<i32>,
     pub y_variable_id: Option<i64>,
+    pub click_mode: String,
+    pub region_variable_id: Option<i64>,
     pub button: String,
     pub click_type: String,
     pub variables: Vec<VariableOption>,
@@ -440,6 +446,7 @@ pub struct StepFindBitmapTemplate {
     pub output_found_variable_id: Option<i64>,
     pub output_x_variable_id: Option<i64>,
     pub output_y_variable_id: Option<i64>,
+    pub output_region_variable_id: Option<i64>,
     pub bitmaps: Vec<BitmapOption>,
     pub variables: Vec<VariableOption>,
     pub error: Option<String>,
@@ -462,6 +469,9 @@ pub struct MouseClickStepForm {
     pub y: Option<i32>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub y_variable_id: Option<i64>,
+    pub click_mode: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub region_variable_id: Option<i64>,
     pub button: Option<String>,
     pub click_type: Option<String>,
     pub key_combo: Option<String>,
@@ -485,6 +495,8 @@ pub struct MouseClickStepForm {
     pub output_x_variable_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub output_y_variable_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub output_region_variable_id: Option<i64>,
     pub condition_type: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub expected_r: Option<i16>,

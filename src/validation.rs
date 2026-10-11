@@ -131,7 +131,7 @@ pub async fn validate_automation_for_activation(
     // Mouse clicks
     let mc_rows = sqlx::query(
         r#"
-        SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id
+        SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id, smc.region_variable_id
         FROM step_mouse_clicks smc
         JOIN automation_steps s ON smc.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL
@@ -147,6 +147,7 @@ pub async fn validate_automation_for_activation(
         y: Option<i32>,
         x_var_id: Option<i64>,
         y_var_id: Option<i64>,
+        region_var_id: Option<i64>,
     }
     let mut mc_map: HashMap<i64, MouseClickMeta> = HashMap::new();
     for r in mc_rows {
@@ -158,6 +159,7 @@ pub async fn validate_automation_for_activation(
                 y: r.get("y"),
                 x_var_id: r.get("x_variable_id"),
                 y_var_id: r.get("y_variable_id"),
+                region_var_id: r.get("region_variable_id"),
             },
         );
     }
@@ -192,7 +194,7 @@ pub async fn validate_automation_for_activation(
     // Find bitmap
     let fb_rows = sqlx::query(
         r#"
-        SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id, sfb.search_x, sfb.search_y
+        SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id, sfb.output_region_variable_id, sfb.search_x, sfb.search_y
         FROM step_find_bitmap sfb
         JOIN automation_steps s ON sfb.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL
@@ -213,6 +215,7 @@ pub async fn validate_automation_for_activation(
                 output_found_var_id: r.get("output_found_variable_id"),
                 output_x_var_id: r.get("output_x_variable_id"),
                 output_y_var_id: r.get("output_y_variable_id"),
+                output_region_var_id: r.get("output_region_variable_id"),
                 search_x: r.get("search_x"),
                 search_y: r.get("search_y"),
             },
@@ -322,6 +325,27 @@ pub async fn validate_automation_for_activation(
                         }
                     }
 
+                    if let Some(r_vid) = mc.region_var_id {
+                        if let Some(v) = vars_map.get(&r_vid) {
+                            if v.var_type != "region" {
+                                errors.push(AutomationLintError {
+                                    step_id: Some(sid),
+                                    step_number: Some(step_num),
+                                    message: format!("Variable '{}' used for region click is of type '{}', expected 'region'.", v.name, v.var_type),
+                                });
+                            }
+                        } else {
+                            errors.push(AutomationLintError {
+                                step_id: Some(sid),
+                                step_number: Some(step_num),
+                                message: format!(
+                                    "Referenced region variable ID {} does not exist.",
+                                    r_vid
+                                ),
+                            });
+                        }
+                    }
+
                     if let Some(y_vid) = mc.y_var_id {
                         if let Some(v) = vars_map.get(&y_vid) {
                             if v.var_type != "int" {
@@ -359,7 +383,7 @@ pub async fn validate_automation_for_activation(
 
                     if let Some(out_vid) = fp.output_var_id {
                         if let Some(v) = vars_map.get(&out_vid) {
-                            if !matches!(v.var_type.as_str(), "color" | "point" | "string" | "int")
+                            if !matches!(v.var_type.as_str(), "color" | "point" | "string" | "int" | "region")
                             {
                                 errors.push(AutomationLintError {
                                     step_id: Some(sid),
@@ -386,6 +410,20 @@ pub async fn validate_automation_for_activation(
                             message: format!(
                                 "References bitmap ID {} which does not exist or has been deleted.",
                                 fb.reference_bitmap_id
+                            ),
+                        });
+                    }
+
+                    if let Some(r_vid) = fb.output_region_var_id
+                        && let Some(v) = vars_map.get(&r_vid)
+                        && v.var_type != "region"
+                    {
+                        errors.push(AutomationLintError {
+                            step_id: Some(sid),
+                            step_number: Some(step_num),
+                            message: format!(
+                                "'Found Region' output variable '{}' is of type '{}', expected 'region'.",
+                                v.name, v.var_type
                             ),
                         });
                     }
@@ -711,6 +749,17 @@ pub async fn validate_automation_for_activation(
                     message: format!("Variable '{}' read for Y coordinate before being written along all execution paths.", v.name),
                 });
             }
+            if let Some(r_vid) = mc.region_var_id
+                && !inits.contains(&r_vid)
+                && let Some(v) = vars_map.get(&r_vid)
+                && !available_params.contains(&v.name)
+            {
+                errors.push(AutomationLintError {
+                    step_id: Some(sid),
+                    step_number: Some(meta.step_number),
+                    message: format!("Variable '{}' read for region click before being written along all execution paths.", v.name),
+                });
+            }
         }
     }
 
@@ -732,6 +781,7 @@ struct FindBitmapMeta {
     output_found_var_id: Option<i64>,
     output_x_var_id: Option<i64>,
     output_y_var_id: Option<i64>,
+    output_region_var_id: Option<i64>,
     search_x: Option<i32>,
     search_y: Option<i32>,
 }
@@ -755,6 +805,9 @@ fn add_step_writes(
             set.insert(vid);
         }
         if let Some(vid) = fb.output_y_var_id {
+            set.insert(vid);
+        }
+        if let Some(vid) = fb.output_region_var_id {
             set.insert(vid);
         }
     }
