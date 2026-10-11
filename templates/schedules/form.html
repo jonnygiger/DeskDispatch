@@ -90,6 +90,20 @@
             </small>
         </div>
 
+        <div style="margin-bottom: 1.25rem; border: 1px solid var(--color-border); padding: 1rem; border-radius: 6px; background-color: var(--color-bg-secondary, #f8f9fa);">
+            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <input type="checkbox" name="wol_enabled" id="wol_enabled" value="true" {% if wol_enabled %}checked{% endif %} />
+                <label for="wol_enabled" style="font-weight: 600; cursor: pointer;">Enable Wake-on-LAN (WOL) Boot Warm-up</label>
+            </div>
+            <div>
+                <label for="wol_warmup_secs" style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.25rem;">Warm-up Time (Seconds)</label>
+                <input type="number" name="wol_warmup_secs" id="wol_warmup_secs" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" value="{{ wol_warmup_secs }}" min="0" placeholder="e.g. 300 for 5 minutes" />
+                <small style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
+                    Sends WOL magic packets to target worker MAC address(es) this many seconds in advance of the scheduled execution time.
+                </small>
+            </div>
+        </div>
+
         <div style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
             <input type="checkbox" name="is_enabled" id="is_enabled" value="true" {% if is_enabled %}checked{% endif %} />
             <label for="is_enabled" style="font-weight: 500; cursor: pointer;">Enable this schedule immediately</label>

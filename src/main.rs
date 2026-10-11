@@ -407,6 +407,10 @@ async fn verify_database_schema(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::
         ("task_runs", "target_worker_group_id"),
         ("task_runs", "dispatched_automation_json"),
         ("users", "must_change_password"),
+        ("task_worker_pcs", "mac_address"),
+        ("schedules", "wol_enabled"),
+        ("schedules", "wol_warmup_secs"),
+        ("schedules", "last_wol_sent_at"),
     ];
 
     for (table, column) in required_columns {

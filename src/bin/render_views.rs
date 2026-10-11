@@ -284,6 +284,7 @@ fn main() {
         id: 1,
         hostname: "pc-warehouse-01".to_string(),
         display_name: "Warehouse Worker PC".to_string(),
+        mac_address: Some("00:11:22:33:44:55".to_string()),
         status: "online".to_string(),
         last_heartbeat_at: Some(Utc::now()),
         screen_width: Some(1920),
@@ -315,6 +316,7 @@ fn main() {
         id: 1,
         hostname: "pc-warehouse-01".to_string(),
         display_name: "Warehouse Worker PC".to_string(),
+        mac_address: Some("00:11:22:33:44:55".to_string()),
         status: "online".to_string(),
         last_heartbeat_at: Some(Utc::now()),
         screen_width: Some(1920),
@@ -333,6 +335,7 @@ fn main() {
         user: user.clone(),
         worker: worker_detail.clone(),
         error: None,
+        info: None,
     };
     fs::write(
         "rendered_templates/workers_detail.html",
@@ -344,6 +347,7 @@ fn main() {
         user: user.clone(),
         hostname: "pc-warehouse-02.local".to_string(),
         display_name: "Warehouse Worker PC 2".to_string(),
+        mac_address: "00:11:22:33:44:55".to_string(),
         error: None,
     };
     fs::write(
@@ -533,6 +537,9 @@ fn main() {
         worker_group_name: Some("Warehouse Fleet".to_string()),
         overlap_policy: "allow".to_string(),
         max_queue_age_secs: Some(3600),
+        wol_enabled: true,
+        wol_warmup_secs: 300,
+        last_wol_sent_at: None,
         is_enabled: true,
         next_run_at: Some(Utc::now()),
         last_run_at: Some(Utc::now()),
@@ -561,6 +568,8 @@ fn main() {
         worker_group_id: Some(1),
         overlap_policy: "allow".to_string(),
         max_queue_age_secs: Some(3600),
+        wol_enabled: true,
+        wol_warmup_secs: 300,
         is_enabled: true,
         automations: vec![ScheduleAutomationOption {
             id: 12,

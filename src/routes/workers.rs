@@ -37,6 +37,10 @@ pub fn router() -> Router<AppState> {
             "/workers/{id}/rotate-key",
             post(post_rotate_worker_key_handler),
         )
+        .route(
+            "/workers/{id}/wake",
+            post(post_wake_worker_handler),
+        )
         .route("/worker-groups/new", get(get_new_worker_group_handler))
         .route("/worker-groups", post(post_create_worker_group_handler))
         .route(
@@ -54,6 +58,7 @@ pub struct WorkerPcItem {
     pub id: i64,
     pub hostname: String,
     pub display_name: String,
+    pub mac_address: Option<String>,
     pub status: String,
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     pub screen_width: Option<i32>,
@@ -149,6 +154,56 @@ pub async fn post_deactivate_worker_handler(
 }
 
 #[tracing::instrument(skip(state, user))]
+pub async fn post_wake_worker_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    RequireAdmin(user): RequireAdmin,
+) -> impl IntoResponse {
+    let row = match sqlx::query("SELECT id, display_name, mac_address FROM task_worker_pcs WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Worker PC not found").into_response(),
+        Err(e) => {
+            tracing::error!("Failed to fetch worker PC for WOL wake: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    };
+
+    let mac_address: Option<String> = row.get("mac_address");
+    let display_name: String = row.get("display_name");
+
+    let mac = match mac_address {
+        Some(m) if !m.trim().is_empty() => m,
+        _ => {
+            return Redirect::to(&format!("/workers/{}?wake_error=No+MAC+address+configured+for+this+worker", id)).into_response();
+        }
+    };
+
+    if let Err(e) = crate::wol::send_wol_packet(&mac).await {
+        tracing::error!("Failed to send WOL magic packet for worker {}: {}", id, e);
+        return Redirect::to(&format!("/workers/{}?wake_error={}", id, urlencoding::encode(&e))).into_response();
+    }
+
+    let _ = log_audit(
+        &state.db,
+        Some(user.id),
+        "wake_wol",
+        "task_worker_pc",
+        Some(id),
+        Some(serde_json::json!({
+            "display_name": display_name,
+            "mac_address": mac,
+        })),
+    )
+    .await;
+
+    Redirect::to(&format!("/workers/{}?wake_success=true", id)).into_response()
+}
+
+#[tracing::instrument(skip(state, user))]
 pub async fn post_rotate_worker_key_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -227,6 +282,7 @@ mod tests {
             user,
             hostname: "worker-01.local".to_string(),
             display_name: "Worker 1".to_string(),
+            mac_address: "00:11:22:33:44:55".to_string(),
             error: Some("Test error message".to_string()),
         };
 
@@ -253,6 +309,7 @@ mod tests {
             id: 42,
             hostname: "worker-42.local".to_string(),
             display_name: "Worker 42".to_string(),
+            mac_address: Some("00:11:22:33:44:55".to_string()),
             status: "online".to_string(),
             last_heartbeat_at: Some(Utc::now()),
             screen_width: Some(1920),
@@ -268,6 +325,7 @@ mod tests {
             user,
             worker,
             error: None,
+            info: None,
         };
 
         let rendered = tmpl
@@ -291,6 +349,7 @@ mod tests {
             id: 1,
             hostname: "w1".to_string(),
             display_name: "Worker 1".to_string(),
+            mac_address: None,
             status: "online".to_string(),
             last_heartbeat_at: recent_hb,
             screen_width: None,
@@ -307,6 +366,7 @@ mod tests {
             id: 2,
             hostname: "w2".to_string(),
             display_name: "Worker 2".to_string(),
+            mac_address: None,
             status: "online".to_string(),
             last_heartbeat_at: stale_hb,
             screen_width: None,
@@ -323,6 +383,7 @@ mod tests {
             id: 3,
             hostname: "w3".to_string(),
             display_name: "Worker 3".to_string(),
+            mac_address: None,
             status: "online".to_string(),
             last_heartbeat_at: None,
             screen_width: None,
@@ -338,6 +399,7 @@ mod tests {
             id: 4,
             hostname: "w4".to_string(),
             display_name: "Worker 4".to_string(),
+            mac_address: None,
             status: "offline".to_string(),
             last_heartbeat_at: recent_hb,
             screen_width: None,
@@ -353,6 +415,7 @@ mod tests {
             id: 5,
             hostname: "w5".to_string(),
             display_name: "Worker 5".to_string(),
+            mac_address: None,
             status: "busy".to_string(),
             last_heartbeat_at: recent_hb,
             screen_width: None,
@@ -394,6 +457,8 @@ pub struct WorkerSimple {
 #[derive(Debug, Deserialize)]
 pub struct WorkerDetailQuery {
     pub token: Option<String>,
+    pub wake_success: Option<bool>,
+    pub wake_error: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -401,6 +466,7 @@ pub struct WorkerDetailRow {
     pub id: i64,
     pub hostname: String,
     pub display_name: String,
+    pub mac_address: Option<String>,
     pub status: String,
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     pub screen_width: Option<i32>,
@@ -416,6 +482,7 @@ pub struct WorkerDetail {
     pub id: i64,
     pub hostname: String,
     pub display_name: String,
+    pub mac_address: Option<String>,
     pub status: String,
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     pub screen_width: Option<i32>,
@@ -474,6 +541,7 @@ pub struct WorkerNewTemplate {
     pub user: crate::auth::AuthUser,
     pub hostname: String,
     pub display_name: String,
+    pub mac_address: String,
     pub error: Option<String>,
 }
 
@@ -491,6 +559,7 @@ pub struct WorkerDetailTemplate {
     pub user: crate::auth::AuthUser,
     pub worker: WorkerDetail,
     pub error: Option<String>,
+    pub info: Option<String>,
 }
 
 #[derive(Template)]
@@ -533,12 +602,16 @@ impl WorkerGroupFormTemplate {
 pub struct WorkerCreateForm {
     pub hostname: String,
     pub display_name: String,
+    #[serde(default)]
+    pub mac_address: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct WorkerEditForm {
     pub hostname: String,
     pub display_name: String,
+    #[serde(default)]
+    pub mac_address: Option<String>,
     #[serde(default)]
     pub group_ids: Vec<i64>,
 }
@@ -559,6 +632,7 @@ pub async fn get_new_worker_handler(RequireAdmin(user): RequireAdmin) -> impl In
         user,
         hostname: String::new(),
         display_name: String::new(),
+        mac_address: String::new(),
         error: None,
     })
     .into_response()
@@ -572,15 +646,30 @@ pub async fn post_create_worker_handler(
 ) -> impl IntoResponse {
     let hostname = form.hostname.trim();
     let display_name = form.display_name.trim();
+    let mac_address = form.mac_address.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
 
     if hostname.is_empty() || display_name.is_empty() {
         return HtmlTemplate(WorkerNewTemplate {
             user,
             hostname: hostname.to_string(),
             display_name: display_name.to_string(),
+            mac_address: mac_address.unwrap_or("").to_string(),
             error: Some("Hostname and Display Name are required.".to_string()),
         })
         .into_response();
+    }
+
+    if let Some(mac_str) = mac_address {
+        if let Err(e) = crate::wol::parse_mac_address(mac_str) {
+            return HtmlTemplate(WorkerNewTemplate {
+                user,
+                hostname: hostname.to_string(),
+                display_name: display_name.to_string(),
+                mac_address: mac_str.to_string(),
+                error: Some(format!("Invalid MAC address: {}", e)),
+            })
+            .into_response();
+        }
     }
 
     let token = generate_registration_token();
@@ -588,13 +677,14 @@ pub async fn post_create_worker_handler(
 
     let row = sqlx::query(
         r#"
-        INSERT INTO task_worker_pcs (hostname, display_name, api_key_hash, registration_token_hash, registration_token_expires_at, status)
-        VALUES ($1, $2, NULL, $3, now() + INTERVAL '24 hours', 'offline')
+        INSERT INTO task_worker_pcs (hostname, display_name, mac_address, api_key_hash, registration_token_hash, registration_token_expires_at, status)
+        VALUES ($1, $2, $3, NULL, $4, now() + INTERVAL '24 hours', 'offline')
         RETURNING id
         "#,
     )
     .bind(hostname)
     .bind(display_name)
+    .bind(mac_address)
     .bind(&token_hash)
     .fetch_one(&state.db)
     .await;
@@ -607,6 +697,7 @@ pub async fn post_create_worker_handler(
                 user,
                 hostname: hostname.to_string(),
                 display_name: display_name.to_string(),
+                mac_address: mac_address.unwrap_or("").to_string(),
                 error: Some("Failed to register worker PC in database.".to_string()),
             })
             .into_response();
@@ -644,6 +735,7 @@ pub async fn get_workers_handler(
                 w.id,
                 w.hostname,
                 w.display_name,
+                w.mac_address,
                 w.status,
                 w.last_heartbeat_at,
                 w.screen_width,
@@ -730,6 +822,7 @@ pub async fn get_workers_handler(
             id: row.id,
             hostname: row.hostname,
             display_name: row.display_name,
+            mac_address: row.mac_address,
             status: row.status,
             last_heartbeat_at: row.last_heartbeat_at,
             screen_width: row.screen_width,
@@ -786,7 +879,7 @@ pub async fn get_worker_detail_handler(
     let row = match sqlx::query_as::<_, WorkerDetailRow>(
         r#"
         SELECT
-            id, hostname, display_name, status, last_heartbeat_at,
+            id, hostname, display_name, mac_address, status, last_heartbeat_at,
             screen_width, screen_height, os_info, agent_version,
             created_at,
             CASE
@@ -828,10 +921,17 @@ pub async fn get_worker_detail_handler(
 
     let display_token = query.token.or(row.registration_token);
 
+    let info = if query.wake_success == Some(true) {
+        Some("Wake-on-LAN magic packet sent successfully.".to_string())
+    } else {
+        None
+    };
+
     let worker = WorkerDetail {
         id: row.id,
         hostname: row.hostname,
         display_name: row.display_name,
+        mac_address: row.mac_address,
         status: row.status,
         last_heartbeat_at: row.last_heartbeat_at,
         screen_width: row.screen_width,
@@ -846,7 +946,8 @@ pub async fn get_worker_detail_handler(
     HtmlTemplate(WorkerDetailTemplate {
         user,
         worker,
-        error: None,
+        error: query.wake_error,
+        info,
     })
     .into_response()
 }
@@ -860,7 +961,7 @@ pub async fn get_edit_worker_handler(
     let row = match sqlx::query_as::<_, WorkerDetailRow>(
         r#"
         SELECT
-            id, hostname, display_name, status, last_heartbeat_at,
+            id, hostname, display_name, mac_address, status, last_heartbeat_at,
             screen_width, screen_height, os_info, agent_version,
             created_at,
             CASE
@@ -915,6 +1016,7 @@ pub async fn get_edit_worker_handler(
         id: row.id,
         hostname: row.hostname,
         display_name: row.display_name,
+        mac_address: row.mac_address,
         status: row.status,
         last_heartbeat_at: row.last_heartbeat_at,
         screen_width: row.screen_width,
@@ -944,6 +1046,7 @@ pub async fn post_edit_worker_handler(
 ) -> impl IntoResponse {
     let hostname = form.hostname.trim();
     let display_name = form.display_name.trim();
+    let mac_address = form.mac_address.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
 
     if hostname.is_empty() || display_name.is_empty() {
         return (
@@ -951,6 +1054,16 @@ pub async fn post_edit_worker_handler(
             "Hostname and Display Name cannot be empty",
         )
             .into_response();
+    }
+
+    if let Some(mac_str) = mac_address {
+        if let Err(e) = crate::wol::parse_mac_address(mac_str) {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid MAC address: {}", e),
+            )
+                .into_response();
+        }
     }
 
     let mut tx = match state.db.begin().await {
@@ -964,12 +1077,13 @@ pub async fn post_edit_worker_handler(
     let update_res = sqlx::query(
         r#"
         UPDATE task_worker_pcs
-        SET hostname = $1, display_name = $2
-        WHERE id = $3
+        SET hostname = $1, display_name = $2, mac_address = $3
+        WHERE id = $4
         "#,
     )
     .bind(hostname)
     .bind(display_name)
+    .bind(mac_address)
     .bind(id)
     .execute(&mut *tx)
     .await;

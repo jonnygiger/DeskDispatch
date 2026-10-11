@@ -19,7 +19,11 @@
     <div style="display: flex; gap: 0.75rem;">
         <a href="/workers" class="btn btn-outline">&larr; Back to Workers</a>
         {% if user.role.can_edit() %}
-        <a href="/workers/{{ worker.id }}/record" class="btn btn-primary">Record New Steps</a>
+        <form method="post" action="/workers/{{ worker.id }}/wake" style="display: inline;" onsubmit="return confirm('Send Wake-on-LAN magic packet to {{ worker.display_name }}?');">
+            {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
+            <button type="submit" class="btn btn-primary" {% if worker.mac_address.is_none() %}disabled title="No MAC address configured for Wake-on-LAN"{% endif %}>Wake On LAN</button>
+        </form>
+        <a href="/workers/{{ worker.id }}/record" class="btn btn-outline">Record New Steps</a>
         {% endif %}
         {% if user.role.is_admin() %}
         <a href="/workers/{{ worker.id }}/edit" class="btn btn-primary">Edit Worker</a>
@@ -39,6 +43,12 @@
     </div>
 </div>
 
+{% if let Some(info_msg) = info %}
+<div class="alert alert-success" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; border-radius: 4px;">
+    {{ info_msg }}
+</div>
+{% endif %}
+
 {% if let Some(err) = error %}
 <div class="alert alert-danger" style="margin-bottom: 1rem; padding: 0.75rem 1rem; background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 4px;">
     {{ err }}
@@ -55,6 +65,15 @@
 
             <dt style="font-weight: 600; color: var(--color-text-muted);">Hostname:</dt>
             <dd style="margin: 0;"><code>{{ worker.hostname }}</code></dd>
+
+            <dt style="font-weight: 600; color: var(--color-text-muted);">MAC Address:</dt>
+            <dd style="margin: 0;">
+                {% if let Some(mac) = worker.mac_address.as_deref() %}
+                    <code>{{ mac }}</code>
+                {% else %}
+                    <span style="color: var(--color-text-muted);">Not configured</span>
+                {% endif %}
+            </dd>
 
             <dt style="font-weight: 600; color: var(--color-text-muted);">Display Name:</dt>
             <dd style="margin: 0;">{{ worker.display_name }}</dd>

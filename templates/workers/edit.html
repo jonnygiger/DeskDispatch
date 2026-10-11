@@ -37,6 +37,12 @@
         </div>
 
         <div>
+            <label for="mac_address" style="display: block; font-weight: 600; margin-bottom: 0.375rem;">MAC Address (for Wake-on-LAN)</label>
+            <input type="text" id="mac_address" name="mac_address" value="{% if let Some(mac) = worker.mac_address.as_deref() %}{{ mac }}{% endif %}" placeholder="e.g. 00:11:22:33:44:55" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+            <p style="font-size: 0.8125rem; color: var(--color-text-muted); margin-top: 0.25rem;">Optional. Format: XX:XX:XX:XX:XX:XX</p>
+        </div>
+
+        <div>
             <label style="display: block; font-weight: 600; margin-bottom: 0.375rem;">Worker Group Memberships</label>
             {% if all_groups.is_empty() %}
                 <p style="color: var(--color-text-muted); font-size: 0.875rem;">No worker groups exist yet. Create a group first from the Workers overview page.</p>

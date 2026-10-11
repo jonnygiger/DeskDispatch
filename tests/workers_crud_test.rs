@@ -19,6 +19,7 @@ fn test_worker_status_badges() {
         id: 1,
         hostname: "host-1".to_string(),
         display_name: "Worker 1".to_string(),
+        mac_address: None,
         status: "online".to_string(),
         last_heartbeat_at: Some(Utc::now()),
         screen_width: Some(1920),
@@ -65,6 +66,7 @@ fn test_worker_templates_rendering() {
         id: 101,
         hostname: "pc-warehouse-01".to_string(),
         display_name: "Warehouse Worker PC".to_string(),
+        mac_address: None,
         status: "online".to_string(),
         last_heartbeat_at: Some(Utc::now()),
         screen_width: Some(1920),
@@ -100,6 +102,7 @@ fn test_worker_templates_rendering() {
         id: 101,
         hostname: "pc-warehouse-01".to_string(),
         display_name: "Warehouse Worker PC".to_string(),
+        mac_address: None,
         status: "online".to_string(),
         last_heartbeat_at: Some(Utc::now()),
         screen_width: Some(1920),
@@ -119,6 +122,7 @@ fn test_worker_templates_rendering() {
         user: user.clone(),
         worker: worker_detail.clone(),
         error: None,
+        info: None,
     };
     let detail_html = detail_tmpl.render().unwrap();
     assert!(detail_html.contains("Warehouse Worker PC"));

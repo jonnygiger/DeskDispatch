@@ -36,6 +36,12 @@
             <input type="text" id="hostname" name="hostname" value="{{ hostname }}" placeholder="e.g. worker-pc-01.local" required class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
         </div>
 
+        <div>
+            <label for="mac_address" style="display: block; font-weight: 600; margin-bottom: 0.375rem;">MAC Address (for Wake-on-LAN)</label>
+            <input type="text" id="mac_address" name="mac_address" value="{{ mac_address }}" placeholder="e.g. 00:11:22:33:44:55" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+            <p style="font-size: 0.8125rem; color: var(--color-text-muted); margin-top: 0.25rem;">Optional. Required for Wake-on-LAN manual boot triggers and schedule warm-up dispatching.</p>
+        </div>
+
         <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem;">
             <a href="/workers" class="btn btn-outline">Cancel</a>
             <button type="submit" class="btn btn-primary">Generate Registration Token</button>
