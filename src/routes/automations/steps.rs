@@ -112,9 +112,13 @@ pub fn generate_mouse_click_summary(
     y: Option<i32>,
     x_var_name: Option<&str>,
     y_var_name: Option<&str>,
+    region_var_name: Option<&str>,
     button: &str,
     click_type: &str,
 ) -> String {
+    if let Some(rname) = region_var_name.filter(|n| !n.trim().is_empty()) {
+        return format!("Click center of region «{}» [{}, {}]", rname.trim(), button, click_type);
+    }
     let x_str = match x_var_name {
         Some(name) if !name.trim().is_empty() => format!("«{}»", name.trim()),
         _ => match x {
@@ -323,6 +327,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             Option<i32>,
             Option<String>,
             Option<String>,
+            Option<String>,
             String,
             String,
         ),
@@ -335,9 +340,10 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             let y: Option<i32> = r.get("y");
             let x_var_name: Option<String> = r.get("x_var_name");
             let y_var_name: Option<String> = r.get("y_var_name");
+            let region_var_name: Option<String> = r.get("region_var_name");
             let button: String = r.get("button");
             let click_type: String = r.get("click_type");
-            (step_id, (x, y, x_var_name, y_var_name, button, click_type))
+            (step_id, (x, y, x_var_name, y_var_name, region_var_name, button, click_type))
         })
         .collect();
 
@@ -428,7 +434,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                 }
             }
             "mouse_click" => {
-                if let Some((x, y, x_var_name, y_var_name, button, click_type)) =
+                if let Some((x, y, x_var_name, y_var_name, region_var_name, button, click_type)) =
                     mouse_clicks_map.get(&step_id)
                 {
                     generate_mouse_click_summary(
@@ -436,6 +442,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                         *y,
                         x_var_name.as_deref(),
                         y_var_name.as_deref(),
+                        region_var_name.as_deref(),
                         button,
                         click_type,
                     )
@@ -545,6 +552,7 @@ pub async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) 
                 let y: Option<i32> = r.get("y");
                 let x_var_name: Option<String> = r.get("x_var_name");
                 let y_var_name: Option<String> = r.get("y_var_name");
+                let region_var_name: Option<String> = r.get("region_var_name");
                 let button: String = r.get("button");
                 let click_type: String = r.get("click_type");
                 generate_mouse_click_summary(
@@ -552,6 +560,7 @@ pub async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) 
                     y,
                     x_var_name.as_deref(),
                     y_var_name.as_deref(),
+                    region_var_name.as_deref(),
                     &button,
                     &click_type,
                 )
@@ -815,6 +824,7 @@ pub async fn get_new_find_bitmap_step_handler(
         output_found_variable_id: None,
         output_x_variable_id: None,
         output_y_variable_id: None,
+        output_region_variable_id: None,
         bitmaps,
         variables,
         error: None,
@@ -873,6 +883,8 @@ pub async fn get_new_mouse_click_step_handler(
         y_mode: "fixed".to_string(),
         y: query.y,
         y_variable_id: None,
+        click_mode: "coordinates".to_string(),
+        region_variable_id: None,
         button: "left".to_string(),
         click_type: "single".to_string(),
         variables,
@@ -1249,6 +1261,7 @@ pub async fn post_create_step_handler(
                         output_found_variable_id: form.output_found_variable_id,
                         output_x_variable_id: form.output_x_variable_id,
                         output_y_variable_id: form.output_y_variable_id,
+                        output_region_variable_id: form.output_region_variable_id,
                         bitmaps,
                         variables,
                         error: Some("Please select a reference bitmap.".to_string()),
@@ -1283,6 +1296,7 @@ pub async fn post_create_step_handler(
                     output_found_variable_id: form.output_found_variable_id,
                     output_x_variable_id: form.output_x_variable_id,
                     output_y_variable_id: form.output_y_variable_id,
+                    output_region_variable_id: form.output_region_variable_id,
                     bitmaps,
                     variables,
                     error: Some(
@@ -1317,6 +1331,7 @@ pub async fn post_create_step_handler(
                     output_found_variable_id: form.output_found_variable_id,
                     output_x_variable_id: form.output_x_variable_id,
                     output_y_variable_id: form.output_y_variable_id,
+                    output_region_variable_id: form.output_region_variable_id,
                     bitmaps,
                     variables,
                     error: Some(
@@ -1351,10 +1366,46 @@ pub async fn post_create_step_handler(
                     output_found_variable_id: form.output_found_variable_id,
                     output_x_variable_id: form.output_x_variable_id,
                     output_y_variable_id: form.output_y_variable_id,
+                    output_region_variable_id: form.output_region_variable_id,
                     bitmaps,
                     variables,
                     error: Some(
                         "Selected 'Found Y' output variable is invalid for this automation."
+                            .to_string(),
+                    ),
+                    is_edit: false,
+                }),
+            )
+                .into_response();
+        }
+
+        if let Some(var_id) = form.output_region_variable_id
+            && !variables.iter().any(|v| v.id == var_id)
+        {
+            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                HtmlTemplate(StepFindBitmapTemplate {
+                    user,
+                    csrf_token,
+                    automation_id: id,
+                    step_id: None,
+                    label: form.label.unwrap_or_default(),
+                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                    reference_bitmap_id: form.reference_bitmap_id,
+                    search_x: form.search_x,
+                    search_y: form.search_y,
+                    search_width: form.search_width,
+                    search_height: form.search_height,
+                    match_threshold: form.match_threshold.unwrap_or(0.95),
+                    output_found_variable_id: form.output_found_variable_id,
+                    output_x_variable_id: form.output_x_variable_id,
+                    output_y_variable_id: form.output_y_variable_id,
+                    output_region_variable_id: form.output_region_variable_id,
+                    bitmaps,
+                    variables,
+                    error: Some(
+                        "Selected 'Found Region' output variable is invalid for this automation."
                             .to_string(),
                     ),
                     is_edit: false,
@@ -1461,7 +1512,8 @@ pub async fn post_create_step_handler(
                     "match_threshold": match_threshold,
                     "output_found_variable_id": form.output_found_variable_id,
                     "output_x_variable_id": form.output_x_variable_id,
-                    "output_y_variable_id": form.output_y_variable_id
+                    "output_y_variable_id": form.output_y_variable_id,
+                    "output_region_variable_id": form.output_region_variable_id
                 })),
             )
             .await;
@@ -1471,25 +1523,18 @@ pub async fn post_create_step_handler(
     }
 
     let is_mouse_click = step_type_str == "mouse_click"
+        || form.click_mode.as_deref() == Some("region")
+        || form.region_variable_id.is_some()
         || (form.x_mode.is_some() || form.x_variable_id.is_some() || form.y_variable_id.is_some());
 
     if is_mouse_click {
-        let x_res = validate_literal_or_reference(
-            form.x_mode.as_deref(),
-            form.x,
-            form.x_variable_id,
-            "X coordinate",
-        );
-        let y_res = validate_literal_or_reference(
-            form.y_mode.as_deref(),
-            form.y,
-            form.y_variable_id,
-            "Y coordinate",
-        );
+        let is_region_mode = form.click_mode.as_deref() == Some("region") || (form.click_mode.is_none() && form.region_variable_id.is_some());
 
-        let (final_x, final_x_var, final_y, final_y_var) = match (x_res, y_res) {
-            (Ok((fx, fx_v)), Ok((fy, fy_v))) => (fx, fx_v, fy, fy_v),
-            (Err(e), _) | (_, Err(e)) => {
+        let (final_x, final_x_var, final_y, final_y_var, final_region_var) = if is_region_mode {
+            let rvar = form.region_variable_id.filter(|&v| v > 0);
+            if let Some(rv) = rvar {
+                (None, None, None, None, Some(rv))
+            } else {
                 let variables = fetch_automation_variables(&state.db, id).await;
                 return (
                     StatusCode::BAD_REQUEST,
@@ -1506,6 +1551,8 @@ pub async fn post_create_step_handler(
                         y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
                         y: form.y,
                         y_variable_id: form.y_variable_id,
+                        click_mode: "region".to_string(),
+                        region_variable_id: form.region_variable_id,
                         button: match form.button.as_deref() {
                             Some("right") => "right",
                             Some("middle") => "middle",
@@ -1518,11 +1565,65 @@ pub async fn post_create_step_handler(
                         }
                         .to_string(),
                         variables,
-                        error: Some(e),
+                        error: Some("Please select a valid region variable.".to_string()),
                         is_edit: false,
                     }),
                 )
                     .into_response();
+            }
+        } else {
+            let x_res = validate_literal_or_reference(
+                form.x_mode.as_deref(),
+                form.x,
+                form.x_variable_id,
+                "X coordinate",
+            );
+            let y_res = validate_literal_or_reference(
+                form.y_mode.as_deref(),
+                form.y,
+                form.y_variable_id,
+                "Y coordinate",
+            );
+
+            match (x_res, y_res) {
+                (Ok((fx, fx_v)), Ok((fy, fy_v))) => (fx, fx_v, fy, fy_v, None),
+                (Err(e), _) | (_, Err(e)) => {
+                    let variables = fetch_automation_variables(&state.db, id).await;
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        HtmlTemplate(StepMouseClickTemplate {
+                            user,
+                            csrf_token,
+                            automation_id: id,
+                            step_id: None,
+                            label: form.label.unwrap_or_default(),
+                            post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                            x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
+                            x: form.x,
+                            x_variable_id: form.x_variable_id,
+                            y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
+                            y: form.y,
+                            y_variable_id: form.y_variable_id,
+                            click_mode: "coordinates".to_string(),
+                            region_variable_id: form.region_variable_id,
+                            button: match form.button.as_deref() {
+                                Some("right") => "right",
+                                Some("middle") => "middle",
+                                _ => "left",
+                            }
+                            .to_string(),
+                            click_type: match form.click_type.as_deref() {
+                                Some("double") => "double",
+                                _ => "single",
+                            }
+                            .to_string(),
+                            variables,
+                            error: Some(e),
+                            is_edit: false,
+                        }),
+                    )
+                        .into_response();
+                }
             }
         };
 
@@ -1625,6 +1726,7 @@ pub async fn post_create_step_handler(
                     "y": final_y,
                     "x_variable_id": final_x_var,
                     "y_variable_id": final_y_var,
+                    "region_variable_id": final_region_var,
                     "button": button,
                     "click_type": click_type
                 })),
@@ -1790,7 +1892,7 @@ pub async fn get_edit_step_handler(
         .into_response()
     } else if step_type == "find_bitmap" {
         let fb_row = sqlx::query(
-            "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id FROM step_find_bitmap WHERE step_id = $1",
+            "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1",
         )
         .bind(sid)
         .fetch_optional(&state.db)
@@ -1806,6 +1908,7 @@ pub async fn get_edit_step_handler(
             output_found_variable_id,
             output_x_variable_id,
             output_y_variable_id,
+            output_region_variable_id,
         ) = match fb_row {
             Ok(Some(r)) => (
                 r.get::<Option<i64>, _>("reference_bitmap_id"),
@@ -1817,8 +1920,9 @@ pub async fn get_edit_step_handler(
                 r.get::<Option<i64>, _>("output_found_variable_id"),
                 r.get::<Option<i64>, _>("output_x_variable_id"),
                 r.get::<Option<i64>, _>("output_y_variable_id"),
+                r.get::<Option<i64>, _>("output_region_variable_id"),
             ),
-            _ => (None, None, None, None, None, 0.95, None, None, None),
+            _ => (None, None, None, None, None, 0.95, None, None, None, None),
         };
 
         let reference_bitmap_id = query.reference_bitmap_id.or(db_reference_bitmap_id);
@@ -1846,6 +1950,7 @@ pub async fn get_edit_step_handler(
             output_found_variable_id,
             output_x_variable_id,
             output_y_variable_id,
+            output_region_variable_id,
             bitmaps,
             variables,
             error: None,
@@ -2010,16 +2115,18 @@ pub async fn get_edit_step_handler(
             .fetch_optional(&state.db)
             .await;
 
-        let (x, y, x_var_id, y_var_id, button, click_type) = match mc_row {
+        let (x, y, x_var_id, y_var_id, region_var_id, button, click_type) = match mc_row {
             Ok(Some(r)) => (
                 r.get::<Option<i32>, _>("x"),
                 r.get::<Option<i32>, _>("y"),
                 r.get::<Option<i64>, _>("x_variable_id"),
                 r.get::<Option<i64>, _>("y_variable_id"),
+                r.get::<Option<i64>, _>("region_variable_id"),
                 r.get::<String, _>("button"),
                 r.get::<String, _>("click_type"),
             ),
             _ => (
+                None,
                 None,
                 None,
                 None,
@@ -2044,6 +2151,13 @@ pub async fn get_edit_step_handler(
 
         let variables = fetch_automation_variables(&state.db, id).await;
 
+        let click_mode = if region_var_id.is_some() {
+            "region"
+        } else {
+            "coordinates"
+        }
+        .to_string();
+
         HtmlTemplate(StepMouseClickTemplate {
             user,
             csrf_token,
@@ -2057,6 +2171,8 @@ pub async fn get_edit_step_handler(
             y_mode,
             y,
             y_variable_id: y_var_id,
+            click_mode,
+            region_variable_id: region_var_id,
             button,
             click_type,
             variables,
@@ -2392,6 +2508,7 @@ pub async fn post_edit_step_handler(
                         output_found_variable_id: form.output_found_variable_id,
                         output_x_variable_id: form.output_x_variable_id,
                         output_y_variable_id: form.output_y_variable_id,
+                        output_region_variable_id: form.output_region_variable_id,
                         bitmaps,
                         variables,
                         error: Some("Please select a reference bitmap.".to_string()),
@@ -2426,6 +2543,7 @@ pub async fn post_edit_step_handler(
                     output_found_variable_id: form.output_found_variable_id,
                     output_x_variable_id: form.output_x_variable_id,
                     output_y_variable_id: form.output_y_variable_id,
+                    output_region_variable_id: form.output_region_variable_id,
                     bitmaps,
                     variables,
                     error: Some(
@@ -2460,6 +2578,7 @@ pub async fn post_edit_step_handler(
                     output_found_variable_id: form.output_found_variable_id,
                     output_x_variable_id: form.output_x_variable_id,
                     output_y_variable_id: form.output_y_variable_id,
+                    output_region_variable_id: form.output_region_variable_id,
                     bitmaps,
                     variables,
                     error: Some(
@@ -2494,6 +2613,7 @@ pub async fn post_edit_step_handler(
                     output_found_variable_id: form.output_found_variable_id,
                     output_x_variable_id: form.output_x_variable_id,
                     output_y_variable_id: form.output_y_variable_id,
+                    output_region_variable_id: form.output_region_variable_id,
                     bitmaps,
                     variables,
                     error: Some(
@@ -2574,7 +2694,8 @@ pub async fn post_edit_step_handler(
                     "match_threshold": match_threshold,
                     "output_found_variable_id": form.output_found_variable_id,
                     "output_x_variable_id": form.output_x_variable_id,
-                    "output_y_variable_id": form.output_y_variable_id
+                    "output_y_variable_id": form.output_y_variable_id,
+                    "output_region_variable_id": form.output_region_variable_id
                 })),
             )
             .await;
@@ -2584,22 +2705,13 @@ pub async fn post_edit_step_handler(
     }
 
     if step_type == "mouse_click" {
-        let x_res = validate_literal_or_reference(
-            form.x_mode.as_deref(),
-            form.x,
-            form.x_variable_id,
-            "X coordinate",
-        );
-        let y_res = validate_literal_or_reference(
-            form.y_mode.as_deref(),
-            form.y,
-            form.y_variable_id,
-            "Y coordinate",
-        );
+        let is_region_mode = form.click_mode.as_deref() == Some("region") || (form.click_mode.is_none() && form.region_variable_id.is_some());
 
-        let (final_x, final_x_var, final_y, final_y_var) = match (x_res, y_res) {
-            (Ok((fx, fx_v)), Ok((fy, fy_v))) => (fx, fx_v, fy, fy_v),
-            (Err(e), _) | (_, Err(e)) => {
+        let (final_x, final_x_var, final_y, final_y_var, final_region_var) = if is_region_mode {
+            let rvar = form.region_variable_id.filter(|&v| v > 0);
+            if let Some(rv) = rvar {
+                (None, None, None, None, Some(rv))
+            } else {
                 let variables = fetch_automation_variables(&state.db, id).await;
                 return (
                     StatusCode::BAD_REQUEST,
@@ -2616,6 +2728,8 @@ pub async fn post_edit_step_handler(
                         y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
                         y: form.y,
                         y_variable_id: form.y_variable_id,
+                        click_mode: "region".to_string(),
+                        region_variable_id: form.region_variable_id,
                         button: match form.button.as_deref() {
                             Some("right") => "right",
                             Some("middle") => "middle",
@@ -2628,11 +2742,65 @@ pub async fn post_edit_step_handler(
                         }
                         .to_string(),
                         variables,
-                        error: Some(e),
+                        error: Some("Please select a valid region variable.".to_string()),
                         is_edit: true,
                     }),
                 )
                     .into_response();
+            }
+        } else {
+            let x_res = validate_literal_or_reference(
+                form.x_mode.as_deref(),
+                form.x,
+                form.x_variable_id,
+                "X coordinate",
+            );
+            let y_res = validate_literal_or_reference(
+                form.y_mode.as_deref(),
+                form.y,
+                form.y_variable_id,
+                "Y coordinate",
+            );
+
+            match (x_res, y_res) {
+                (Ok((fx, fx_v)), Ok((fy, fy_v))) => (fx, fx_v, fy, fy_v, None),
+                (Err(e), _) | (_, Err(e)) => {
+                    let variables = fetch_automation_variables(&state.db, id).await;
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        HtmlTemplate(StepMouseClickTemplate {
+                            user,
+                            csrf_token,
+                            automation_id: id,
+                            step_id: Some(sid),
+                            label: form.label.unwrap_or_default(),
+                            post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                            x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
+                            x: form.x,
+                            x_variable_id: form.x_variable_id,
+                            y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
+                            y: form.y,
+                            y_variable_id: form.y_variable_id,
+                            click_mode: "coordinates".to_string(),
+                            region_variable_id: form.region_variable_id,
+                            button: match form.button.as_deref() {
+                                Some("right") => "right",
+                                Some("middle") => "middle",
+                                _ => "left",
+                            }
+                            .to_string(),
+                            click_type: match form.click_type.as_deref() {
+                                Some("double") => "double",
+                                _ => "single",
+                            }
+                            .to_string(),
+                            variables,
+                            error: Some(e),
+                            is_edit: true,
+                        }),
+                    )
+                        .into_response();
+                }
             }
         };
 
@@ -2704,6 +2872,7 @@ pub async fn post_edit_step_handler(
                     "y": final_y,
                     "x_variable_id": final_x_var,
                     "y_variable_id": final_y_var,
+                    "region_variable_id": final_region_var,
                     "button": button,
                     "click_type": click_type
                 })),
@@ -3017,6 +3186,36 @@ pub async fn compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sq
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    #[test]
+    fn test_mouse_click_summary_and_region_variable() {
+        // Test region variable click summary
+        let summary_region = generate_mouse_click_summary(
+            None,
+            None,
+            None,
+            None,
+            Some("login_box"),
+            "left",
+            "single",
+        );
+        assert_eq!(
+            summary_region,
+            "Click center of region «login_box» [left, single]"
+        );
+
+        // Test fallback to coordinates when no region variable is present
+        let summary_coords = generate_mouse_click_summary(
+            Some(100),
+            Some(200),
+            None,
+            None,
+            None,
+            "left",
+            "single",
+        );
+        assert_eq!(summary_coords, "Click (100, 200) [left, single]");
+    }
+
     use super::*;
 
     #[test]
@@ -3078,7 +3277,7 @@ mod tests {
     #[test]
     fn test_generate_mouse_click_summary() {
         // Fixed coordinates
-        let s1 = generate_mouse_click_summary(Some(824), Some(391), None, None, "left", "single");
+        let s1 = generate_mouse_click_summary(Some(824), Some(391), None, None, None, "left", "single");
         assert_eq!(s1, "Click (824, 391) [left, single]");
 
         // Variable X, Fixed Y
@@ -3086,6 +3285,7 @@ mod tests {
             None,
             Some(391),
             Some("target_x"),
+            None,
             None,
             "right",
             "double",
@@ -3098,13 +3298,14 @@ mod tests {
             None,
             Some("target_x"),
             Some("target_y"),
+            None,
             "middle",
             "single",
         );
         assert_eq!(s3, "Click («target_x», «target_y») [middle, single]");
 
         // Variable X with no name fallback
-        let s4 = generate_mouse_click_summary(None, Some(100), None, None, "left", "single");
+        let s4 = generate_mouse_click_summary(None, Some(100), None, None, None, "left", "single");
         assert_eq!(s4, "Click (variable, 100) [left, single]");
     }
 
@@ -3268,6 +3469,8 @@ mod tests {
             y_mode: "fixed".to_string(),
             y: Some(391),
             y_variable_id: None,
+            click_mode: "coordinates".to_string(),
+            region_variable_id: None,
             button: "left".to_string(),
             click_type: "single".to_string(),
             variables: vars.clone(),
@@ -3294,6 +3497,8 @@ mod tests {
             y_mode: "variable".to_string(),
             y: None,
             y_variable_id: Some(11),
+            click_mode: "coordinates".to_string(),
+            region_variable_id: None,
             button: "right".to_string(),
             click_type: "double".to_string(),
             variables: vars,
@@ -3408,6 +3613,7 @@ mod tests {
             output_found_variable_id: Some(10),
             output_x_variable_id: Some(11),
             output_y_variable_id: Some(12),
+            output_region_variable_id: None,
             bitmaps,
             variables: vars,
             error: None,
@@ -3458,6 +3664,7 @@ mod tests {
             None,
             Some("button_x"),
             Some("button_y"),
+            None,
             "left",
             "single",
         );
@@ -3468,6 +3675,7 @@ mod tests {
             None,
             Some(250),
             Some("target_x"),
+            None,
             None,
             "right",
             "double",
@@ -3480,6 +3688,7 @@ mod tests {
             None,
             None,
             Some("target_y"),
+            None,
             "middle",
             "single",
         );

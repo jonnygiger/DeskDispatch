@@ -269,6 +269,8 @@ pub async fn fetch_full_automation_json_with_overrides(
                         serde_json::json!(r.get::<Option<i64>, _>("x_variable_id"));
                     step_json["y_variable_id"] =
                         serde_json::json!(r.get::<Option<i64>, _>("y_variable_id"));
+                    step_json["region_variable_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("region_variable_id"));
                     step_json["button"] = serde_json::json!(r.get::<String, _>("button"));
                     step_json["click_type"] = serde_json::json!(r.get::<String, _>("click_type"));
                 }
@@ -308,6 +310,8 @@ pub async fn fetch_full_automation_json_with_overrides(
                         serde_json::json!(r.get::<Option<i64>, _>("output_x_variable_id"));
                     step_json["output_y_variable_id"] =
                         serde_json::json!(r.get::<Option<i64>, _>("output_y_variable_id"));
+                    step_json["output_region_variable_id"] =
+                        serde_json::json!(r.get::<Option<i64>, _>("output_region_variable_id"));
                     step_json["timeout_ms"] = serde_json::json!(5000);
                     step_json["retry_interval_ms"] = serde_json::json!(250);
                 }
