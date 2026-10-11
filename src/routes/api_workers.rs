@@ -548,29 +548,29 @@ pub async fn post_step_result_handler(
         .execute(&mut *tx)
         .await?;
 
-    // Upsert into step_screenshots so each automation step is connected to a screenshot
-    // from the first time it is run (or updated if missing).
-    if let Some(ref key) = payload.screenshot_object_key {
-        if let Err(e) = sqlx::query(
-            r#"
+        // Upsert into step_screenshots so each automation step is connected to a screenshot
+        // from the first time it is run (or updated if missing).
+        if let Some(ref key) = payload.screenshot_object_key {
+            if let Err(e) = sqlx::query(
+                r#"
             INSERT INTO step_screenshots (step_id, object_storage_key, width, height)
             VALUES ($1, $2, 1920, 1080)
             ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key
             "#,
-        )
-        .bind(payload.step_id)
-        .bind(key)
-        .execute(&mut *tx)
-        .await
-        {
-            tracing::error!(
-                task_run_id = task_run_id,
-                step_id = payload.step_id,
-                "Failed to upsert step_screenshots on step result: {}",
-                e
-            );
+            )
+            .bind(payload.step_id)
+            .bind(key)
+            .execute(&mut *tx)
+            .await
+            {
+                tracing::error!(
+                    task_run_id = task_run_id,
+                    step_id = payload.step_id,
+                    "Failed to upsert step_screenshots on step result: {}",
+                    e
+                );
+            }
         }
-    }
 
         tx.commit().await?;
         tracing::warn!(
@@ -1365,9 +1365,7 @@ pub async fn post_register_worker_handler(
 
         let expected_psk = state.config.unattended_registration_psk.expose_secret();
         if provided_psk != expected_psk.as_str() {
-            return Err(AppError::Unauthorized(
-                "Invalid pre-shared key".to_string(),
-            ));
+            return Err(AppError::Unauthorized("Invalid pre-shared key".to_string()));
         }
 
         let hostname = payload
@@ -1508,7 +1506,10 @@ mod tests {
             serde_json::from_str(json_psk).expect("Failed to deserialize psk registration");
         assert_eq!(req_psk.psk.as_deref(), Some("deskdispatch_wps_psk_secret"));
         assert_eq!(req_psk.hostname.as_deref(), Some("unattended-node-01"));
-        assert_eq!(req_psk.display_name.as_deref(), Some("Unattended Worker 01"));
+        assert_eq!(
+            req_psk.display_name.as_deref(),
+            Some("Unattended Worker 01")
+        );
         assert_eq!(req_psk.mac_address.as_deref(), Some("00:11:22:33:44:55"));
     }
 

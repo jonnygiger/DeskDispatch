@@ -151,11 +151,10 @@ impl StorageService {
             .key(object_key)
             .send()
             .await?;
-        let data = res
-            .body
-            .collect()
-            .await
-            .map_err(|e| StorageError::PostPolicy(format!("Failed to read object body: {}", e)))?;
+        let data =
+            res.body.collect().await.map_err(|e| {
+                StorageError::PostPolicy(format!("Failed to read object body: {}", e))
+            })?;
         Ok(data.to_vec())
     }
 

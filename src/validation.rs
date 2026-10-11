@@ -383,8 +383,10 @@ pub async fn validate_automation_for_activation(
 
                     if let Some(out_vid) = fp.output_var_id {
                         if let Some(v) = vars_map.get(&out_vid) {
-                            if !matches!(v.var_type.as_str(), "color" | "point" | "string" | "int" | "region")
-                            {
+                            if !matches!(
+                                v.var_type.as_str(),
+                                "color" | "point" | "string" | "int" | "region"
+                            ) {
                                 errors.push(AutomationLintError {
                                     step_id: Some(sid),
                                     step_number: Some(step_num),

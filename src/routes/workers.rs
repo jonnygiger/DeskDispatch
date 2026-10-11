@@ -37,14 +37,8 @@ pub fn router() -> Router<AppState> {
             "/workers/{id}/rotate-key",
             post(post_rotate_worker_key_handler),
         )
-        .route(
-            "/workers/{id}/wake",
-            post(post_wake_worker_handler),
-        )
-        .route(
-            "/workers/wps/toggle",
-            post(post_toggle_wps_handler),
-        )
+        .route("/workers/{id}/wake", post(post_wake_worker_handler))
+        .route("/workers/wps/toggle", post(post_toggle_wps_handler))
         .route("/worker-groups/new", get(get_new_worker_group_handler))
         .route("/worker-groups", post(post_create_worker_group_handler))
         .route(
@@ -163,10 +157,12 @@ pub async fn post_wake_worker_handler(
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let row = match sqlx::query("SELECT id, display_name, mac_address FROM task_worker_pcs WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
+    let row = match sqlx::query(
+        "SELECT id, display_name, mac_address FROM task_worker_pcs WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
     {
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "Worker PC not found").into_response(),
@@ -182,13 +178,22 @@ pub async fn post_wake_worker_handler(
     let mac = match mac_address {
         Some(m) if !m.trim().is_empty() => m,
         _ => {
-            return Redirect::to(&format!("/workers/{}?wake_error=No+MAC+address+configured+for+this+worker", id)).into_response();
+            return Redirect::to(&format!(
+                "/workers/{}?wake_error=No+MAC+address+configured+for+this+worker",
+                id
+            ))
+            .into_response();
         }
     };
 
     if let Err(e) = crate::wol::send_wol_packet(&mac).await {
         tracing::error!("Failed to send WOL magic packet for worker {}: {}", id, e);
-        return Redirect::to(&format!("/workers/{}?wake_error={}", id, urlencoding::encode(&e))).into_response();
+        return Redirect::to(&format!(
+            "/workers/{}?wake_error={}",
+            id,
+            urlencoding::encode(&e)
+        ))
+        .into_response();
     }
 
     let _ = log_audit(
@@ -288,7 +293,9 @@ mod tests {
             worker_groups: vec![],
             wps_enabled: false,
         };
-        let rendered_disabled = tmpl_disabled.render().expect("Failed to render WorkersIndexTemplate");
+        let rendered_disabled = tmpl_disabled
+            .render()
+            .expect("Failed to render WorkersIndexTemplate");
         assert!(rendered_disabled.contains("WPS Registration: DISABLED"));
 
         let tmpl_enabled = WorkersIndexTemplate {
@@ -297,7 +304,9 @@ mod tests {
             worker_groups: vec![],
             wps_enabled: true,
         };
-        let rendered_enabled = tmpl_enabled.render().expect("Failed to render WorkersIndexTemplate");
+        let rendered_enabled = tmpl_enabled
+            .render()
+            .expect("Failed to render WorkersIndexTemplate");
         assert!(rendered_enabled.contains("WPS Registration: ENABLED"));
     }
 
@@ -682,7 +691,11 @@ pub async fn post_create_worker_handler(
 ) -> impl IntoResponse {
     let hostname = form.hostname.trim();
     let display_name = form.display_name.trim();
-    let mac_address = form.mac_address.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
+    let mac_address = form
+        .mac_address
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
     if hostname.is_empty() || display_name.is_empty() {
         return HtmlTemplate(WorkerNewTemplate {
@@ -1085,7 +1098,11 @@ pub async fn post_edit_worker_handler(
 ) -> impl IntoResponse {
     let hostname = form.hostname.trim();
     let display_name = form.display_name.trim();
-    let mac_address = form.mac_address.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
+    let mac_address = form
+        .mac_address
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
     if hostname.is_empty() || display_name.is_empty() {
         return (

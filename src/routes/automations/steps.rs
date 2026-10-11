@@ -117,7 +117,12 @@ pub fn generate_mouse_click_summary(
     click_type: &str,
 ) -> String {
     if let Some(rname) = region_var_name.filter(|n| !n.trim().is_empty()) {
-        return format!("Click center of region «{}» [{}, {}]", rname.trim(), button, click_type);
+        return format!(
+            "Click center of region «{}» [{}, {}]",
+            rname.trim(),
+            button,
+            click_type
+        );
     }
     let x_str = match x_var_name {
         Some(name) if !name.trim().is_empty() => format!("«{}»", name.trim()),
@@ -343,7 +348,18 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             let region_var_name: Option<String> = r.get("region_var_name");
             let button: String = r.get("button");
             let click_type: String = r.get("click_type");
-            (step_id, (x, y, x_var_name, y_var_name, region_var_name, button, click_type))
+            (
+                step_id,
+                (
+                    x,
+                    y,
+                    x_var_name,
+                    y_var_name,
+                    region_var_name,
+                    button,
+                    click_type,
+                ),
+            )
         })
         .collect();
 
@@ -1528,7 +1544,8 @@ pub async fn post_create_step_handler(
         || (form.x_mode.is_some() || form.x_variable_id.is_some() || form.y_variable_id.is_some());
 
     if is_mouse_click {
-        let is_region_mode = form.click_mode.as_deref() == Some("region") || (form.click_mode.is_none() && form.region_variable_id.is_some());
+        let is_region_mode = form.click_mode.as_deref() == Some("region")
+            || (form.click_mode.is_none() && form.region_variable_id.is_some());
 
         let (final_x, final_x_var, final_y, final_y_var, final_region_var) = if is_region_mode {
             let rvar = form.region_variable_id.filter(|&v| v > 0);
@@ -2705,7 +2722,8 @@ pub async fn post_edit_step_handler(
     }
 
     if step_type == "mouse_click" {
-        let is_region_mode = form.click_mode.as_deref() == Some("region") || (form.click_mode.is_none() && form.region_variable_id.is_some());
+        let is_region_mode = form.click_mode.as_deref() == Some("region")
+            || (form.click_mode.is_none() && form.region_variable_id.is_some());
 
         let (final_x, final_x_var, final_y, final_y_var, final_region_var) = if is_region_mode {
             let rvar = form.region_variable_id.filter(|&v| v > 0);
@@ -3204,15 +3222,8 @@ mod tests {
         );
 
         // Test fallback to coordinates when no region variable is present
-        let summary_coords = generate_mouse_click_summary(
-            Some(100),
-            Some(200),
-            None,
-            None,
-            None,
-            "left",
-            "single",
-        );
+        let summary_coords =
+            generate_mouse_click_summary(Some(100), Some(200), None, None, None, "left", "single");
         assert_eq!(summary_coords, "Click (100, 200) [left, single]");
     }
 
@@ -3277,7 +3288,8 @@ mod tests {
     #[test]
     fn test_generate_mouse_click_summary() {
         // Fixed coordinates
-        let s1 = generate_mouse_click_summary(Some(824), Some(391), None, None, None, "left", "single");
+        let s1 =
+            generate_mouse_click_summary(Some(824), Some(391), None, None, None, "left", "single");
         assert_eq!(s1, "Click (824, 391) [left, single]");
 
         // Variable X, Fixed Y

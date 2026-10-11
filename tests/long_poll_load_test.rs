@@ -65,7 +65,9 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         task_run_step_retention_days: 30,
         screenshot_retention_days: 30,
         metrics_bind_address: None,
-        unattended_registration_psk: secrecy::SecretString::from("deskdispatch_wps_psk_secret".to_string()),
+        unattended_registration_psk: secrecy::SecretString::from(
+            "deskdispatch_wps_psk_secret".to_string(),
+        ),
     });
     config.worker_long_poll_timeout_secs = 2; // Short timeout for fast test execution
 

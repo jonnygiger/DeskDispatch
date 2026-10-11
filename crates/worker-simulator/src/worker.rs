@@ -317,7 +317,11 @@ impl SimulatedWorker {
         }
     }
 
-    async fn register_worker(&self, token: Option<&str>, psk: Option<&str>) -> Result<String, String> {
+    async fn register_worker(
+        &self,
+        token: Option<&str>,
+        psk: Option<&str>,
+    ) -> Result<String, String> {
         let url = format!("{}/api/v1/workers/register", self.config.server_url);
         let req = RegisterWorkerRequest {
             registration_token: token.map(|s| s.to_string()),
@@ -713,7 +717,8 @@ impl SimulatedWorker {
                     warn!(
                         worker_idx = self.config.worker_index,
                         recording_session_id = recording_session_id,
-                        "Failed to upload recording event screenshot: {}", e
+                        "Failed to upload recording event screenshot: {}",
+                        e
                     );
                 }
             }
