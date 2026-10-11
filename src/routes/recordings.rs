@@ -168,7 +168,7 @@ pub async fn get_worker_record_start_handler(
 ) -> impl IntoResponse {
     let row = match sqlx::query_as::<_, super::workers::WorkerDetailRow>(
         r#"
-        SELECT id, hostname, display_name, status, last_heartbeat_at,
+        SELECT id, hostname, display_name, mac_address, status, last_heartbeat_at,
                screen_width, screen_height, os_info, agent_version,
                created_at,
                CASE
@@ -192,6 +192,7 @@ pub async fn get_worker_record_start_handler(
         id: row.id,
         hostname: row.hostname,
         display_name: row.display_name,
+        mac_address: row.mac_address,
         status: row.status,
         last_heartbeat_at: row.last_heartbeat_at,
         screen_width: row.screen_width,
@@ -847,6 +848,7 @@ mod tests {
             id: 5,
             hostname: "worker-05.local".to_string(),
             display_name: "Worker 5".to_string(),
+            mac_address: None,
             status: "online".to_string(),
             last_heartbeat_at: Some(Utc::now()),
             screen_width: Some(1920),

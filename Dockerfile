@@ -13,8 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pre-build dependencies to leverage Docker layer caching
 COPY Cargo.toml Cargo.lock ./
 COPY crates/deskdispatch-protocol/Cargo.toml ./crates/deskdispatch-protocol/
-RUN mkdir -p src crates/deskdispatch-protocol/src && \
+COPY crates/worker-simulator/Cargo.toml ./crates/worker-simulator/
+RUN mkdir -p src crates/deskdispatch-protocol/src crates/worker-simulator/src && \
     echo "fn main() {}" > src/main.rs && \
+    echo "fn main() {}" > crates/worker-simulator/src/main.rs && \
     touch src/lib.rs && \
     touch crates/deskdispatch-protocol/src/lib.rs && \
     cargo build --release --locked

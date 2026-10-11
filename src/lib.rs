@@ -11,6 +11,7 @@ pub mod retention;
 pub mod routes;
 pub mod storage;
 pub mod validation;
+pub mod wol;
 
 use axum::{Router, middleware, routing::get};
 use config::Config;

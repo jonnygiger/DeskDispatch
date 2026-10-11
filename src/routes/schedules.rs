@@ -43,6 +43,9 @@ pub struct ScheduleItem {
     pub worker_group_name: Option<String>,
     pub overlap_policy: String,
     pub max_queue_age_secs: Option<i32>,
+    pub wol_enabled: bool,
+    pub wol_warmup_secs: i32,
+    pub last_wol_sent_at: Option<DateTime<Utc>>,
     pub is_enabled: bool,
     pub next_run_at: Option<DateTime<Utc>>,
     pub last_run_at: Option<DateTime<Utc>>,
@@ -112,6 +115,8 @@ pub struct ScheduleFormTemplate {
     pub worker_group_id: Option<i64>,
     pub overlap_policy: String,
     pub max_queue_age_secs: Option<i32>,
+    pub wol_enabled: bool,
+    pub wol_warmup_secs: i32,
     pub is_enabled: bool,
     pub automations: Vec<ScheduleAutomationOption>,
     pub worker_groups: Vec<ScheduleWorkerGroupOption>,
@@ -141,6 +146,10 @@ pub struct ScheduleForm {
     pub overlap_policy: String,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub max_queue_age_secs: Option<i32>,
+    #[serde(default)]
+    pub wol_enabled: bool,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub wol_warmup_secs: Option<i32>,
     #[serde(default)]
     pub is_enabled: bool,
 }
@@ -189,6 +198,7 @@ pub async fn get_schedules_handler(
             s.name, s.cron_expression, s.timezone,
             s.worker_group_id, wg.name AS worker_group_name,
             s.overlap_policy, s.max_queue_age_secs,
+            s.wol_enabled, s.wol_warmup_secs, s.last_wol_sent_at,
             s.is_enabled, s.next_run_at, s.last_run_at,
             s.created_by, s.created_at
         FROM schedules s
@@ -224,6 +234,9 @@ pub async fn get_schedules_handler(
             worker_group_name: r.get("worker_group_name"),
             overlap_policy: r.get("overlap_policy"),
             max_queue_age_secs: r.get("max_queue_age_secs"),
+            wol_enabled: r.get("wol_enabled"),
+            wol_warmup_secs: r.get("wol_warmup_secs"),
+            last_wol_sent_at: r.get("last_wol_sent_at"),
             is_enabled: r.get("is_enabled"),
             next_run_at: r.get("next_run_at"),
             last_run_at: r.get("last_run_at"),
@@ -278,6 +291,8 @@ pub async fn get_new_schedule_handler(
         worker_group_id: None,
         overlap_policy: "allow".to_string(),
         max_queue_age_secs: None,
+        wol_enabled: false,
+        wol_warmup_secs: 300,
         is_enabled: true,
         automations,
         worker_groups,
@@ -299,6 +314,7 @@ pub async fn post_create_schedule_handler(
     } else {
         form.timezone.trim()
     };
+    let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
 
     let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
 
@@ -314,6 +330,8 @@ pub async fn post_create_schedule_handler(
             worker_group_id: form.worker_group_id,
             overlap_policy: form.overlap_policy.clone(),
             max_queue_age_secs: form.max_queue_age_secs,
+            wol_enabled: form.wol_enabled,
+            wol_warmup_secs,
             is_enabled: form.is_enabled,
             automations,
             worker_groups,
@@ -338,6 +356,8 @@ pub async fn post_create_schedule_handler(
                     worker_group_id: form.worker_group_id,
                     overlap_policy: form.overlap_policy.clone(),
                     max_queue_age_secs: form.max_queue_age_secs,
+                    wol_enabled: form.wol_enabled,
+                    wol_warmup_secs,
                     is_enabled: form.is_enabled,
                     automations,
                     worker_groups,
@@ -355,9 +375,10 @@ pub async fn post_create_schedule_handler(
         INSERT INTO schedules (
             automation_id, name, cron_expression, timezone,
             worker_group_id, overlap_policy, max_queue_age_secs,
+            wol_enabled, wol_warmup_secs,
             is_enabled, next_run_at, created_by
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id
         "#,
     )
@@ -368,6 +389,8 @@ pub async fn post_create_schedule_handler(
     .bind(form.worker_group_id)
     .bind(&form.overlap_policy)
     .bind(form.max_queue_age_secs)
+    .bind(form.wol_enabled)
+    .bind(wol_warmup_secs)
     .bind(form.is_enabled)
     .bind(next_run_at)
     .bind(user.id)
@@ -389,6 +412,8 @@ pub async fn post_create_schedule_handler(
                 worker_group_id: form.worker_group_id,
                 overlap_policy: form.overlap_policy.clone(),
                 max_queue_age_secs: form.max_queue_age_secs,
+                wol_enabled: form.wol_enabled,
+                wol_warmup_secs,
                 is_enabled: form.is_enabled,
                 automations,
                 worker_groups,
@@ -427,7 +452,7 @@ pub async fn get_edit_schedule_handler(
     let row = match sqlx::query(
         r#"
         SELECT id, automation_id, name, cron_expression, timezone, worker_group_id,
-               overlap_policy, max_queue_age_secs, is_enabled
+               overlap_policy, max_queue_age_secs, wol_enabled, wol_warmup_secs, is_enabled
         FROM schedules
         WHERE id = $1
         "#,
@@ -457,6 +482,8 @@ pub async fn get_edit_schedule_handler(
         worker_group_id: row.get("worker_group_id"),
         overlap_policy: row.get("overlap_policy"),
         max_queue_age_secs: row.get("max_queue_age_secs"),
+        wol_enabled: row.get("wol_enabled"),
+        wol_warmup_secs: row.get("wol_warmup_secs"),
         is_enabled: row.get("is_enabled"),
         automations,
         worker_groups,
@@ -479,6 +506,7 @@ pub async fn post_edit_schedule_handler(
     } else {
         form.timezone.trim()
     };
+    let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
 
     let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
 
@@ -494,6 +522,8 @@ pub async fn post_edit_schedule_handler(
             worker_group_id: form.worker_group_id,
             overlap_policy: form.overlap_policy.clone(),
             max_queue_age_secs: form.max_queue_age_secs,
+            wol_enabled: form.wol_enabled,
+            wol_warmup_secs,
             is_enabled: form.is_enabled,
             automations,
             worker_groups,
@@ -518,6 +548,8 @@ pub async fn post_edit_schedule_handler(
                     worker_group_id: form.worker_group_id,
                     overlap_policy: form.overlap_policy.clone(),
                     max_queue_age_secs: form.max_queue_age_secs,
+                    wol_enabled: form.wol_enabled,
+                    wol_warmup_secs,
                     is_enabled: form.is_enabled,
                     automations,
                     worker_groups,
@@ -540,9 +572,11 @@ pub async fn post_edit_schedule_handler(
             worker_group_id = $5,
             overlap_policy = $6,
             max_queue_age_secs = $7,
-            is_enabled = $8,
-            next_run_at = $9
-        WHERE id = $10
+            wol_enabled = $8,
+            wol_warmup_secs = $9,
+            is_enabled = $10,
+            next_run_at = $11
+        WHERE id = $12
         "#,
     )
     .bind(form.automation_id)
@@ -552,6 +586,8 @@ pub async fn post_edit_schedule_handler(
     .bind(form.worker_group_id)
     .bind(&form.overlap_policy)
     .bind(form.max_queue_age_secs)
+    .bind(form.wol_enabled)
+    .bind(wol_warmup_secs)
     .bind(form.is_enabled)
     .bind(next_run_at)
     .bind(id)
@@ -571,6 +607,8 @@ pub async fn post_edit_schedule_handler(
             worker_group_id: form.worker_group_id,
             overlap_policy: form.overlap_policy.clone(),
             max_queue_age_secs: form.max_queue_age_secs,
+            wol_enabled: form.wol_enabled,
+            wol_warmup_secs,
             is_enabled: form.is_enabled,
             automations,
             worker_groups,
@@ -699,6 +737,80 @@ pub async fn post_delete_schedule_handler(
 pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
 
+    // Phase 1: Send Wake-on-LAN magic packets for schedules entering their warm-up window
+    let wol_due_schedules = sqlx::query(
+        r#"
+        SELECT id, worker_group_id, next_run_at, wol_warmup_secs, last_wol_sent_at
+        FROM schedules
+        WHERE is_enabled = true
+          AND wol_enabled = true
+          AND next_run_at IS NOT NULL
+          AND now() >= (next_run_at - (wol_warmup_secs * INTERVAL '1 second'))
+          AND (last_wol_sent_at IS NULL OR last_wol_sent_at < (next_run_at - (wol_warmup_secs * INTERVAL '1 second')))
+        FOR UPDATE SKIP LOCKED
+        "#,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    for sched in wol_due_schedules {
+        let schedule_id: i64 = sched.get("id");
+        let worker_group_id: Option<i64> = sched.get("worker_group_id");
+
+        let target_macs: Vec<String> = match worker_group_id {
+            Some(group_id) => {
+                sqlx::query_scalar(
+                    r#"
+                    SELECT w.mac_address
+                    FROM task_worker_pcs w
+                    JOIN worker_group_members m ON w.id = m.worker_id
+                    WHERE m.group_id = $1
+                      AND w.mac_address IS NOT NULL
+                      AND w.mac_address != ''
+                    "#,
+                )
+                .bind(group_id)
+                .fetch_all(&mut *tx)
+                .await?
+            }
+            None => {
+                sqlx::query_scalar(
+                    r#"
+                    SELECT mac_address
+                    FROM task_worker_pcs
+                    WHERE mac_address IS NOT NULL
+                      AND mac_address != ''
+                    "#,
+                )
+                .fetch_all(&mut *tx)
+                .await?
+            }
+        };
+
+        for mac in target_macs {
+            if let Err(e) = crate::wol::send_wol_packet(&mac).await {
+                tracing::warn!(
+                    schedule_id = schedule_id,
+                    mac = %mac,
+                    error = %e,
+                    "Failed to send schedule WOL warm-up magic packet"
+                );
+            } else {
+                tracing::info!(
+                    schedule_id = schedule_id,
+                    mac = %mac,
+                    "Dispatched schedule WOL warm-up magic packet"
+                );
+            }
+        }
+
+        sqlx::query("UPDATE schedules SET last_wol_sent_at = now() WHERE id = $1")
+            .bind(schedule_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    // Phase 2: Process due task runs
     let due_schedules = sqlx::query(
         r#"
         SELECT id, automation_id, cron_expression, timezone, worker_group_id,
@@ -907,6 +1019,9 @@ mod tests {
             worker_group_name: None,
             overlap_policy: "allow".to_string(),
             max_queue_age_secs: Some(3600),
+            wol_enabled: false,
+            wol_warmup_secs: 300,
+            last_wol_sent_at: None,
             is_enabled: true,
             next_run_at: None,
             last_run_at: None,
@@ -965,6 +1080,8 @@ mod tests {
             worker_group_id: Some(5),
             overlap_policy: "skip".to_string(),
             max_queue_age_secs: Some(1800),
+            wol_enabled: true,
+            wol_warmup_secs: 300,
             is_enabled: true,
             automations: vec![],
             worker_groups: vec![],
@@ -1002,6 +1119,8 @@ mod tests {
             worker_group_id: None,
             overlap_policy: "allow".to_string(),
             max_queue_age_secs: None,
+            wol_enabled: false,
+            wol_warmup_secs: 0,
             is_enabled: true,
             automations: vec![],
             worker_groups: vec![],

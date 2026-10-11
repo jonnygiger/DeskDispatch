@@ -195,6 +195,7 @@ CREATE TABLE task_worker_pcs (
     id                            BIGSERIAL PRIMARY KEY,
     hostname                      TEXT NOT NULL,
     display_name                  TEXT NOT NULL,
+    mac_address                   TEXT,
     api_key_hash                  BYTEA,
     status                        TEXT NOT NULL DEFAULT 'offline'
                                     CHECK (status IN ('offline', 'online', 'busy', 'error')),
@@ -241,6 +242,9 @@ CREATE TABLE schedules (
     is_enabled      BOOLEAN NOT NULL DEFAULT true,
     overlap_policy  TEXT NOT NULL DEFAULT 'allow' CHECK (overlap_policy IN ('allow', 'skip', 'queue')),
     max_queue_age_secs INTEGER,
+    wol_enabled     BOOLEAN NOT NULL DEFAULT false,
+    wol_warmup_secs INTEGER NOT NULL DEFAULT 0 CHECK (wol_warmup_secs >= 0),
+    last_wol_sent_at TIMESTAMPTZ,
     next_run_at     TIMESTAMPTZ,
     last_run_at     TIMESTAMPTZ,
     created_by      BIGINT NOT NULL REFERENCES users(id),
