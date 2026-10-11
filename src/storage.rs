@@ -141,6 +141,24 @@ impl StorageService {
         &self.s3_client
     }
 
+    /// Fetches object bytes from S3 / RustFS.
+    #[tracing::instrument(skip(self))]
+    pub async fn get_object(&self, object_key: &str) -> Result<Vec<u8>, StorageError> {
+        let res = self
+            .s3_client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(object_key)
+            .send()
+            .await?;
+        let data = res
+            .body
+            .collect()
+            .await
+            .map_err(|e| StorageError::PostPolicy(format!("Failed to read object body: {}", e)))?;
+        Ok(data.to_vec())
+    }
+
     /// Generates a presigned GET URL for an object key in S3 / RustFS with the given expiration duration.
     #[tracing::instrument(skip(self))]
     pub async fn generate_presigned_get_url(

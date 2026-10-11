@@ -46,7 +46,8 @@ DeskDispatch is a high-performance, zero-JavaScript task server for managing and
   - [Stalled Execution Sweeper & Timeout Recovery](#stalled-execution-sweeper--timeout-recovery)
   - [Automated Data Retention & Storage Maintenance](#automated-data-retention--storage-maintenance)
   - [Runs & Execution History UI](#runs--execution-history-ui)
-  - [Worker Screenshots & Execution Capture](#worker-screenshots--execution-capture)
+  - [Holistic Step & Recording Screenshots Concept](#holistic-step--recording-screenshots-concept)
+  - [ZIP Download of Run Screenshots](#zip-download-of-run-screenshots)
   - [Recording Session Capture & Conversion Engine](#recording-session-capture--conversion-engine)
   - [Scheduling & Cron Engine](#scheduling--cron-engine)
   - [User Management & Access Control](#user-management--access-control)
@@ -708,8 +709,14 @@ To prevent database bloat and storage resource exhaustion, the task server execu
 ### Runs & Execution History UI
 Filterable task execution history interface (`GET /runs`) with support for filtering by automation, worker, status, and date. Step-by-step detail view (`GET /runs/{id}`) utilizing the three-panel CSS magnifier component to display step execution status, captured runtime variables, and runtime screenshots. Editors/admins can request run cancellation (`POST /runs/{id}/cancel`), which flags the run and notifies the executing worker machine upon its next heartbeat.
 
-### Worker Screenshots & Execution Capture
-Step execution screenshots captured by worker nodes are uploaded directly to object storage via presigned S3 PUT URLs obtained from `GET /api/v1/workers/task-runs/{id}/screenshot-upload-url`. Worker nodes finalize uploaded screenshots via `POST /api/v1/workers/task-runs/{id}/screenshots/{object_key}/commit`, recording dimensions and linking screenshots to `task_run_steps`.
+### Holistic Step & Recording Screenshots Concept
+DeskDispatch employs a holistic screenshot management model where desktop visual state is captured across all execution and recording phases:
+- **First-Run Step Association:** The first time an automation step is executed in any run, its captured screenshot is automatically linked to the step definition in `step_screenshots`. This ensures that every step in an automation always has a reference visual context from its initial execution.
+- **Per-Execution Step Capture:** Every step execution during a task run reports back a real-time screenshot. These screenshots are displayed inline on the task run detail page (`GET /runs/{id}`) using the interactive three-panel `ImageMagnifier` CSS component.
+- **Recording Event Captures:** Every desktop action event recorded during an active recording session captures and stores a screenshot, providing complete visual review capability (`GET /recordings/{id}/review`) prior to draft automation conversion.
+
+### ZIP Download of Run Screenshots
+Operator users can download all screenshots captured during a task run as a single structured ZIP file via `GET /runs/{id}/screenshots.zip`. The server fetches image bytes directly from S3/RustFS object storage and streams a compressed ZIP archive containing sequentially named PNG files (`step_001_seq_1_step_501.png`, etc.). A prominent "Download All Screenshots (ZIP)" button is provided on the task run detail interface.
 
 ### Recording Session Capture & Conversion Engine
 Remote desktop action recording workflows orchestrated through worker machines:
