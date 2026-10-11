@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-build dependencies to leverage Docker layer caching
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY crates/deskdispatch-protocol/Cargo.toml ./crates/deskdispatch-protocol/
 COPY crates/worker-simulator/Cargo.toml ./crates/worker-simulator/
 RUN mkdir -p src crates/deskdispatch-protocol/src crates/worker-simulator/src && \
@@ -30,7 +30,7 @@ COPY migrations ./migrations
 
 # Update timestamps on source files to force recompilation of workspace crates and build final binary
 RUN touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs && \
-    cargo build --release --locked
+    cargo build --release
 
 # Stage 2: Runner
 FROM debian:bookworm-slim AS runner
