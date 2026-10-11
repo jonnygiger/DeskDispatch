@@ -91,13 +91,17 @@ impl ImageMagnifier {
         let bg_w = self.native_w * 4;
         let bg_h = self.native_h * 4;
 
-        let (pan_x, pan_y) = match (self.target_x, self.target_y) {
-            (Some(tx), Some(ty)) if self.native_w > 0 && self.native_h > 0 => {
-                let px = 160.0 - (tx as f64 * 4.0);
-                let py = 160.0 - (ty as f64 * 4.0);
-                (px, py)
-            }
-            _ => (0.0, 0.0),
+        let (tx, ty) = match (self.target_x, self.target_y) {
+            (Some(x), Some(y)) => (x as f64, y as f64),
+            _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
+        };
+
+        let (pan_x, pan_y) = if self.native_w > 0 && self.native_h > 0 {
+            let px = 160.0 - (tx * 4.0);
+            let py = 160.0 - (ty * 4.0);
+            (px, py)
+        } else {
+            (0.0, 0.0)
         };
 
         format!(
@@ -124,13 +128,17 @@ impl ImageMagnifier {
         let bg_w = self.native_w * 20;
         let bg_h = self.native_h * 20;
 
-        let (pan_x, pan_y) = match (self.target_x, self.target_y) {
-            (Some(tx), Some(ty)) if self.native_w > 0 && self.native_h > 0 => {
-                let px = 160.0 - (tx as f64 * 20.0 + 10.0);
-                let py = 160.0 - (ty as f64 * 20.0 + 10.0);
-                (px, py)
-            }
-            _ => (0.0, 0.0),
+        let (tx, ty) = match (self.target_x, self.target_y) {
+            (Some(x), Some(y)) => (x as f64, y as f64),
+            _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
+        };
+
+        let (pan_x, pan_y) = if self.native_w > 0 && self.native_h > 0 {
+            let px = 160.0 - (tx * 20.0 + 10.0);
+            let py = 160.0 - (ty * 20.0 + 10.0);
+            (px, py)
+        } else {
+            (0.0, 0.0)
         };
 
         format!(
@@ -177,14 +185,13 @@ mod tests {
             mag.normal_style()
                 .contains("background-image: url('http://example.com/image.png')")
         );
-        assert!(
-            mag.zoom400_style()
-                .contains("background-size: 7680px 4320px")
-        );
-        assert!(
-            mag.grid_style()
-                .contains("--grid-bg-w: 38400px; --grid-bg-h: 21600px;")
-        );
+        let z_style = mag.zoom400_style();
+        assert!(z_style.contains("background-size: 7680px 4320px"));
+        assert!(z_style.contains("background-position: -3680.00px -2000.00px"));
+
+        let g_style = mag.grid_style();
+        assert!(g_style.contains("--grid-bg-w: 38400px; --grid-bg-h: 21600px;"));
+        assert!(g_style.contains("--grid-pan-x: -19050.00px; --grid-pan-y: -10650.00px;"));
     }
 
     #[test]
