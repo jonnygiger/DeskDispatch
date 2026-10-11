@@ -19,7 +19,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/runs", get(get_runs_handler))
         .route("/runs/{id}", get(get_run_detail_handler))
-        .route("/runs/{id}/screenshots.zip", get(get_run_screenshots_zip_handler))
+        .route(
+            "/runs/{id}/screenshots.zip",
+            get(get_run_screenshots_zip_handler),
+        )
         .route("/runs/{id}/status-frame", get(get_run_status_frame_handler))
         .route("/runs/{id}/cancel", post(post_cancel_run_handler))
 }
@@ -734,14 +737,15 @@ pub async fn get_run_screenshots_zip_handler(
     use std::io::Write;
     use zip::write::SimpleFileOptions;
 
-    let run_exists: bool = match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = $1)")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await
-    {
-        Ok(exists) => exists,
-        Err(_) => false,
-    };
+    let run_exists: bool =
+        match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = $1)")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await
+        {
+            Ok(exists) => exists,
+            Err(_) => false,
+        };
 
     if !run_exists {
         return (StatusCode::NOT_FOUND, "Task run not found").into_response();
@@ -765,7 +769,13 @@ pub async fn get_run_screenshots_zip_handler(
     .await
     {
         Ok(rows) => rows,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to query run steps").into_response(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to query run steps",
+            )
+                .into_response();
+        }
     };
 
     let mut buf = Vec::new();
@@ -803,11 +813,19 @@ pub async fn get_run_screenshots_zip_handler(
         }
 
         if count == 0 {
-            return (StatusCode::NOT_FOUND, "No screenshots found for this task run").into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                "No screenshots found for this task run",
+            )
+                .into_response();
         }
 
         if zip_writer.finish().is_err() {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate ZIP archive").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to generate ZIP archive",
+            )
+                .into_response();
         }
     }
 
@@ -815,7 +833,10 @@ pub async fn get_run_screenshots_zip_handler(
     (
         [
             ("Content-Type", "application/zip"),
-            ("Content-Disposition", &format!("attachment; filename=\"{}\"", filename)),
+            (
+                "Content-Disposition",
+                &format!("attachment; filename=\"{}\"", filename),
+            ),
         ],
         buf,
     )

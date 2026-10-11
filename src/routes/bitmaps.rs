@@ -375,40 +375,43 @@ pub async fn get_automation_bitmaps_handler(
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
-    let auto_row = match sqlx::query("SELECT name FROM automations WHERE id = $1")
+    // Bolt Optimization: Run automation record query and bitmap items query concurrently
+    // using `tokio::join!`. This reduces DB query latency by half compared to sequential calls.
+    let (auto_res, rows_res) = tokio::join!(
+        sqlx::query("SELECT name FROM automations WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db),
+        sqlx::query(
+            r#"
+            SELECT
+                b.id,
+                b.automation_id,
+                a.name AS automation_name,
+                b.name,
+                b.object_storage_key,
+                b.width,
+                b.height,
+                b.created_by,
+                COALESCE(u.display_name, u.username, 'Unknown') AS created_by_name,
+                b.created_at
+            FROM bitmaps b
+            LEFT JOIN automations a ON b.automation_id = a.id
+            LEFT JOIN users u ON b.created_by = u.id
+            WHERE b.automation_id = $1 OR b.automation_id IS NULL
+            ORDER BY b.created_at DESC, b.id DESC
+            "#,
+        )
         .bind(id)
-        .fetch_optional(&state.db)
-        .await
-    {
+        .fetch_all(&state.db)
+    );
+
+    let auto_row = match auto_res {
         Ok(Some(r)) => r,
         _ => return Redirect::to("/automations").into_response(),
     };
     let automation_name: String = auto_row.get("name");
 
-    let rows = match sqlx::query(
-        r#"
-        SELECT
-            b.id,
-            b.automation_id,
-            a.name AS automation_name,
-            b.name,
-            b.object_storage_key,
-            b.width,
-            b.height,
-            b.created_by,
-            COALESCE(u.display_name, u.username, 'Unknown') AS created_by_name,
-            b.created_at
-        FROM bitmaps b
-        LEFT JOIN automations a ON b.automation_id = a.id
-        LEFT JOIN users u ON b.created_by = u.id
-        WHERE b.automation_id = $1 OR b.automation_id IS NULL
-        ORDER BY b.created_at DESC, b.id DESC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    {
+    let rows = match rows_res {
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!("Error fetching automation bitmaps: {}", e);
@@ -1675,8 +1678,9 @@ mod tests {
             manual_y: None,
         };
 
-        let is_no_pick =
-            form_keyboard.x == Some(0) && form_keyboard.y == Some(0) && form_keyboard.manual_x.is_none();
+        let is_no_pick = form_keyboard.x == Some(0)
+            && form_keyboard.y == Some(0)
+            && form_keyboard.manual_x.is_none();
         assert!(is_no_pick);
     }
 
@@ -1692,16 +1696,16 @@ mod tests {
 
         // Step 2: Bottom-Right grid click form deserialization (grid_click.x=160&grid_click.y=180)
         let body_br_grid = "csrf_token=test_token&image_url=/static/sample_screenshot.png&width=1920&height=1080&top_left_x=100&top_left_y=200&grid_click.x=160&grid_click.y=180";
-        let form_br_grid: PickRegionBottomRightForm =
-            serde_urlencoded::from_str(body_br_grid).expect("Should deserialize PickRegionBottomRightForm grid click");
+        let form_br_grid: PickRegionBottomRightForm = serde_urlencoded::from_str(body_br_grid)
+            .expect("Should deserialize PickRegionBottomRightForm grid click");
 
         assert_eq!(form_br_grid.grid_x, Some(160));
         assert_eq!(form_br_grid.grid_y, Some(180));
 
         // Step 2: Bottom-Right coarse click form deserialization (coarse_click.x=400&coarse_click.y=250)
         let body_br_coarse = "csrf_token=test_token&image_url=/static/sample_screenshot.png&width=1920&height=1080&top_left_x=100&top_left_y=200&coarse_click.x=400&coarse_click.y=250";
-        let form_br_coarse: PickRegionBottomRightForm =
-            serde_urlencoded::from_str(body_br_coarse).expect("Should deserialize PickRegionBottomRightForm coarse click");
+        let form_br_coarse: PickRegionBottomRightForm = serde_urlencoded::from_str(body_br_coarse)
+            .expect("Should deserialize PickRegionBottomRightForm coarse click");
 
         assert_eq!(form_br_coarse.coarse_x, Some(400));
         assert_eq!(form_br_coarse.coarse_y, Some(250));

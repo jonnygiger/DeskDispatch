@@ -36,24 +36,27 @@ pub async fn get_automation_variables_handler(
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
-    let automation = match sqlx::query_as::<_, AutomationDetail>(
-        "SELECT id, name, description, status, created_by, created_at, updated_at FROM automations WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    {
+    // Bolt Optimization: Run automation detail query and variables list query concurrently
+    // using `tokio::join!`, halving DB query wait latency for automation variable management.
+    let (automation_res, variables_res) = tokio::join!(
+        sqlx::query_as::<_, AutomationDetail>(
+            "SELECT id, name, description, status, created_by, created_at, updated_at FROM automations WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&state.db),
+        sqlx::query_as::<_, AutomationVariableItem>(
+            "SELECT id, automation_id, name, var_type, description FROM automation_variables WHERE automation_id = $1 ORDER BY name ASC, id ASC",
+        )
+        .bind(id)
+        .fetch_all(&state.db)
+    );
+
+    let automation = match automation_res {
         Ok(Some(a)) => a,
         _ => return Redirect::to("/automations").into_response(),
     };
 
-    let variables = sqlx::query_as::<_, AutomationVariableItem>(
-        "SELECT id, automation_id, name, var_type, description FROM automation_variables WHERE automation_id = $1 ORDER BY name ASC, id ASC",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let variables = variables_res.unwrap_or_default();
 
     HtmlTemplate(AutomationVariablesTemplate {
         user,

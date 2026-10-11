@@ -56,24 +56,27 @@ pub async fn get_automation_parameters_handler(
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
-    let automation = match sqlx::query_as::<_, AutomationDetail>(
-        "SELECT id, name, description, status, created_by, created_at, updated_at FROM automations WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    {
+    // Bolt Optimization: Run automation detail query and parameters list query concurrently
+    // using `tokio::join!`, halving DB query wait latency for automation parameter management.
+    let (automation_res, parameters_res) = tokio::join!(
+        sqlx::query_as::<_, AutomationDetail>(
+            "SELECT id, name, description, status, created_by, created_at, updated_at FROM automations WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&state.db),
+        sqlx::query_as::<_, AutomationParameterItem>(
+            "SELECT id, automation_id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC, id ASC",
+        )
+        .bind(id)
+        .fetch_all(&state.db)
+    );
+
+    let automation = match automation_res {
         Ok(Some(a)) => a,
         _ => return Redirect::to("/automations").into_response(),
     };
 
-    let parameters = sqlx::query_as::<_, AutomationParameterItem>(
-        "SELECT id, automation_id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC, id ASC",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let parameters = parameters_res.unwrap_or_default();
 
     HtmlTemplate(AutomationParametersTemplate {
         user,

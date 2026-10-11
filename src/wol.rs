@@ -4,10 +4,7 @@ use tokio::net::UdpSocket;
 /// Parses a MAC address string into a 6-byte array.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    let clean_str: String = mac_str
-        .chars()
-        .filter(|c| c.is_ascii_hexdigit())
-        .collect();
+    let clean_str: String = mac_str.chars().filter(|c| c.is_ascii_hexdigit()).collect();
 
     if clean_str.len() != 12 {
         return Err(format!(

@@ -17,8 +17,14 @@ impl WorkerStatus {
         }
         match self {
             WorkerStatus::Offline => matches!(target, WorkerStatus::Online | WorkerStatus::Error),
-            WorkerStatus::Online => matches!(target, WorkerStatus::Busy | WorkerStatus::Offline | WorkerStatus::Error),
-            WorkerStatus::Busy => matches!(target, WorkerStatus::Online | WorkerStatus::Offline | WorkerStatus::Error),
+            WorkerStatus::Online => matches!(
+                target,
+                WorkerStatus::Busy | WorkerStatus::Offline | WorkerStatus::Error
+            ),
+            WorkerStatus::Busy => matches!(
+                target,
+                WorkerStatus::Online | WorkerStatus::Offline | WorkerStatus::Error
+            ),
             WorkerStatus::Error => matches!(target, WorkerStatus::Offline | WorkerStatus::Online),
         }
     }
@@ -67,7 +73,9 @@ impl TaskRunStatus {
             return true;
         }
         match self {
-            TaskRunStatus::Queued => matches!(target, TaskRunStatus::Running | TaskRunStatus::Cancelled),
+            TaskRunStatus::Queued => {
+                matches!(target, TaskRunStatus::Running | TaskRunStatus::Cancelled)
+            }
             TaskRunStatus::Running => matches!(
                 target,
                 TaskRunStatus::Cancelling
@@ -80,7 +88,10 @@ impl TaskRunStatus {
                 target,
                 TaskRunStatus::Cancelled | TaskRunStatus::Failed | TaskRunStatus::Lost
             ),
-            TaskRunStatus::Succeeded | TaskRunStatus::Failed | TaskRunStatus::Cancelled | TaskRunStatus::Lost => false,
+            TaskRunStatus::Succeeded
+            | TaskRunStatus::Failed
+            | TaskRunStatus::Cancelled
+            | TaskRunStatus::Lost => false,
         }
     }
 }
@@ -113,8 +124,13 @@ impl AutomationStatus {
             return true;
         }
         match self {
-            AutomationStatus::Draft => matches!(target, AutomationStatus::Active | AutomationStatus::Archived),
-            AutomationStatus::Active => matches!(target, AutomationStatus::Draft | AutomationStatus::Archived),
+            AutomationStatus::Draft => matches!(
+                target,
+                AutomationStatus::Active | AutomationStatus::Archived
+            ),
+            AutomationStatus::Active => {
+                matches!(target, AutomationStatus::Draft | AutomationStatus::Archived)
+            }
             AutomationStatus::Archived => false,
         }
     }
@@ -242,7 +258,10 @@ impl UserSessionStatus {
             return true;
         }
         match self {
-            UserSessionStatus::Active => matches!(target, UserSessionStatus::Expired | UserSessionStatus::Revoked),
+            UserSessionStatus::Active => matches!(
+                target,
+                UserSessionStatus::Expired | UserSessionStatus::Revoked
+            ),
             UserSessionStatus::Expired | UserSessionStatus::Revoked => false,
         }
     }
@@ -452,9 +471,15 @@ mod tests {
         assert!(!AutomationStatus::Archived.can_transition_to(AutomationStatus::Active));
 
         // RecordingSessionStatus transitions
-        assert!(RecordingSessionStatus::Recording.can_transition_to(RecordingSessionStatus::Completed));
-        assert!(RecordingSessionStatus::Completed.can_transition_to(RecordingSessionStatus::Imported));
-        assert!(!RecordingSessionStatus::Imported.can_transition_to(RecordingSessionStatus::Recording));
+        assert!(
+            RecordingSessionStatus::Recording.can_transition_to(RecordingSessionStatus::Completed)
+        );
+        assert!(
+            RecordingSessionStatus::Completed.can_transition_to(RecordingSessionStatus::Imported)
+        );
+        assert!(
+            !RecordingSessionStatus::Imported.can_transition_to(RecordingSessionStatus::Recording)
+        );
 
         // ScheduleStatus & WpsModeStatus transitions
         assert!(ScheduleStatus::Disabled.can_transition_to(ScheduleStatus::Enabled));

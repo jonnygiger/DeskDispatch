@@ -17,3 +17,7 @@
 ## 2025-03-10 - [Concurrent task run detail and recording session queries with tokio::join!]
 **Learning:** `get_run_detail_handler` in `src/routes/runs.rs` and recording handlers in `src/routes/recordings.rs` sequentially executed independent database queries for the primary entity record, executed step/event rows, and variable values in 2 to 3 consecutive round-trips.
 **Action:** Use `tokio::join!` to execute independent entity, step/event, and variable value queries concurrently across PgPool connections, reducing DB wait latency for task run detail views by ~66% and recording session views by ~50%.
+
+## 2025-03-10 - [Concurrent automation sub-view queries with tokio::join!]
+**Learning:** `get_automation_bitmaps_handler`, `get_automation_variables_handler`, and `get_automation_parameters_handler` sequentially executed independent queries for the target automation record and its associated sub-items (bitmaps, variables, or parameters), incurring 2 consecutive database round-trips per request.
+**Action:** Use `tokio::join!` to execute the automation metadata query and associated items list query concurrently over the PgPool, halving database wait latency for automation sub-views (~50% reduction).
