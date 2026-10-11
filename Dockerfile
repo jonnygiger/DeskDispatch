@@ -18,7 +18,7 @@ RUN mkdir -p src crates/deskdispatch-protocol/src crates/worker-simulator/src &&
     echo "fn main() {}" > crates/worker-simulator/src/main.rs && \
     touch src/lib.rs && \
     touch crates/deskdispatch-protocol/src/lib.rs && \
-    cargo build --release --locked
+    cargo build --release
 
 # Copy workspace crates, source code, templates, static assets, and database migrations
 COPY crates ./crates
