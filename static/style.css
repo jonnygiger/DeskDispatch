@@ -1,5 +1,6 @@
 :root {
     --color-bg: #f4f5f7;
+    --color-bg-secondary: #f9fafb;
     --color-surface: #ffffff;
     --color-text: #111827;
     --color-text-muted: #4b5563;
@@ -335,6 +336,7 @@ body {
     border-radius: 6px;
     image-rendering: pixelated;
     background-repeat: no-repeat;
+    background-color: var(--color-surface);
 }
 
 .shot--normal {
@@ -353,6 +355,7 @@ body {
     background-image: repeating-linear-gradient(to right, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), repeating-linear-gradient(to bottom, transparent 0 19px, rgba(128,128,128,.6) 19px 20px), var(--grid-bg-url);
     background-size: 20px 20px, 20px 20px, var(--grid-bg-w, 100%) var(--grid-bg-h, 100%);
     background-position: 0 0, 0 0, var(--grid-pan-x, 0px) var(--grid-pan-y, 0px);
+    background-repeat: repeat, repeat, no-repeat;
 }
 
 .marker {

@@ -116,10 +116,20 @@ pub struct PickRegionTopLeftForm {
     pub step_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub reference_bitmap_id: Option<i64>,
-    #[serde(alias = "click.x", default)]
-    pub x: u32,
-    #[serde(alias = "click.y", default)]
-    pub y: u32,
+    #[serde(
+        alias = "click.x",
+        alias = "click_x",
+        default,
+        deserialize_with = "deserialize_option_number"
+    )]
+    pub x: Option<u32>,
+    #[serde(
+        alias = "click.y",
+        alias = "click_y",
+        default,
+        deserialize_with = "deserialize_option_number"
+    )]
+    pub y: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub manual_x: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
@@ -144,24 +154,28 @@ pub struct PickRegionBottomRightForm {
     pub reference_bitmap_id: Option<i64>,
     #[serde(
         alias = "grid_click.x",
+        alias = "grid_x",
         default,
         deserialize_with = "deserialize_option_number"
     )]
     pub grid_x: Option<u32>,
     #[serde(
         alias = "grid_click.y",
+        alias = "grid_y",
         default,
         deserialize_with = "deserialize_option_number"
     )]
     pub grid_y: Option<u32>,
     #[serde(
         alias = "coarse_click.x",
+        alias = "coarse_x",
         default,
         deserialize_with = "deserialize_option_number"
     )]
     pub coarse_x: Option<u32>,
     #[serde(
         alias = "coarse_click.y",
+        alias = "coarse_y",
         default,
         deserialize_with = "deserialize_option_number"
     )]
@@ -986,6 +1000,11 @@ pub async fn post_pick_region_top_left_handler(
 ) -> Response {
     let image_url = sanitize_image_url(Some(form.image_url.clone()));
 
+    let (click_x, click_y, has_click) = match (form.x, form.y) {
+        (Some(cx), Some(cy)) => (cx, cy, true),
+        _ => (0, 0, false),
+    };
+
     let (top_left_x, top_left_y, is_valid_selection) = match (form.manual_x, form.manual_y) {
         (Some(mx), Some(my)) => (
             mx.min(form.width.saturating_sub(1)),
@@ -993,14 +1012,14 @@ pub async fn post_pick_region_top_left_handler(
             true,
         ),
         _ => {
-            if form.x == 0 && form.y == 0 {
+            if !has_click || (click_x == 0 && click_y == 0) {
                 // Keyboard activation of <input type="image"> sends x=0, y=0 without click coordinates.
                 // Treat (0,0) without explicit manual entry as a "no pick" keyboard trigger.
                 (0, 0, false)
             } else {
                 let (nx, ny) = map_coarse_click_to_native(
-                    form.x,
-                    form.y,
+                    click_x,
+                    click_y,
                     form.width as f64,
                     form.height as f64,
                     form.width,
@@ -1224,17 +1243,23 @@ async fn crop_image_region(
     let crop_w = crop_w.max(1);
     let crop_h = crop_h.max(1);
 
-    // Attempt 1: If image_url starts with /static/, try loading from StaticAssets
+    let path_str = if let Ok(parsed) = reqwest::Url::parse(image_url) {
+        parsed.path().to_string()
+    } else {
+        image_url.to_string()
+    };
+
+    // Attempt 1: If path_str starts with /static/, try loading from StaticAssets
     let mut image_bytes: Option<Vec<u8>> = None;
-    if let Some(static_path) = image_url.strip_prefix("/static/")
+    if let Some(static_path) = path_str.strip_prefix("/static/")
         && let Some(asset) = crate::routes::static_assets::Assets::get(static_path)
     {
         image_bytes = Some(asset.data.to_vec());
     }
 
-    // Attempt 2: If image_url matches /media/screenshots/{id} or /media/bitmaps/{id}
+    // Attempt 2: If path_str matches /media/screenshots/{id} or /media/bitmaps/{id}
     if image_bytes.is_none() {
-        if let Some(id_str) = image_url.strip_prefix("/media/screenshots/")
+        if let Some(id_str) = path_str.strip_prefix("/media/screenshots/")
             && let Ok(id) = id_str.parse::<i64>()
             && let Ok(Some(row)) =
                 sqlx::query("SELECT object_storage_key FROM step_screenshots WHERE step_id = $1")
@@ -1254,7 +1279,7 @@ async fn crop_image_region(
             {
                 image_bytes = Some(data.into_bytes().to_vec());
             }
-        } else if let Some(id_str) = image_url.strip_prefix("/media/bitmaps/")
+        } else if let Some(id_str) = path_str.strip_prefix("/media/bitmaps/")
             && let Ok(id) = id_str.parse::<i64>()
             && let Ok(Some(row)) =
                 sqlx::query("SELECT object_storage_key FROM bitmaps WHERE id = $1")
@@ -1274,6 +1299,17 @@ async fn crop_image_region(
             {
                 image_bytes = Some(data.into_bytes().to_vec());
             }
+        }
+    }
+
+    // Attempt 3: If image_url is an HTTP/HTTPS URL, fetch via reqwest
+    if image_bytes.is_none()
+        && (image_url.starts_with("http://") || image_url.starts_with("https://"))
+    {
+        if let Ok(res) = reqwest::get(image_url).await
+            && let Ok(data) = res.bytes().await
+        {
+            image_bytes = Some(data.to_vec());
         }
     }
 
@@ -1609,8 +1645,8 @@ mod tests {
             mode: None,
             step_id: None,
             reference_bitmap_id: None,
-            x: 0,
-            y: 0,
+            x: Some(0),
+            y: Some(0),
             manual_x: Some(500),
             manual_y: Some(300),
         };
@@ -1633,14 +1669,41 @@ mod tests {
             mode: None,
             step_id: None,
             reference_bitmap_id: None,
-            x: 0,
-            y: 0,
+            x: Some(0),
+            y: Some(0),
             manual_x: None,
             manual_y: None,
         };
 
         let is_no_pick =
-            form_keyboard.x == 0 && form_keyboard.y == 0 && form_keyboard.manual_x.is_none();
+            form_keyboard.x == Some(0) && form_keyboard.y == Some(0) && form_keyboard.manual_x.is_none();
         assert!(is_no_pick);
+    }
+
+    #[test]
+    fn test_form_deserialization_click_coords() {
+        // Step 1: Top-Left click form deserialization (click.x=300&click.y=170)
+        let body_tl = "csrf_token=test_token&image_url=/static/sample_screenshot.png&width=1920&height=1080&click.x=300&click.y=170";
+        let form_tl: PickRegionTopLeftForm =
+            serde_urlencoded::from_str(body_tl).expect("Should deserialize PickRegionTopLeftForm");
+
+        assert_eq!(form_tl.x, Some(300));
+        assert_eq!(form_tl.y, Some(170));
+
+        // Step 2: Bottom-Right grid click form deserialization (grid_click.x=160&grid_click.y=180)
+        let body_br_grid = "csrf_token=test_token&image_url=/static/sample_screenshot.png&width=1920&height=1080&top_left_x=100&top_left_y=200&grid_click.x=160&grid_click.y=180";
+        let form_br_grid: PickRegionBottomRightForm =
+            serde_urlencoded::from_str(body_br_grid).expect("Should deserialize PickRegionBottomRightForm grid click");
+
+        assert_eq!(form_br_grid.grid_x, Some(160));
+        assert_eq!(form_br_grid.grid_y, Some(180));
+
+        // Step 2: Bottom-Right coarse click form deserialization (coarse_click.x=400&coarse_click.y=250)
+        let body_br_coarse = "csrf_token=test_token&image_url=/static/sample_screenshot.png&width=1920&height=1080&top_left_x=100&top_left_y=200&coarse_click.x=400&coarse_click.y=250";
+        let form_br_coarse: PickRegionBottomRightForm =
+            serde_urlencoded::from_str(body_br_coarse).expect("Should deserialize PickRegionBottomRightForm coarse click");
+
+        assert_eq!(form_br_coarse.coarse_x, Some(400));
+        assert_eq!(form_br_coarse.coarse_y, Some(250));
     }
 }
