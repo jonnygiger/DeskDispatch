@@ -43,6 +43,8 @@ services:
     image: postgres:18-alpine
     container_name: deskdispatch-postgres
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: deskdispatch_db_prod_secret_9823
