@@ -449,26 +449,20 @@ impl SimulatedWorker {
                 overall_success = false;
             }
 
-            // Generate & upload screenshot for finding/matching steps or randomly
+            // Generate & upload screenshot for every step execution
             let mut screenshot_object_key = None;
-            if step_type == "find_bitmap"
-                || step_type == "find_pixel_rgb"
-                || step_type == "branch"
-                || random_bool(0.4)
+            match self
+                .upload_task_run_screenshot(task_run_id, step_id, api_key)
+                .await
             {
-                match self
-                    .upload_task_run_screenshot(task_run_id, step_id, api_key)
-                    .await
-                {
-                    Ok(key) => {
-                        screenshot_object_key = Some(key);
-                    }
-                    Err(e) => {
-                        warn!(
-                            worker_idx = self.config.worker_index,
-                            "Failed to upload step screenshot: {}", e
-                        );
-                    }
+                Ok(key) => {
+                    screenshot_object_key = Some(key);
+                }
+                Err(e) => {
+                    warn!(
+                        worker_idx = self.config.worker_index,
+                        "Failed to upload step screenshot: {}", e
+                    );
                 }
             }
 
@@ -642,6 +636,58 @@ impl SimulatedWorker {
         Ok(upload_info.object_key)
     }
 
+    async fn upload_recording_screenshot(
+        &self,
+        recording_session_id: i64,
+        _sequence_number: i32,
+        api_key: &str,
+    ) -> Result<String, String> {
+        let url = format!(
+            "{}/api/v1/workers/recordings/{}/screenshot-upload-url",
+            self.config.server_url, recording_session_id
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to get recording screenshot upload URL: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Recording screenshot upload URL returned status {}",
+                resp.status()
+            ));
+        }
+
+        let upload_info = resp
+            .json::<ScreenshotUploadUrlResponse>()
+            .await
+            .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
+
+        let png_bytes = generate_random_screenshot();
+
+        let upload_res = self
+            .client
+            .put(&upload_info.upload_url)
+            .header("Content-Type", "image/png")
+            .body(png_bytes)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to PUT recording screenshot image: {}", e))?;
+
+        if !upload_res.status().is_success() {
+            return Err(format!(
+                "PUT recording screenshot returned status {}",
+                upload_res.status()
+            ));
+        }
+
+        Ok(upload_info.object_key)
+    }
+
     async fn execute_recording(
         &self,
         recording_session_id: i64,
@@ -655,6 +701,23 @@ impl SimulatedWorker {
                 self.config.server_url, recording_session_id
             );
 
+            let mut screenshot_object_key = None;
+            match self
+                .upload_recording_screenshot(recording_session_id, sequence_number, api_key)
+                .await
+            {
+                Ok(key) => {
+                    screenshot_object_key = Some(key);
+                }
+                Err(e) => {
+                    warn!(
+                        worker_idx = self.config.worker_index,
+                        recording_session_id = recording_session_id,
+                        "Failed to upload recording event screenshot: {}", e
+                    );
+                }
+            }
+
             let event_item = RecordingEventItem {
                 sequence_number,
                 event_type: "mouse_click".to_string(),
@@ -662,7 +725,7 @@ impl SimulatedWorker {
                 y: Some(random_range(50..1000)),
                 button: Some("left".to_string()),
                 key_combo: None,
-                screenshot_object_key: None,
+                screenshot_object_key,
                 captured_at: Some(Utc::now()),
             };
 

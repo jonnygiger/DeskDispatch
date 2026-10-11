@@ -19,6 +19,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/runs", get(get_runs_handler))
         .route("/runs/{id}", get(get_run_detail_handler))
+        .route("/runs/{id}/screenshots.zip", get(get_run_screenshots_zip_handler))
         .route("/runs/{id}/status-frame", get(get_run_status_frame_handler))
         .route("/runs/{id}/cancel", post(post_cancel_run_handler))
 }
@@ -722,6 +723,103 @@ pub async fn get_run_detail_handler(
         auto_refresh,
     })
     .into_response()
+}
+
+#[tracing::instrument(skip(state, _user))]
+pub async fn get_run_screenshots_zip_handler(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+) -> Response {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    let run_exists: bool = match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = $1)")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+    {
+        Ok(exists) => exists,
+        Err(_) => false,
+    };
+
+    if !run_exists {
+        return (StatusCode::NOT_FOUND, "Task run not found").into_response();
+    }
+
+    let step_rows = match sqlx::query(
+        r#"
+        SELECT
+            trs.seq,
+            trs.step_id,
+            trs.screenshot_object_key,
+            ss.object_storage_key AS step_screenshot_key
+        FROM task_run_steps trs
+        LEFT JOIN step_screenshots ss ON trs.step_id = ss.step_id
+        WHERE trs.task_run_id = $1
+        ORDER BY trs.id ASC
+        "#,
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to query run steps").into_response(),
+    };
+
+    let mut buf = Vec::new();
+    {
+        let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+
+        let storage = state.storage_service();
+        let mut count = 0;
+
+        for (idx, row) in step_rows.into_iter().enumerate() {
+            let screenshot_key: Option<String> = row
+                .get::<Option<String>, _>("screenshot_object_key")
+                .or_else(|| row.get("step_screenshot_key"));
+
+            if let Some(key) = screenshot_key {
+                if let Ok(bytes) = storage.get_object(&key).await {
+                    let seq: Option<i32> = row.get("seq");
+                    let step_id: i64 = row.get("step_id");
+                    let filename = format!(
+                        "step_{:03}_seq_{}_step_{}.png",
+                        idx + 1,
+                        seq.unwrap_or((idx + 1) as i32),
+                        step_id
+                    );
+
+                    if zip_writer.start_file(filename, options).is_ok() {
+                        let _ = zip_writer.write_all(&bytes);
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        if count == 0 {
+            return (StatusCode::NOT_FOUND, "No screenshots found for this task run").into_response();
+        }
+
+        if zip_writer.finish().is_err() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate ZIP archive").into_response();
+        }
+    }
+
+    let filename = format!("run-{}-screenshots.zip", id);
+    (
+        [
+            ("Content-Type", "application/zip"),
+            ("Content-Disposition", &format!("attachment; filename=\"{}\"", filename)),
+        ],
+        buf,
+    )
+        .into_response()
 }
 
 #[tracing::instrument(skip(state, user, _form))]

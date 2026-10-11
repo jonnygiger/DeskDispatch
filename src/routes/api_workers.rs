@@ -548,6 +548,30 @@ pub async fn post_step_result_handler(
         .execute(&mut *tx)
         .await?;
 
+    // Upsert into step_screenshots so each automation step is connected to a screenshot
+    // from the first time it is run (or updated if missing).
+    if let Some(ref key) = payload.screenshot_object_key {
+        if let Err(e) = sqlx::query(
+            r#"
+            INSERT INTO step_screenshots (step_id, object_storage_key, width, height)
+            VALUES ($1, $2, 1920, 1080)
+            ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key
+            "#,
+        )
+        .bind(payload.step_id)
+        .bind(key)
+        .execute(&mut *tx)
+        .await
+        {
+            tracing::error!(
+                task_run_id = task_run_id,
+                step_id = payload.step_id,
+                "Failed to upsert step_screenshots on step result: {}",
+                e
+            );
+        }
+    }
+
         tx.commit().await?;
         tracing::warn!(
             worker_id = worker.id,
@@ -1069,7 +1093,10 @@ pub async fn post_task_run_screenshot_commit_handler(
         .object_key
         .unwrap_or_else(|| format!("runs/{}/step.png", task_run_id));
 
-    if let Some(step_id) = req.step_id {
+    let width = req.width.unwrap_or(1920);
+    let height = req.height.unwrap_or(1080);
+
+    let target_step_id = if let Some(step_id) = req.step_id {
         if let Err(e) = sqlx::query(
             r#"
             UPDATE task_run_steps
@@ -1091,8 +1118,9 @@ pub async fn post_task_run_screenshot_commit_handler(
                 e
             );
         }
+        Some(step_id)
     } else {
-        if let Err(e) = sqlx::query(
+        let step_id_opt: Option<i64> = sqlx::query_scalar(
             r#"
             UPDATE task_run_steps
             SET screenshot_object_key = $1
@@ -1102,17 +1130,38 @@ pub async fn post_task_run_screenshot_commit_handler(
                 ORDER BY id DESC
                 LIMIT 1
             )
+            RETURNING step_id
             "#,
         )
         .bind(&object_key)
         .bind(task_run_id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+        step_id_opt
+    };
+
+    if let Some(step_id) = target_step_id {
+        if let Err(e) = sqlx::query(
+            r#"
+            INSERT INTO step_screenshots (step_id, object_storage_key, width, height)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key
+            "#,
+        )
+        .bind(step_id)
+        .bind(&object_key)
+        .bind(width)
+        .bind(height)
         .execute(&state.db)
         .await
         {
             tracing::error!(
                 worker_id = worker.id,
                 task_run_id = task_run_id,
-                "Failed to update latest task_run_steps screenshot_object_key: {}",
+                step_id = step_id,
+                "Failed to upsert step_screenshots on commit: {}",
                 e
             );
         }

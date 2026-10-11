@@ -23,7 +23,12 @@
 {% endif %}
 
 <div class="card" style="margin-bottom: 1.5rem;">
-    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">Run Overview</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="font-size: 1.125rem; font-weight: 600; margin: 0;">Run Overview</h2>
+        {% if !steps.is_empty() %}
+            <a href="/runs/{{ run.id }}/screenshots.zip" class="btn btn-outline" style="font-size: 0.875rem;">📦 Download All Screenshots (ZIP)</a>
+        {% endif %}
+    </div>
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; font-size: 0.875rem;">
         <div>
             <div style="color: var(--color-text-muted); margin-bottom: 0.25rem;">Automation</div>
