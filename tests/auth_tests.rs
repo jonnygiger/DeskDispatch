@@ -250,6 +250,7 @@ async fn test_unauthenticated_redirect_to_login() {
         config,
         rate_limiter: LoginRateLimiter::default(),
         task_queue_notifier: tx_notify,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()
@@ -313,6 +314,7 @@ async fn test_full_auth_and_password_workflow() {
         config: config.clone(),
         rate_limiter: LoginRateLimiter::default(),
         task_queue_notifier: tx_notify,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()

@@ -65,6 +65,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         task_run_step_retention_days: 30,
         screenshot_retention_days: 30,
         metrics_bind_address: None,
+        unattended_registration_psk: secrecy::SecretString::from("deskdispatch_wps_psk_secret".to_string()),
     });
     config.worker_long_poll_timeout_secs = 2; // Short timeout for fast test execution
 
@@ -80,6 +81,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         config,
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tx_notify.clone(),
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     // Create a dummy worker row in task_worker_pcs

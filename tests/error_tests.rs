@@ -107,6 +107,7 @@ async fn test_fallback_404_route() {
         config,
         rate_limiter: LoginRateLimiter::default(),
         task_queue_notifier: tx_notify,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let app = Router::new()

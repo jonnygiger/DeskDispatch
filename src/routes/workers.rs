@@ -41,6 +41,10 @@ pub fn router() -> Router<AppState> {
             "/workers/{id}/wake",
             post(post_wake_worker_handler),
         )
+        .route(
+            "/workers/wps/toggle",
+            post(post_toggle_wps_handler),
+        )
         .route("/worker-groups/new", get(get_new_worker_group_handler))
         .route("/worker-groups", post(post_create_worker_group_handler))
         .route(
@@ -265,6 +269,37 @@ pub async fn post_rotate_worker_key_handler(
 mod tests {
     use super::*;
     use crate::auth::AuthUser;
+
+    #[test]
+    fn test_workers_index_template_rendering_wps_button() {
+        let user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: crate::auth::UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "test_csrf_token".to_string(),
+            must_change_password: false,
+        };
+
+        let tmpl_disabled = WorkersIndexTemplate {
+            user: user.clone(),
+            workers: vec![],
+            worker_groups: vec![],
+            wps_enabled: false,
+        };
+        let rendered_disabled = tmpl_disabled.render().expect("Failed to render WorkersIndexTemplate");
+        assert!(rendered_disabled.contains("WPS Registration: DISABLED"));
+
+        let tmpl_enabled = WorkersIndexTemplate {
+            user,
+            workers: vec![],
+            worker_groups: vec![],
+            wps_enabled: true,
+        };
+        let rendered_enabled = tmpl_enabled.render().expect("Failed to render WorkersIndexTemplate");
+        assert!(rendered_enabled.contains("WPS Registration: ENABLED"));
+    }
 
     #[test]
     fn test_worker_new_template_rendering() {
@@ -551,6 +586,7 @@ pub struct WorkersIndexTemplate {
     pub user: crate::auth::AuthUser,
     pub workers: Vec<WorkerPcItem>,
     pub worker_groups: Vec<WorkerGroupItem>,
+    pub wps_enabled: bool,
 }
 
 #[derive(Template)]
@@ -861,10 +897,13 @@ pub async fn get_workers_handler(
         });
     }
 
+    let wps_enabled = state.wps_enabled.load(std::sync::atomic::Ordering::Relaxed);
+
     HtmlTemplate(WorkersIndexTemplate {
         user,
         workers,
         worker_groups,
+        wps_enabled,
     })
     .into_response()
 }
@@ -1143,6 +1182,31 @@ pub async fn post_edit_worker_handler(
     .await;
 
     Redirect::to(&format!("/workers/{}", id)).into_response()
+}
+
+#[tracing::instrument(skip(state, user))]
+pub async fn post_toggle_wps_handler(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+) -> impl IntoResponse {
+    use std::sync::atomic::Ordering;
+    let current = state.wps_enabled.load(Ordering::Relaxed);
+    let new_state = !current;
+    state.wps_enabled.store(new_state, Ordering::Relaxed);
+
+    let _ = log_audit(
+        &state.db,
+        Some(user.id),
+        "toggle_wps",
+        "wps_mode",
+        None,
+        Some(serde_json::json!({
+            "wps_enabled": new_state,
+        })),
+    )
+    .await;
+
+    Redirect::to("/workers").into_response()
 }
 
 #[tracing::instrument(skip(state, user))]

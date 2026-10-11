@@ -26,6 +26,7 @@ pub struct Config {
     pub task_run_step_retention_days: u32,
     pub screenshot_retention_days: u32,
     pub metrics_bind_address: Option<String>,
+    pub unattended_registration_psk: SecretString,
 }
 
 impl Config {
@@ -122,6 +123,10 @@ impl Config {
             .ok()
             .filter(|v| !v.trim().is_empty());
 
+        let unattended_registration_psk = env::var("UNATTENDED_REGISTRATION_PSK")
+            .or_else(|_| env::var("STATIC_PSK"))
+            .unwrap_or_else(|_| "deskdispatch_wps_psk_secret".to_string());
+
         let config = Self {
             database_url,
             public_base_url,
@@ -146,6 +151,7 @@ impl Config {
             task_run_step_retention_days,
             screenshot_retention_days,
             metrics_bind_address,
+            unattended_registration_psk: SecretString::from(unattended_registration_psk),
         };
 
         config.validate()?;
@@ -193,6 +199,7 @@ mod tests {
             task_run_step_retention_days: 30,
             screenshot_retention_days: 30,
             metrics_bind_address: None,
+            unattended_registration_psk: SecretString::from("deskdispatch_wps_psk_secret".to_string()),
         }
     }
 

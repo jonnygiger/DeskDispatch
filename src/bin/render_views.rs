@@ -305,6 +305,7 @@ fn main() {
         user: user.clone(),
         workers: vec![worker_item],
         worker_groups: vec![group_item],
+        wps_enabled: false,
     };
     fs::write(
         "rendered_templates/workers_index.html",

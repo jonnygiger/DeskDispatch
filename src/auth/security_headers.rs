@@ -86,6 +86,7 @@ mod tests {
             task_run_step_retention_days: 30,
             screenshot_retention_days: 30,
             metrics_bind_address: None,
+            unattended_registration_psk: SecretString::from("deskdispatch_wps_psk_secret".to_string()),
         };
 
         let pool =
@@ -107,6 +108,7 @@ mod tests {
             config,
             rate_limiter: LoginRateLimiter::default(),
             task_queue_notifier: tx_notify,
+            wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 

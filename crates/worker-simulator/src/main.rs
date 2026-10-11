@@ -84,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             hostname: format!("sim-worker-{:03}.local", worker_idx),
             display_name: format!("Simulated Worker {:03}", worker_idx),
             registration_token: reg_tokens.get(i).cloned().flatten(),
+            psk: args.psk.clone(),
             api_key: api_keys.get(i).cloned().flatten(),
             profile,
             server_url: args.server_url.clone(),
