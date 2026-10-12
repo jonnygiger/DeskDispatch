@@ -1,7 +1,205 @@
 use crate::auth::AuthUser;
 use crate::de::deserialize_option_number;
 use askama::Template;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sqlx::Row;
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlaStats {
+    pub daily_uptime: f64,
+    pub weekly_uptime: f64,
+    pub monthly_uptime: f64,
+    pub yearly_uptime: f64,
+    pub total_runs_24h: i64,
+    pub total_runs_7d: i64,
+    pub total_runs_30d: i64,
+    pub total_runs_365d: i64,
+}
+
+impl Default for SlaStats {
+    fn default() -> Self {
+        Self {
+            daily_uptime: 100.0,
+            weekly_uptime: 100.0,
+            monthly_uptime: 100.0,
+            yearly_uptime: 100.0,
+            total_runs_24h: 0,
+            total_runs_7d: 0,
+            total_runs_30d: 0,
+            total_runs_365d: 0,
+        }
+    }
+}
+
+impl SlaStats {
+    pub fn formatted_daily(&self) -> String {
+        format!("{:.1}%", self.daily_uptime)
+    }
+
+    pub fn formatted_weekly(&self) -> String {
+        format!("{:.1}%", self.weekly_uptime)
+    }
+
+    pub fn formatted_monthly(&self) -> String {
+        format!("{:.1}%", self.monthly_uptime)
+    }
+
+    pub fn formatted_yearly(&self) -> String {
+        format!("{:.1}%", self.yearly_uptime)
+    }
+
+    pub fn daily_badge_class(&self) -> &'static str {
+        Self::badge_class(self.daily_uptime)
+    }
+
+    pub fn weekly_badge_class(&self) -> &'static str {
+        Self::badge_class(self.weekly_uptime)
+    }
+
+    pub fn monthly_badge_class(&self) -> &'static str {
+        Self::badge_class(self.monthly_uptime)
+    }
+
+    pub fn yearly_badge_class(&self) -> &'static str {
+        Self::badge_class(self.yearly_uptime)
+    }
+
+    pub fn badge_class(uptime: f64) -> &'static str {
+        if uptime >= 99.0 {
+            "badge-success"
+        } else if uptime >= 90.0 {
+            "badge-warning"
+        } else {
+            "badge-danger"
+        }
+    }
+}
+
+pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaStats {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '24 hours') AS total_24h,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '24 hours' AND LOWER(trvv.value) = 'true') AS success_24h,
+
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '7 days') AS total_7d,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '7 days' AND LOWER(trvv.value) = 'true') AS success_7d,
+
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '30 days') AS total_30d,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '30 days' AND LOWER(trvv.value) = 'true') AS success_30d,
+
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '365 days') AS total_365d,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '365 days' AND LOWER(trvv.value) = 'true') AS success_365d
+        FROM task_runs tr
+        JOIN automation_variables av ON av.automation_id = tr.automation_id AND av.name = 'success'
+        LEFT JOIN task_run_variable_values trvv ON trvv.task_run_id = tr.id AND trvv.variable_id = av.id
+        WHERE tr.automation_id = $1 AND tr.status != 'queued'
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(r) = row {
+        let total_24h: i64 = r.get("total_24h");
+        let success_24h: i64 = r.get("success_24h");
+        let total_7d: i64 = r.get("total_7d");
+        let success_7d: i64 = r.get("success_7d");
+        let total_30d: i64 = r.get("total_30d");
+        let success_30d: i64 = r.get("success_30d");
+        let total_365d: i64 = r.get("total_365d");
+        let success_365d: i64 = r.get("success_365d");
+
+        let calc_uptime = |success: i64, total: i64| -> f64 {
+            if total == 0 {
+                100.0
+            } else {
+                (success as f64 / total as f64) * 100.0
+            }
+        };
+
+        SlaStats {
+            daily_uptime: calc_uptime(success_24h, total_24h),
+            weekly_uptime: calc_uptime(success_7d, total_7d),
+            monthly_uptime: calc_uptime(success_30d, total_30d),
+            yearly_uptime: calc_uptime(success_365d, total_365d),
+            total_runs_24h: total_24h,
+            total_runs_7d: total_7d,
+            total_runs_30d: total_30d,
+            total_runs_365d: total_365d,
+        }
+    } else {
+        SlaStats::default()
+    }
+}
+
+pub async fn fetch_all_automations_sla(db: &sqlx::PgPool) -> HashMap<i64, SlaStats> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            tr.automation_id,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '24 hours') AS total_24h,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '24 hours' AND LOWER(trvv.value) = 'true') AS success_24h,
+
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '7 days') AS total_7d,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '7 days' AND LOWER(trvv.value) = 'true') AS success_7d,
+
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '30 days') AS total_30d,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '30 days' AND LOWER(trvv.value) = 'true') AS success_30d,
+
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '365 days') AS total_365d,
+            COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '365 days' AND LOWER(trvv.value) = 'true') AS success_365d
+        FROM task_runs tr
+        JOIN automation_variables av ON av.automation_id = tr.automation_id AND av.name = 'success'
+        LEFT JOIN task_run_variable_values trvv ON trvv.task_run_id = tr.id AND trvv.variable_id = av.id
+        WHERE tr.status != 'queued'
+        GROUP BY tr.automation_id
+        "#,
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+
+    let mut map = HashMap::new();
+    let calc_uptime = |success: i64, total: i64| -> f64 {
+        if total == 0 {
+            100.0
+        } else {
+            (success as f64 / total as f64) * 100.0
+        }
+    };
+
+    for r in rows {
+        let auto_id: i64 = r.get("automation_id");
+        let total_24h: i64 = r.get("total_24h");
+        let success_24h: i64 = r.get("success_24h");
+        let total_7d: i64 = r.get("total_7d");
+        let success_7d: i64 = r.get("success_7d");
+        let total_30d: i64 = r.get("total_30d");
+        let success_30d: i64 = r.get("success_30d");
+        let total_365d: i64 = r.get("total_365d");
+        let success_365d: i64 = r.get("success_365d");
+
+        map.insert(
+            auto_id,
+            SlaStats {
+                daily_uptime: calc_uptime(success_24h, total_24h),
+                weekly_uptime: calc_uptime(success_7d, total_7d),
+                monthly_uptime: calc_uptime(success_30d, total_30d),
+                yearly_uptime: calc_uptime(success_365d, total_365d),
+                total_runs_24h: total_24h,
+                total_runs_7d: total_7d,
+                total_runs_30d: total_30d,
+                total_runs_365d: total_365d,
+            },
+        );
+    }
+
+    map
+}
 
 #[derive(Debug, Deserialize)]
 pub struct AutomationsListQuery {
@@ -10,6 +208,19 @@ pub struct AutomationsListQuery {
 }
 
 #[derive(Debug, sqlx::FromRow)]
+pub struct AutomationListItemRow {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub status: String,
+    pub step_count: i64,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub last_run_id: Option<i64>,
+    pub last_run_status: Option<String>,
+    pub last_run_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug)]
 pub struct AutomationListItem {
     pub id: i64,
     pub name: String,
@@ -20,6 +231,7 @@ pub struct AutomationListItem {
     pub last_run_id: Option<i64>,
     pub last_run_status: Option<String>,
     pub last_run_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub sla: SlaStats,
 }
 
 impl AutomationListItem {
@@ -145,6 +357,7 @@ pub struct AutomationDetailTemplate {
     pub active_tab: String,
     pub error: Option<String>,
     pub success: Option<String>,
+    pub sla: SlaStats,
 }
 
 #[derive(Deserialize)]
@@ -184,6 +397,12 @@ pub struct AutomationVariableItem {
     pub name: String,
     pub var_type: String,
     pub description: String,
+}
+
+impl AutomationVariableItem {
+    pub fn is_success_variable(&self) -> bool {
+        self.name == "success"
+    }
 }
 
 #[derive(Template)]
@@ -518,6 +737,51 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     #[test]
+    fn test_sla_stats_formatting_and_badges() {
+        let stats = SlaStats {
+            daily_uptime: 100.0,
+            weekly_uptime: 95.5,
+            monthly_uptime: 89.0,
+            yearly_uptime: 99.9,
+            total_runs_24h: 10,
+            total_runs_7d: 70,
+            total_runs_30d: 300,
+            total_runs_365d: 3650,
+        };
+
+        assert_eq!(stats.formatted_daily(), "100.0%");
+        assert_eq!(stats.formatted_weekly(), "95.5%");
+        assert_eq!(stats.formatted_monthly(), "89.0%");
+        assert_eq!(stats.formatted_yearly(), "99.9%");
+
+        assert_eq!(stats.daily_badge_class(), "badge-success");
+        assert_eq!(stats.weekly_badge_class(), "badge-warning");
+        assert_eq!(stats.monthly_badge_class(), "badge-danger");
+        assert_eq!(stats.yearly_badge_class(), "badge-success");
+    }
+
+    #[test]
+    fn test_automation_variable_item_is_success_variable() {
+        let var_success = AutomationVariableItem {
+            id: 1,
+            automation_id: 10,
+            name: "success".to_string(),
+            var_type: "bool".to_string(),
+            description: "Permanent success flag for SLA calculation".to_string(),
+        };
+        assert!(var_success.is_success_variable());
+
+        let var_other = AutomationVariableItem {
+            id: 2,
+            automation_id: 10,
+            name: "target_x".to_string(),
+            var_type: "int".to_string(),
+            description: "X coordinate".to_string(),
+        };
+        assert!(!var_other.is_success_variable());
+    }
+
+    #[test]
     fn test_automation_list_item_status_badge_class() {
         let item = |status: &str| AutomationListItem {
             id: 1,
@@ -529,6 +793,7 @@ mod tests {
             last_run_id: None,
             last_run_status: None,
             last_run_at: None,
+            sla: SlaStats::default(),
         };
 
         assert_eq!(item("active").status_badge_class(), "badge-success");
@@ -550,6 +815,7 @@ mod tests {
             last_run_id: Some(10),
             last_run_status: last_status.map(|s| s.to_string()),
             last_run_at: None,
+            sla: SlaStats::default(),
         };
 
         assert_eq!(
@@ -592,6 +858,7 @@ mod tests {
             last_run_id: Some(10),
             last_run_status: Some("succeeded".to_string()),
             last_run_at: Some(dt),
+            sla: SlaStats::default(),
         };
 
         assert_eq!(item.formatted_updated_at(), "2025-03-10 14:30:45");
@@ -607,6 +874,7 @@ mod tests {
             last_run_id: None,
             last_run_status: None,
             last_run_at: None,
+            sla: SlaStats::default(),
         };
         assert_eq!(item_no_last_run.formatted_last_run_at(), "-");
     }

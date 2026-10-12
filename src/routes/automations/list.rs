@@ -9,6 +9,9 @@ use super::types::*;
 use crate::AppState;
 use crate::auth::{AuthUser, CsrfForm, log_audit};
 use crate::routes::auth::HtmlTemplate;
+use crate::routes::automations::variables::{
+    ensure_all_automations_have_success_variable, ensure_success_variable,
+};
 
 /// GET /automations
 #[tracing::instrument(skip(state, user))]
@@ -17,6 +20,8 @@ pub async fn get_automations_handler(
     user: AuthUser,
     Query(query): Query<AutomationsListQuery>,
 ) -> impl IntoResponse {
+    let _ = ensure_all_automations_have_success_variable(&state.db).await;
+
     let status_filter = query.status.unwrap_or_else(|| "all".to_string());
     let search_query = query.q.unwrap_or_default();
 
@@ -66,10 +71,30 @@ pub async fn get_automations_handler(
 
     sql.push_str(" ORDER BY a.updated_at DESC, a.id DESC");
 
-    let automations: Vec<AutomationListItem> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+    let (rows_res, sla_map) = tokio::join!(
+        sqlx::query_as::<_, AutomationListItemRow>(sqlx::AssertSqlSafe(sql)).fetch_all(&state.db),
+        fetch_all_automations_sla(&state.db)
+    );
+
+    let rows = rows_res.unwrap_or_default();
+    let automations: Vec<AutomationListItem> = rows
+        .into_iter()
+        .map(|r| {
+            let sla = sla_map.get(&r.id).cloned().unwrap_or_default();
+            AutomationListItem {
+                id: r.id,
+                name: r.name,
+                description: r.description,
+                status: r.status,
+                step_count: r.step_count,
+                updated_at: r.updated_at,
+                last_run_id: r.last_run_id,
+                last_run_status: r.last_run_status,
+                last_run_at: r.last_run_at,
+                sla,
+            }
+        })
+        .collect();
 
     HtmlTemplate(AutomationsListTemplate {
         user,
@@ -144,6 +169,7 @@ pub async fn post_automations_handler(
     match record {
         Ok(row) => {
             let id: i64 = row.get("id");
+            let _ = ensure_success_variable(&state.db, id).await;
             let _ = log_audit(
                 &state.db,
                 Some(user.id),

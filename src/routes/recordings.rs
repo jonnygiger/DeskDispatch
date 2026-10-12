@@ -562,6 +562,10 @@ pub async fn post_recording_convert_handler(
         }
     };
 
+    let _ =
+        crate::routes::automations::variables::ensure_success_variable(&mut *tx, new_automation_id)
+            .await;
+
     let events = sqlx::query(
         r#"
         SELECT id, sequence_number, event_type, x, y, button, key_combo, screenshot_object_key

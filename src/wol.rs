@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_parse_mac_address_hyphen_format() {
-        let mac = parse_mac_address("AA-BB-CC-DD-EE-FF").expect("Valid MAC address");
+        let mac = parse_mac_address("AA-BB-CC-DD-EE-FF").expect("valid mac");
         assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
     }
 

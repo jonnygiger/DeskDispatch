@@ -14,10 +14,50 @@ pub fn is_valid_var_type(vt: &str) -> bool {
     matches!(vt, "int" | "bool" | "color" | "point" | "string")
 }
 
+pub async fn ensure_success_variable<'e, E>(
+    executor: E,
+    automation_id: i64,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(
+        r#"
+        INSERT INTO automation_variables (automation_id, name, var_type, description)
+        VALUES ($1, 'success', 'bool', 'Permanent success flag for SLA calculation')
+        ON CONFLICT (automation_id, name) DO NOTHING
+        "#,
+    )
+    .bind(automation_id)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn ensure_all_automations_have_success_variable<'e, E>(
+    executor: E,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(
+        r#"
+        INSERT INTO automation_variables (automation_id, name, var_type, description)
+        SELECT id, 'success', 'bool', 'Permanent success flag for SLA calculation'
+        FROM automations
+        ON CONFLICT (automation_id, name) DO NOTHING
+        "#,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 pub async fn fetch_automation_variables(
     db: &sqlx::PgPool,
     automation_id: i64,
 ) -> Vec<VariableOption> {
+    let _ = ensure_success_variable(db, automation_id).await;
     sqlx::query_as::<_, VariableOption>(
         "SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1 ORDER BY name ASC",
     )
@@ -38,6 +78,8 @@ pub async fn get_automation_variables_handler(
 
     // Bolt Optimization: Run automation detail query and variables list query concurrently
     // using `tokio::join!`, halving DB query wait latency for automation variable management.
+    let _ = ensure_success_variable(&state.db, id).await;
+
     let (automation_res, variables_res) = tokio::join!(
         sqlx::query_as::<_, AutomationDetail>(
             "SELECT id, name, description, status, created_by, created_at, updated_at FROM automations WHERE id = $1",
@@ -100,6 +142,10 @@ pub async fn post_create_automation_variable_handler(
     let mut err = None;
     if name.is_empty() {
         err = Some("Variable name cannot be empty.".to_string());
+    } else if name.to_lowercase() == "success" {
+        err = Some(
+            "The variable name 'success' is reserved for the permanent SLA variable.".to_string(),
+        );
     } else if !is_valid_var_type(var_type) {
         err = Some(
             "Invalid variable type. Must be one of: int, bool, color, point, string.".to_string(),
@@ -237,9 +283,24 @@ pub async fn post_update_automation_variable_handler(
         _ => return Redirect::to("/automations").into_response(),
     };
 
+    let target_var_name: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM automation_variables WHERE id = $1 AND automation_id = $2",
+    )
+    .bind(vid)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or_default();
+
     let mut err = None;
     if name.is_empty() {
         err = Some("Variable name cannot be empty.".to_string());
+    } else if target_var_name.as_deref() == Some("success") {
+        err = Some("The permanent 'success' variable cannot be renamed or modified.".to_string());
+    } else if name.to_lowercase() == "success" {
+        err = Some(
+            "The variable name 'success' is reserved for the permanent SLA variable.".to_string(),
+        );
     } else if !is_valid_var_type(var_type) {
         err = Some(
             "Invalid variable type. Must be one of: int, bool, color, point, string.".to_string(),
@@ -368,6 +429,37 @@ pub async fn post_delete_automation_variable_handler(
         Ok(Some(a)) => a,
         _ => return Redirect::to("/automations").into_response(),
     };
+
+    let target_var_name: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM automation_variables WHERE id = $1 AND automation_id = $2",
+    )
+    .bind(vid)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or_default();
+
+    if target_var_name.as_deref() == Some("success") {
+        let variables = sqlx::query_as::<_, AutomationVariableItem>(
+            "SELECT id, automation_id, name, var_type, description FROM automation_variables WHERE automation_id = $1 ORDER BY name ASC, id ASC",
+        )
+        .bind(id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        return (
+            StatusCode::BAD_REQUEST,
+            HtmlTemplate(AutomationVariablesTemplate {
+                user,
+                csrf_token,
+                automation,
+                variables,
+                error: Some("The permanent 'success' variable cannot be deleted.".to_string()),
+            }),
+        )
+            .into_response();
+    }
 
     let delete_res =
         sqlx::query("DELETE FROM automation_variables WHERE id = $1 AND automation_id = $2")

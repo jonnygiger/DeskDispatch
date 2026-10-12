@@ -35,12 +35,13 @@ pub async fn get_automation_detail_handler(
         }
     };
 
-    // Optimization: Run step views, worker groups, and parameter option queries concurrently using `tokio::join!`.
+    // Optimization: Run step views, worker groups, parameter option queries, and SLA stats concurrently using `tokio::join!`.
     // Steps are bulk-loaded in O(1) queries using `fetch_automation_step_views`, eliminating per-step N+1 database queries.
-    let (steps, worker_groups_res, parameters_res) = tokio::join!(
+    let (steps, worker_groups_res, parameters_res, sla) = tokio::join!(
         fetch_automation_step_views(&state.db, id),
         sqlx::query_as::<_, WorkerGroupOption>("SELECT id, name FROM worker_groups ORDER BY name ASC").fetch_all(&state.db),
-        sqlx::query_as::<_, AutomationParameterItem>("SELECT id, automation_id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC, id ASC").bind(id).fetch_all(&state.db)
+        sqlx::query_as::<_, AutomationParameterItem>("SELECT id, automation_id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC, id ASC").bind(id).fetch_all(&state.db),
+        fetch_automation_sla(&state.db, id)
     );
     let worker_groups = worker_groups_res.unwrap_or_default();
     let parameters = parameters_res.unwrap_or_default();
@@ -55,6 +56,7 @@ pub async fn get_automation_detail_handler(
         active_tab: "steps".to_string(),
         error: None,
         success: None,
+        sla,
     })
     .into_response()
 }
