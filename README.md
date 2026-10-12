@@ -578,7 +578,7 @@ All endpoints except `/register` require HTTP Header `Authorization: Bearer <api
 | `POST /api/v1/workers/task-runs/{id}/step-result` | Implemented | Submit execution result for a single step, updating step results and dynamic variable values. |
 | `POST /api/v1/workers/task-runs/{id}/complete` | Implemented | Finalize task run with status `succeeded` or `failed` and optional error message. |
 | `GET /api/v1/workers/task-runs/{id}/screenshot-upload-url` | Implemented | Obtain short-lived presigned PUT URL for step execution screenshot. |
-| `POST /api/v1/workers/task-runs/{id}/screenshots/{object_key}/commit` | Implemented | Commit uploaded screenshot dimensions and link to `task_run_steps`. |
+| `POST /api/v1/workers/task-runs/{id}/screenshots/commit` | Implemented | Commit uploaded screenshot dimensions and link to `task_run_steps` via JSON body or path parameter (`.../screenshots/{object_key}/commit`). |
 | `POST /api/v1/workers/recordings/{session_id}/events` | Implemented | Push batched desktop events during active recording session. |
 | `GET /api/v1/workers/recordings/{session_id}/screenshot-upload-url` | Implemented | Presigned S3 PUT URL for recording-time screenshot. |
 | `POST /api/v1/workers/recordings/{session_id}/stop` | Implemented | Worker-initiated notification that recording stopped locally. |

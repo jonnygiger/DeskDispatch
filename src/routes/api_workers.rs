@@ -46,6 +46,10 @@ pub fn router() -> Router<AppState> {
             post(post_task_run_screenshot_commit_handler),
         )
         .route(
+            "/api/v1/workers/task-runs/{id}/screenshots/{*object_key}/commit",
+            post(post_task_run_screenshot_commit_with_key_handler),
+        )
+        .route(
             "/api/v1/workers/recordings/{id}/events",
             post(post_recording_events_handler),
         )
@@ -423,7 +427,7 @@ pub async fn get_next_assignment_handler(
 
         let select_res = sqlx::query(
             r#"
-            SELECT tr.id AS task_run_id, tr.automation_id
+            SELECT tr.id AS task_run_id, tr.automation_id, tr.dispatched_automation_json, tr.parameter_overrides
             FROM task_runs tr
             LEFT JOIN schedules s ON tr.schedule_id = s.id
             WHERE tr.status = 'queued'
@@ -446,8 +450,36 @@ pub async fn get_next_assignment_handler(
         if let Some(row) = select_res {
             let task_run_id: i64 = row.get("task_run_id");
             let automation_id: i64 = row.get("automation_id");
+            let existing_dispatched: Option<serde_json::Value> = row.get("dispatched_automation_json");
+            let parameter_overrides: Option<serde_json::Value> = row.get("parameter_overrides");
 
-            let automation_json = fetch_full_automation_json(&mut tx, automation_id).await?;
+            let automation_json = match existing_dispatched {
+                Some(json) => json,
+                None => {
+                    let mut overrides_map = std::collections::HashMap::new();
+                    if let Some(ref po_json) = parameter_overrides {
+                        let params_obj = po_json
+                            .get("parameters")
+                            .and_then(|p| p.as_object())
+                            .or_else(|| po_json.as_object());
+                        if let Some(obj) = params_obj {
+                            for (k, v) in obj {
+                                if let Some(v_str) = v.as_str() {
+                                    overrides_map.insert(k.clone(), v_str.to_string());
+                                } else if !v.is_null() {
+                                    overrides_map.insert(k.clone(), v.to_string());
+                                }
+                            }
+                        }
+                    }
+                    let overrides_ref = if overrides_map.is_empty() {
+                        None
+                    } else {
+                        Some(&overrides_map)
+                    };
+                    fetch_full_automation_json_with_overrides(&mut tx, automation_id, overrides_ref).await?
+                }
+            };
 
             sqlx::query(
                 r#"
@@ -1058,6 +1090,25 @@ pub async fn post_worker_stop_recording_handler(
             session_id
         ))),
     }
+}
+
+#[tracing::instrument(skip(worker, state, payload))]
+pub async fn post_task_run_screenshot_commit_with_key_handler(
+    worker: AuthWorker,
+    State(state): State<AppState>,
+    Path((task_run_id, object_key)): Path<(i64, String)>,
+    payload: Option<Json<CommitScreenshotRequest>>,
+) -> Result<impl IntoResponse, AppError> {
+    let mut req = payload.map(|Json(p)| p).unwrap_or(CommitScreenshotRequest {
+        step_id: None,
+        object_key: None,
+        width: None,
+        height: None,
+    });
+    if req.object_key.is_none() {
+        req.object_key = Some(object_key);
+    }
+    post_task_run_screenshot_commit_handler(worker, State(state), Path(task_run_id), Some(Json(req))).await
 }
 
 #[tracing::instrument(skip(worker, state, payload))]
@@ -1888,6 +1939,17 @@ mod tests {
         };
         let json_stop = serde_json::to_string(&stop_resp).expect("Serialization failed");
         assert_eq!(json_stop, r#"{"status":"success"}"#);
+    }
+
+    #[test]
+    fn test_commit_screenshot_with_path_key() {
+        let req = CommitScreenshotRequest {
+            step_id: Some(10),
+            object_key: Some("runs/1/custom_key.png".to_string()),
+            width: Some(1920),
+            height: Some(1080),
+        };
+        assert_eq!(req.object_key.as_deref(), Some("runs/1/custom_key.png"));
     }
 
     #[test]

@@ -353,6 +353,29 @@ impl SimulatedWorker {
         Ok(reg_resp.api_key)
     }
 
+    pub async fn fetch_task_run(
+        &self,
+        task_run_id: i64,
+        api_key: &str,
+    ) -> Result<TaskRunResponse, String> {
+        let url = format!("{}/api/v1/workers/task-runs/{}", self.config.server_url, task_run_id);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch task run: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Fetch task run HTTP status {}", resp.status()));
+        }
+
+        resp.json::<TaskRunResponse>()
+            .await
+            .map_err(|e| format!("Failed to parse TaskRunResponse: {}", e))
+    }
+
     async fn execute_automation(
         &self,
         task_run_id: i64,
@@ -789,5 +812,24 @@ mod tests {
         assert_eq!(worker.config.worker_index, 1);
         assert_eq!(worker.api_key.as_deref(), Some("dd_pk_testkey123"));
         assert!(!worker.cancel_flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_simulated_worker_fetch_task_run_url_formatting() {
+        let config = WorkerConfig {
+            worker_index: 2,
+            hostname: "sim-worker-2.local".to_string(),
+            display_name: "Simulated Worker 2".to_string(),
+            registration_token: None,
+            psk: None,
+            api_key: Some("dd_pk_testkey456".to_string()),
+            profile: WorkerProfile::Normal,
+            server_url: "http://127.0.0.1:3000".to_string(),
+        };
+
+        let worker = SimulatedWorker::new(config);
+        let task_run_id = 99;
+        let url = format!("{}/api/v1/workers/task-runs/{}", worker.config.server_url, task_run_id);
+        assert_eq!(url, "http://127.0.0.1:3000/api/v1/workers/task-runs/99");
     }
 }
