@@ -72,9 +72,9 @@
                         {% endif %}
                     </td>
                     <td>
-                        <a href="/automations/{{ auto.id }}" class="btn btn-sm btn-outline">View</a>
+                        <a href="/automations/{{ auto.id }}" class="btn btn-sm btn-outline" aria-label="View automation {{ auto.name }}">View</a>
                         {% if user.role.can_edit() %}
-                            <a href="/automations/{{ auto.id }}/delete" class="btn btn-sm btn-danger-outline">Delete</a>
+                            <a href="/automations/{{ auto.id }}/delete" class="btn btn-sm btn-danger-outline" aria-label="Delete automation {{ auto.name }}">Delete</a>
                         {% endif %}
                     </td>
                 </tr>
