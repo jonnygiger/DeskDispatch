@@ -3,6 +3,11 @@ name = "deskdispatch-protocol"
 version = "0.1.0"
 edition = "2024"
 
+[lints.clippy]
+unwrap_used = "deny"
+collapsible_if = "allow"
+explicit_auto_deref = "allow"
+
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -17,6 +17,26 @@ pub fn router() -> Router<AppState> {
 #[folder = "static/"]
 pub struct Assets;
 
+fn get_mime_type(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or_default();
+    match ext.to_ascii_lowercase().as_str() {
+        "css" => "text/css; charset=utf-8",
+        "js" => "application/javascript; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "webp" => "image/webp",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        "html" => "text/html; charset=utf-8",
+        "json" => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
 #[tracing::instrument(skip(headers))]
 pub async fn static_asset_handler(
     headers: HeaderMap,
@@ -25,18 +45,9 @@ pub async fn static_asset_handler(
     let path = path.trim_start_matches('/');
     match Assets::get(path) {
         Some(content) => {
-            let mime = match path.rsplit('.').next().unwrap_or("") {
-                "css" => "text/css; charset=utf-8",
-                "js" => "application/javascript; charset=utf-8",
-                "png" => "image/png",
-                "jpg" | "jpeg" => "image/jpeg",
-                "svg" => "image/svg+xml",
-                "ico" => "image/x-icon",
-                "woff2" => "font/woff2",
-                _ => "application/octet-stream",
-            };
+            let mime_str = get_mime_type(path);
             let mut response_headers = HeaderMap::new();
-            if let Ok(content_type) = mime.parse() {
+            if let Ok(content_type) = mime_str.parse() {
                 response_headers.insert(header::CONTENT_TYPE, content_type);
             }
 
@@ -46,12 +57,7 @@ pub async fn static_asset_handler(
             );
 
             let hash = content.metadata.sha256_hash();
-            let mut hex_hash = String::with_capacity(64);
-            for b in hash {
-                use std::fmt::Write;
-                let _ = write!(hex_hash, "{:02x}", b);
-            }
-            let etag = format!("\"{}\"", hex_hash);
+            let etag = format!("\"{}\"", crate::storage::encode_hex(&hash));
 
             if let Ok(etag_val) = header::HeaderValue::from_str(&etag) {
                 response_headers.insert(header::ETAG, etag_val);

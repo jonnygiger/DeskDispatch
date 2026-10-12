@@ -9,6 +9,8 @@ members = [".", "crates/deskdispatch-protocol", "crates/worker-simulator"]
 
 [lints.clippy]
 unwrap_used = "deny"
+collapsible_if = "allow"
+explicit_auto_deref = "allow"
 
 [dependencies]
 deskdispatch-protocol = { path = "crates/deskdispatch-protocol" }

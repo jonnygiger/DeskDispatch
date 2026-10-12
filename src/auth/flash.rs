@@ -155,4 +155,23 @@ mod tests {
         assert_eq!(extracted.message, "Automation saved successfully!");
         assert_eq!(extracted.level, FlashLevel::Success);
     }
+
+    #[test]
+    fn test_flash_cookie_roundtrip_with_equals_sign() {
+        let flash = FlashMessage::error("Failed to process request: status_code=500&error=timeout");
+        let (c1, c2) = build_flash_cookie(&flash);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            format!("{}; {}", c1, c2).parse().unwrap(),
+        );
+
+        let extracted = extract_flash_message(&headers).unwrap();
+        assert_eq!(
+            extracted.message,
+            "Failed to process request: status_code=500&error=timeout"
+        );
+        assert_eq!(extracted.level, FlashLevel::Error);
+    }
 }

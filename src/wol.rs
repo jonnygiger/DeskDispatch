@@ -83,6 +83,7 @@ pub async fn send_wol_packet(mac_str: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

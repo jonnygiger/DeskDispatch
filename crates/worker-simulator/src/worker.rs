@@ -694,7 +694,7 @@ impl SimulatedWorker {
         recording_session_id: i64,
         api_key: &str,
     ) -> Result<(), String> {
-        for sequence_number in (1..).take(5) {
+        for sequence_number in 1..=5 {
             let event_url = format!(
                 "{}/api/v1/workers/recordings/{}/events",
                 self.config.server_url, recording_session_id

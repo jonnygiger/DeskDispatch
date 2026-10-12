@@ -317,6 +317,7 @@ pub fn generate_presigned_post_policy(
     });
 
     let policy_str = policy_json.to_string();
+
     let policy_base64 = base64::engine::general_purpose::STANDARD.encode(policy_str.as_bytes());
 
     // SigV4 Key Calculation
