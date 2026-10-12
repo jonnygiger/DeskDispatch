@@ -25,9 +25,18 @@ pub async fn static_asset_handler(
     let path = path.trim_start_matches('/');
     match Assets::get(path) {
         Some(content) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            let mime = match path.rsplit('.').next().unwrap_or("") {
+                "css" => "text/css; charset=utf-8",
+                "js" => "application/javascript; charset=utf-8",
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "svg" => "image/svg+xml",
+                "ico" => "image/x-icon",
+                "woff2" => "font/woff2",
+                _ => "application/octet-stream",
+            };
             let mut response_headers = HeaderMap::new();
-            if let Ok(content_type) = mime.as_ref().parse() {
+            if let Ok(content_type) = mime.parse() {
                 response_headers.insert(header::CONTENT_TYPE, content_type);
             }
 
@@ -37,7 +46,12 @@ pub async fn static_asset_handler(
             );
 
             let hash = content.metadata.sha256_hash();
-            let etag = format!("\"{}\"", hex::encode(hash));
+            let mut hex_hash = String::with_capacity(64);
+            for b in hash {
+                use std::fmt::Write;
+                let _ = write!(hex_hash, "{:02x}", b);
+            }
+            let etag = format!("\"{}\"", hex_hash);
 
             if let Ok(etag_val) = header::HeaderValue::from_str(&etag) {
                 response_headers.insert(header::ETAG, etag_val);

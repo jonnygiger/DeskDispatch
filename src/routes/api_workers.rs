@@ -1576,6 +1576,30 @@ mod tests {
     }
 
     #[test]
+    fn test_is_agent_version_outdated_version_comparison_edge_cases() {
+        // Double-digit component comparison: 1.10.0 is newer than 1.9.0
+        assert!(!is_agent_version_outdated(Some("1.10.0"), Some("1.9.0")));
+        assert!(is_agent_version_outdated(Some("1.9.5"), Some("1.10.0")));
+
+        // Whitespace padded version strings should be trimmed and correctly evaluated
+        assert!(!is_agent_version_outdated(
+            Some("  1.2.0  "),
+            Some(" 1.1.0 ")
+        ));
+        assert!(is_agent_version_outdated(Some(" 1.0.0 "), Some(" 1.2.0 ")));
+
+        // Whitespace-only minimum version is treated as unconstrained (not outdated)
+        assert!(!is_agent_version_outdated(Some("1.0.0"), Some("   ")));
+
+        // Whitespace-only agent version is treated as missing agent version (outdated)
+        assert!(is_agent_version_outdated(Some("   "), Some("1.0.0")));
+
+        // Pre-release suffixes like -beta or -rc1 should strip suffixes and parse base numeric parts
+        assert!(!is_agent_version_outdated(Some("2.0.0-rc1"), Some("1.9.0")));
+        assert!(is_agent_version_outdated(Some("1.0.0-beta"), Some("1.1.0")));
+    }
+
+    #[test]
     fn test_heartbeat_response_serialization() {
         let resp = HeartbeatResponse {
             status: "success".to_string(),

@@ -78,12 +78,12 @@
                     </td>
                     <td style="padding: 0.75rem 1rem; text-align: right;">
                         <div style="display: inline-flex; gap: 0.5rem;">
-                            <a href="/workers/{{ w.id }}" class="btn btn-sm btn-outline">View</a>
+                            <a href="/workers/{{ w.id }}" class="btn btn-sm btn-outline" aria-label="View worker {{ w.display_name }}">View</a>
                             {% if user.role.is_admin() %}
-                            <a href="/workers/{{ w.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <a href="/workers/{{ w.id }}/edit" class="btn btn-sm btn-outline" aria-label="Edit worker {{ w.display_name }}">Edit</a>
                             <form method="post" action="/workers/{{ w.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker {{ w.display_name }}?');">
                                 {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
-                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                                <button type="submit" class="btn btn-sm btn-danger-outline" aria-label="Delete worker {{ w.display_name }}">Delete</button>
                             </form>
                             {% endif %}
                         </div>
@@ -144,10 +144,10 @@
                     {% if user.role.is_admin() %}
                     <td style="padding: 0.75rem 1rem; text-align: right;">
                         <div style="display: inline-flex; gap: 0.5rem;">
-                            <a href="/worker-groups/{{ g.id }}/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <a href="/worker-groups/{{ g.id }}/edit" class="btn btn-sm btn-outline" aria-label="Edit worker group {{ g.name }}">Edit</a>
                             <form method="post" action="/worker-groups/{{ g.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker group {{ g.name }}?');">
                                 {% call macros::csrf_field(user.csrf_token) %}{% endcall %}
-                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                                <button type="submit" class="btn btn-sm btn-danger-outline" aria-label="Delete worker group {{ g.name }}">Delete</button>
                             </form>
                         </div>
                     </td>

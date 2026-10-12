@@ -191,7 +191,7 @@ pub async fn post_wake_worker_handler(
         return Redirect::to(&format!(
             "/workers/{}?wake_error={}",
             id,
-            urlencoding::encode(&e)
+            crate::auth::flash::url_encode(&e)
         ))
         .into_response();
     }

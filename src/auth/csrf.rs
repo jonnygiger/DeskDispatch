@@ -15,9 +15,16 @@ type HmacSha256 = Hmac<Sha256>;
 pub fn generate_csrf_token(session_id: Uuid, session_secret: &str) -> String {
     let mut mac = HmacSha256::new_from_slice(session_secret.as_bytes())
         .expect("HMAC can take key of any size");
-    mac.update(session_id.to_string().as_bytes());
+    let mut buf = [0u8; 36];
+    let str_uuid = session_id.hyphenated().encode_lower(&mut buf);
+    mac.update(str_uuid.as_bytes());
     let result = mac.finalize();
-    hex::encode(result.into_bytes())
+    let mut token = String::with_capacity(64);
+    for b in result.into_bytes() {
+        use std::fmt::Write;
+        let _ = write!(token, "{:02x}", b);
+    }
+    token
 }
 
 pub fn validate_csrf_token(token: &str, expected_token: &str) -> bool {

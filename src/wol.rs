@@ -1,22 +1,43 @@
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
-/// Parses a MAC address string into a 6-byte array.
+/// Parses a MAC address string into a 6-byte array without intermediate heap allocations.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    let clean_str: String = mac_str.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    let mut hex_digits = mac_str.bytes().filter(|b| b.is_ascii_hexdigit());
 
-    if clean_str.len() != 12 {
+    let mut bytes = [0u8; 6];
+    for b in &mut bytes {
+        let hi = hex_digits.next().ok_or_else(|| {
+            format!(
+                "Invalid MAC address '{}': expected 12 hexadecimal digits",
+                mac_str
+            )
+        })?;
+        let lo = hex_digits.next().ok_or_else(|| {
+            format!(
+                "Invalid MAC address '{}': expected 12 hexadecimal digits",
+                mac_str
+            )
+        })?;
+
+        let hex_val = |c: u8| -> u8 {
+            match c {
+                b'0'..=b'9' => c - b'0',
+                b'a'..=b'f' => c - b'a' + 10,
+                b'A'..=b'F' => c - b'A' + 10,
+                _ => 0,
+            }
+        };
+
+        *b = (hex_val(hi) << 4) | hex_val(lo);
+    }
+
+    if hex_digits.next().is_some() {
         return Err(format!(
             "Invalid MAC address '{}': expected 12 hexadecimal digits",
             mac_str
         ));
-    }
-
-    let mut bytes = [0u8; 6];
-    for i in 0..6 {
-        bytes[i] = u8::from_str_radix(&clean_str[i * 2..i * 2 + 2], 16)
-            .map_err(|e| format!("Invalid hex byte in MAC address '{}': {}", mac_str, e))?;
     }
 
     Ok(bytes)
@@ -27,12 +48,10 @@ pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
 /// The magic packet consists of 6 bytes of 0xFF followed by 16 repetitions of the target MAC address.
 pub fn create_magic_packet(mac: &[u8; 6]) -> [u8; 102] {
     let mut packet = [0u8; 102];
-    // First 6 bytes are 0xFF
     packet[..6].fill(0xFF);
-    // Next 96 bytes are 16 repetitions of the MAC address
-    for i in 0..16 {
-        let start = 6 + i * 6;
-        packet[start..start + 6].copy_from_slice(mac);
+    let (chunks, _) = packet[6..].as_chunks_mut::<6>();
+    for chunk in chunks {
+        chunk.copy_from_slice(mac);
     }
     packet
 }
@@ -69,7 +88,7 @@ mod tests {
 
     #[test]
     fn test_parse_mac_address_colon_format() {
-        let mac = parse_mac_address("00:11:22:33:44:55").expect("valid mac");
+        let mac = parse_mac_address("00:11:22:33:44:55").expect("Valid MAC address");
         assert_eq!(mac, [0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
     }
 
@@ -81,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_parse_mac_address_raw_hex() {
-        let mac = parse_mac_address("0123456789ab").expect("valid mac");
+        let mac = parse_mac_address("0123456789ab").expect("Valid MAC address");
         assert_eq!(mac, [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB]);
     }
 
