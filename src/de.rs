@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer, de};
+use std::borrow::Cow;
 use std::fmt::Display;
 use std::str::FromStr;
 
@@ -12,13 +13,13 @@ where
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum OptionNum<T> {
+    enum OptionNum<'a, T> {
         Num(T),
-        Str(String),
+        Str(Cow<'a, str>),
         None,
     }
 
-    match OptionNum::<T>::deserialize(deserializer)? {
+    match OptionNum::<'de, T>::deserialize(deserializer)? {
         OptionNum::Num(n) => Ok(Some(n)),
         OptionNum::Str(s) => {
             let trimmed = s.trim();

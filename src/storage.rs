@@ -5,6 +5,7 @@ use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::fmt;
+use std::fmt::Write;
 use std::time::Duration;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -12,7 +13,6 @@ type HmacSha256 = Hmac<Sha256>;
 pub fn encode_hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for &b in bytes {
-        use std::fmt::Write;
         let _ = write!(s, "{:02x}", b);
     }
     s
