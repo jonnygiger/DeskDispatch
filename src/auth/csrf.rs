@@ -17,7 +17,7 @@ pub fn generate_csrf_token(session_id: Uuid, session_secret: &str) -> String {
         .expect("HMAC can take key of any size");
     mac.update(session_id.to_string().as_bytes());
     let result = mac.finalize();
-    hex::encode(result.into_bytes())
+    crate::storage::encode_hex(&result.into_bytes())
 }
 
 pub fn validate_csrf_token(token: &str, expected_token: &str) -> bool {

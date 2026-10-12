@@ -10,10 +10,19 @@ use std::time::Duration;
 
 type HmacSha256 = Hmac<Sha256>;
 
-fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub(crate) fn encode_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(hex, "{:02x}", byte);
+    }
+    hex
+}
+
+fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key length valid");
     mac.update(data);
-    mac.finalize().into_bytes().to_vec()
+    mac.finalize().into_bytes().into()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -310,6 +319,7 @@ pub fn generate_presigned_post_policy(
     });
 
     let policy_str = policy_json.to_string();
+
     let policy_base64 = base64::engine::general_purpose::STANDARD.encode(policy_str.as_bytes());
 
     // SigV4 Key Calculation
@@ -320,7 +330,7 @@ pub fn generate_presigned_post_policy(
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
 
     let signature_bytes = hmac_sha256(&k_signing, policy_base64.as_bytes());
-    let signature_hex = hex::encode(signature_bytes);
+    let signature_hex = encode_hex(&signature_bytes);
 
     let mut fields = HashMap::new();
     fields.insert("key".to_string(), object_key.to_string());

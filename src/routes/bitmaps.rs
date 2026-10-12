@@ -484,7 +484,7 @@ pub async fn post_bitmaps_handler(
     let redirect_url = format!(
         "{}/bitmaps/commit?name={}",
         base_url,
-        urlencoding::encode(&bitmap_name)
+        url::form_urlencoded::byte_serialize(bitmap_name.as_bytes()).collect::<String>()
     );
 
     let storage = state.storage_service();
@@ -546,7 +546,7 @@ pub async fn post_automation_bitmaps_handler(
     let redirect_url = format!(
         "{}/bitmaps/commit?name={}&automation_id={}",
         base_url,
-        urlencoding::encode(&bitmap_name),
+        url::form_urlencoded::byte_serialize(bitmap_name.as_bytes()).collect::<String>(),
         id
     );
 
@@ -1309,10 +1309,10 @@ async fn crop_image_region(
     if image_bytes.is_none()
         && (image_url.starts_with("http://") || image_url.starts_with("https://"))
     {
-        if let Ok(res) = reqwest::get(image_url).await
-            && let Ok(data) = res.bytes().await
-        {
-            image_bytes = Some(data.to_vec());
+        if let Ok(res) = reqwest::get(image_url).await {
+            if let Ok(data) = res.bytes().await {
+                image_bytes = Some(data.to_vec());
+            }
         }
     }
 

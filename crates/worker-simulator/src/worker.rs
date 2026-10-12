@@ -365,10 +365,9 @@ impl SimulatedWorker {
             .and_then(|s| s.as_array())
             .unwrap_or(&empty_steps);
 
-        let mut seq = 1;
         let mut overall_success = true;
 
-        for step in steps {
+        for (seq, step) in (1..).zip(steps.iter()) {
             if self.cancel_flag.load(Ordering::Relaxed) {
                 warn!(
                     worker_idx = self.config.worker_index,
@@ -472,18 +471,18 @@ impl SimulatedWorker {
 
             // Variable updates
             let variable_updates =
-                if let Some(var_id) = step.get("output_variable_id").and_then(|v| v.as_i64()) {
-                    Some(vec![VariableUpdateItem {
-                        variable_id: var_id,
-                        value: serde_json::json!({
-                            "x": captured_x.unwrap_or(100),
-                            "y": captured_y.unwrap_or(200),
-                            "status": result_str,
-                        }),
-                    }])
-                } else {
-                    None
-                };
+                step.get("output_variable_id")
+                    .and_then(|v| v.as_i64())
+                    .map(|var_id| {
+                        vec![VariableUpdateItem {
+                            variable_id: var_id,
+                            value: serde_json::json!({
+                                "x": captured_x.unwrap_or(100),
+                                "y": captured_y.unwrap_or(200),
+                                "status": result_str,
+                            }),
+                        }]
+                    });
 
             let completed_at = Utc::now();
 
@@ -525,8 +524,6 @@ impl SimulatedWorker {
                     "Failed to post step result: {}", e
                 );
             }
-
-            seq += 1;
         }
 
         // Complete task run
@@ -697,9 +694,7 @@ impl SimulatedWorker {
         recording_session_id: i64,
         api_key: &str,
     ) -> Result<(), String> {
-        let mut sequence_number = 1;
-
-        for _ in 0..5 {
+        for sequence_number in 1..=5 {
             let event_url = format!(
                 "{}/api/v1/workers/recordings/{}/events",
                 self.config.server_url, recording_session_id
@@ -755,7 +750,6 @@ impl SimulatedWorker {
                 }
             }
 
-            sequence_number += 1;
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
 

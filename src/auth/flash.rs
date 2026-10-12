@@ -55,8 +55,10 @@ pub fn extract_flash_message(headers: &HeaderMap) -> Option<FlashMessage> {
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
         if let Some(val) = cookie.strip_prefix("flash_msg=") {
-            if let Ok(decoded) = urlencoding::decode(val) {
-                msg = Some(decoded.into_owned());
+            if let Some((_, decoded_val)) =
+                url::form_urlencoded::parse(format!("v={}", val).as_bytes()).next()
+            {
+                msg = Some(decoded_val.into_owned());
             }
         } else if let Some(val) = cookie.strip_prefix("flash_level=") {
             level = match val {
@@ -77,7 +79,7 @@ pub fn extract_flash_message(headers: &HeaderMap) -> Option<FlashMessage> {
 pub fn build_flash_cookie(flash: &FlashMessage) -> (String, String) {
     let msg_cookie = format!(
         "flash_msg={}; Path=/; HttpOnly; SameSite=Lax",
-        urlencoding::encode(&flash.message)
+        url::form_urlencoded::byte_serialize(flash.message.as_bytes()).collect::<String>()
     );
     let level_cookie = format!(
         "flash_level={}; Path=/; HttpOnly; SameSite=Lax",
@@ -111,5 +113,24 @@ mod tests {
         let extracted = extract_flash_message(&headers).unwrap();
         assert_eq!(extracted.message, "Automation saved successfully!");
         assert_eq!(extracted.level, FlashLevel::Success);
+    }
+
+    #[test]
+    fn test_flash_cookie_roundtrip_with_equals_sign() {
+        let flash = FlashMessage::error("Failed to process request: status_code=500&error=timeout");
+        let (c1, c2) = build_flash_cookie(&flash);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            format!("{}; {}", c1, c2).parse().unwrap(),
+        );
+
+        let extracted = extract_flash_message(&headers).unwrap();
+        assert_eq!(
+            extracted.message,
+            "Failed to process request: status_code=500&error=timeout"
+        );
+        assert_eq!(extracted.level, FlashLevel::Error);
     }
 }

@@ -6,6 +6,8 @@ rust-version = "1.99.0"
 
 [lints.clippy]
 unwrap_used = "deny"
+collapsible_if = "allow"
+explicit_auto_deref = "allow"
 
 [dependencies]
 deskdispatch-protocol = { path = "../deskdispatch-protocol" }

@@ -738,14 +738,11 @@ pub async fn get_run_screenshots_zip_handler(
     use zip::write::SimpleFileOptions;
 
     let run_exists: bool =
-        match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = $1)")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = $1)")
             .bind(id)
             .fetch_one(&state.db)
             .await
-        {
-            Ok(exists) => exists,
-            Err(_) => false,
-        };
+            .unwrap_or_default();
 
     if !run_exists {
         return (StatusCode::NOT_FOUND, "Task run not found").into_response();
