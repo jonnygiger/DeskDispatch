@@ -15,3 +15,7 @@ Action: In unit tests for domain status enums, test `Display`, case-insensitive 
 ## 2025-03-13 AppError HTTP Status Mapping & JSON Error Response Payload Coverage
 Learning: Testing `AppError::into_response()` using `axum::body::to_bytes` and `serde_json::from_slice` allows verifying HTTP status code mappings and JSON error response formatting for all application error variants without requiring database or network fixtures.
 Action: Test error handling response transformations directly via `into_response()` assertions in `src/error.rs` whenever new error variants or response fields are added.
+
+## 2025-03-14 Worker Agent Version Comparison Edge Cases Coverage
+Learning: Worker agent version checking (`is_agent_version_outdated`) parses dot-separated numeric version components using digit extraction. Key edge cases include double-digit components (e.g., `1.10.0` vs `1.9.0`), whitespace padding (`" 1.2.0 "`), pre-release suffixes (`-rc1`, `-beta`), and whitespace-only string representations for agent vs minimum required versions.
+Action: Write pure unit tests asserting exact boolean outputs across double-digit semver components, pre-release suffixes, and whitespace variations to prevent version validation regressions.

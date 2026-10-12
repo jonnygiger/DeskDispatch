@@ -81,6 +81,9 @@
                 <tr style="border-bottom: 1px solid var(--color-border);">
                     <td style="padding: 0.75rem 1rem; font-weight: 600;">
                         <code>«{{ var_item.name }}»</code>
+                        {% if var_item.is_success_variable() %}
+                            <span class="badge badge-success" style="margin-left: 0.5rem; font-size: 0.75rem;">SLA Variable</span>
+                        {% endif %}
                     </td>
                     <td style="padding: 0.75rem 1rem;">
                         <span class="badge badge-neutral">{{ var_item.var_type }}</span>
@@ -94,6 +97,9 @@
                     </td>
                     {% if user.role.can_edit() %}
                     <td style="padding: 0.75rem 1rem; text-align: right;">
+                        {% if var_item.is_success_variable() %}
+                            <span style="font-size: 0.8125rem; color: var(--color-text-muted); font-style: italic;">Permanent SLA Variable</span>
+                        {% else %}
                         <div style="display: inline-flex; gap: 0.5rem; align-items: center;">
                             <!-- Inline edit form expansion toggle or simple modal/inline form -->
                             <details style="display: inline-block;">
@@ -131,6 +137,7 @@
                                 <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
                             </form>
                         </div>
+                        {% endif %}
                     </td>
                     {% endif %}
                 </tr>

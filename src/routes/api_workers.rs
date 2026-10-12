@@ -550,8 +550,8 @@ pub async fn post_step_result_handler(
 
         // Upsert into step_screenshots so each automation step is connected to a screenshot
         // from the first time it is run (or updated if missing).
-        if let Some(ref key) = payload.screenshot_object_key {
-            if let Err(e) = sqlx::query(
+        if let Some(ref key) = payload.screenshot_object_key
+            && let Err(e) = sqlx::query(
                 r#"
             INSERT INTO step_screenshots (step_id, object_storage_key, width, height)
             VALUES ($1, $2, 1920, 1080)
@@ -562,14 +562,13 @@ pub async fn post_step_result_handler(
             .bind(key)
             .execute(&mut *tx)
             .await
-            {
-                tracing::error!(
-                    task_run_id = task_run_id,
-                    step_id = payload.step_id,
-                    "Failed to upsert step_screenshots on step result: {}",
-                    e
-                );
-            }
+        {
+            tracing::error!(
+                task_run_id = task_run_id,
+                step_id = payload.step_id,
+                "Failed to upsert step_screenshots on step result: {}",
+                e
+            );
         }
 
         tx.commit().await?;
@@ -1142,8 +1141,8 @@ pub async fn post_task_run_screenshot_commit_handler(
         step_id_opt
     };
 
-    if let Some(step_id) = target_step_id {
-        if let Err(e) = sqlx::query(
+    if let Some(step_id) = target_step_id
+        && let Err(e) = sqlx::query(
             r#"
             INSERT INTO step_screenshots (step_id, object_storage_key, width, height)
             VALUES ($1, $2, $3, $4)
@@ -1156,15 +1155,14 @@ pub async fn post_task_run_screenshot_commit_handler(
         .bind(height)
         .execute(&state.db)
         .await
-        {
-            tracing::error!(
-                worker_id = worker.id,
-                task_run_id = task_run_id,
-                step_id = step_id,
-                "Failed to upsert step_screenshots on commit: {}",
-                e
-            );
-        }
+    {
+        tracing::error!(
+            worker_id = worker.id,
+            task_run_id = task_run_id,
+            step_id = step_id,
+            "Failed to upsert step_screenshots on commit: {}",
+            e
+        );
     }
 
     Ok(Json(CommitScreenshotResponse {
@@ -1575,6 +1573,30 @@ mod tests {
 
         assert!(!is_agent_version_outdated(Some("0.1.0"), None));
         assert!(!is_agent_version_outdated(None, None));
+    }
+
+    #[test]
+    fn test_is_agent_version_outdated_version_comparison_edge_cases() {
+        // Double-digit component comparison: 1.10.0 is newer than 1.9.0
+        assert!(!is_agent_version_outdated(Some("1.10.0"), Some("1.9.0")));
+        assert!(is_agent_version_outdated(Some("1.9.5"), Some("1.10.0")));
+
+        // Whitespace padded version strings should be trimmed and correctly evaluated
+        assert!(!is_agent_version_outdated(
+            Some("  1.2.0  "),
+            Some(" 1.1.0 ")
+        ));
+        assert!(is_agent_version_outdated(Some(" 1.0.0 "), Some(" 1.2.0 ")));
+
+        // Whitespace-only minimum version is treated as unconstrained (not outdated)
+        assert!(!is_agent_version_outdated(Some("1.0.0"), Some("   ")));
+
+        // Whitespace-only agent version is treated as missing agent version (outdated)
+        assert!(is_agent_version_outdated(Some("   "), Some("1.0.0")));
+
+        // Pre-release suffixes like -beta or -rc1 should strip suffixes and parse base numeric parts
+        assert!(!is_agent_version_outdated(Some("2.0.0-rc1"), Some("1.9.0")));
+        assert!(is_agent_version_outdated(Some("1.0.0-beta"), Some("1.1.0")));
     }
 
     #[test]

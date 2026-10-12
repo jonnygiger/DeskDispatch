@@ -29,6 +29,43 @@
 <!-- Sub-navigation -->
 {% call macros::automation_sub_nav(automation.id, "steps") %}{% endcall %}
 
+<!-- SLA Performance Card -->
+<div class="card" style="margin-bottom: 1.5rem; padding: 1rem 1.25rem;">
+    <div style="font-size: 0.875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); margin-bottom: 0.75rem;">
+        SLA Uptime Performance
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1rem; text-align: center;">
+        <div style="background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--color-border);">
+            <div style="font-size: 0.75rem; color: var(--color-text-muted); font-weight: 600; text-transform: uppercase;">Daily SLA (24h)</div>
+            <div style="font-size: 1.25rem; font-weight: 700; margin-top: 0.25rem;">
+                <span class="badge {{ sla.daily_badge_class() }}">{{ sla.formatted_daily() }}</span>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--color-text-muted); margin-top: 0.25rem;">{{ sla.total_runs_24h }} run(s)</div>
+        </div>
+        <div style="background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--color-border);">
+            <div style="font-size: 0.75rem; color: var(--color-text-muted); font-weight: 600; text-transform: uppercase;">Weekly SLA (7d)</div>
+            <div style="font-size: 1.25rem; font-weight: 700; margin-top: 0.25rem;">
+                <span class="badge {{ sla.weekly_badge_class() }}">{{ sla.formatted_weekly() }}</span>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--color-text-muted); margin-top: 0.25rem;">{{ sla.total_runs_7d }} run(s)</div>
+        </div>
+        <div style="background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--color-border);">
+            <div style="font-size: 0.75rem; color: var(--color-text-muted); font-weight: 600; text-transform: uppercase;">Monthly SLA (30d)</div>
+            <div style="font-size: 1.25rem; font-weight: 700; margin-top: 0.25rem;">
+                <span class="badge {{ sla.monthly_badge_class() }}">{{ sla.formatted_monthly() }}</span>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--color-text-muted); margin-top: 0.25rem;">{{ sla.total_runs_30d }} run(s)</div>
+        </div>
+        <div style="background: var(--color-bg-secondary); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--color-border);">
+            <div style="font-size: 0.75rem; color: var(--color-text-muted); font-weight: 600; text-transform: uppercase;">Yearly SLA (365d)</div>
+            <div style="font-size: 1.25rem; font-weight: 700; margin-top: 0.25rem;">
+                <span class="badge {{ sla.yearly_badge_class() }}">{{ sla.formatted_yearly() }}</span>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--color-text-muted); margin-top: 0.25rem;">{{ sla.total_runs_365d }} run(s)</div>
+        </div>
+    </div>
+</div>
+
 {% if user.role.can_edit() %}
 <div class="card" style="margin-bottom: 1.5rem;">
     <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem;">Run Now (Manual Trigger)</h3>

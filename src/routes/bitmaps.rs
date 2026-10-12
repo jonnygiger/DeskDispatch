@@ -484,7 +484,7 @@ pub async fn post_bitmaps_handler(
     let redirect_url = format!(
         "{}/bitmaps/commit?name={}",
         base_url,
-        url::form_urlencoded::byte_serialize(bitmap_name.as_bytes()).collect::<String>()
+        crate::auth::flash::url_encode(&bitmap_name)
     );
 
     let storage = state.storage_service();
@@ -546,7 +546,7 @@ pub async fn post_automation_bitmaps_handler(
     let redirect_url = format!(
         "{}/bitmaps/commit?name={}&automation_id={}",
         base_url,
-        url::form_urlencoded::byte_serialize(bitmap_name.as_bytes()).collect::<String>(),
+        crate::auth::flash::url_encode(&bitmap_name),
         id
     );
 
@@ -1308,12 +1308,10 @@ async fn crop_image_region(
     // Attempt 3: If image_url is an HTTP/HTTPS URL, fetch via reqwest
     if image_bytes.is_none()
         && (image_url.starts_with("http://") || image_url.starts_with("https://"))
+        && let Ok(res) = reqwest::get(image_url).await
+        && let Ok(data) = res.bytes().await
     {
-        if let Ok(res) = reqwest::get(image_url).await {
-            if let Ok(data) = res.bytes().await {
-                image_bytes = Some(data.to_vec());
-            }
-        }
+        image_bytes = Some(data.to_vec());
     }
 
     // Try decoding and cropping loaded image_bytes

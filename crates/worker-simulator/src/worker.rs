@@ -176,14 +176,14 @@ impl SimulatedWorker {
 
                 match res {
                     Ok(resp) if resp.status().is_success() => {
-                        if let Ok(hb_resp) = resp.json::<HeartbeatResponse>().await {
-                            if hb_resp.cancel_requested {
-                                hb_cancel_flag.store(true, Ordering::Relaxed);
-                                warn!(
-                                    worker_idx = hb_worker_idx,
-                                    "Server requested cancellation of active task"
-                                );
-                            }
+                        if let Ok(hb_resp) = resp.json::<HeartbeatResponse>().await
+                            && hb_resp.cancel_requested
+                        {
+                            hb_cancel_flag.store(true, Ordering::Relaxed);
+                            warn!(
+                                worker_idx = hb_worker_idx,
+                                "Server requested cancellation of active task"
+                            );
                         }
                     }
                     Ok(resp) if resp.status() == StatusCode::UPGRADE_REQUIRED => {
@@ -742,12 +742,11 @@ impl SimulatedWorker {
                 .await
                 .map_err(|e| format!("Failed to post recording events: {}", e))?;
 
-            if resp.status().is_success() {
-                if let Ok(rec_resp) = resp.json::<PostRecordingEventsResponse>().await {
-                    if rec_resp.stop_requested {
-                        break;
-                    }
-                }
+            if resp.status().is_success()
+                && let Ok(rec_resp) = resp.json::<PostRecordingEventsResponse>().await
+                && rec_resp.stop_requested
+            {
+                break;
             }
 
             tokio::time::sleep(Duration::from_millis(500)).await;

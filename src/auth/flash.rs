@@ -47,6 +47,49 @@ impl FlashMessage {
     }
 }
 
+pub fn url_encode(input: &str) -> String {
+    let mut encoded = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(encoded, "%{:02X}", b);
+            }
+        }
+    }
+    encoded
+}
+
+pub fn url_decode(input: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(input.len());
+    let mut it = input.bytes();
+    while let Some(b) = it.next() {
+        match b {
+            b'%' => {
+                let h1 = it.next()?;
+                let h2 = it.next()?;
+                let hex_val = |c: u8| -> Option<u8> {
+                    match c {
+                        b'0'..=b'9' => Some(c - b'0'),
+                        b'a'..=b'f' => Some(c - b'a' + 10),
+                        b'A'..=b'F' => Some(c - b'A' + 10),
+                        _ => None,
+                    }
+                };
+                let v1 = hex_val(h1)?;
+                let v2 = hex_val(h2)?;
+                bytes.push((v1 << 4) | v2);
+            }
+            b'+' => bytes.push(b' '),
+            b => bytes.push(b),
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
 pub fn extract_flash_message(headers: &HeaderMap) -> Option<FlashMessage> {
     let cookie_header = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
     let mut msg: Option<String> = None;
@@ -55,10 +98,8 @@ pub fn extract_flash_message(headers: &HeaderMap) -> Option<FlashMessage> {
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
         if let Some(val) = cookie.strip_prefix("flash_msg=") {
-            if let Some((_, decoded_val)) =
-                url::form_urlencoded::parse(format!("v={}", val).as_bytes()).next()
-            {
-                msg = Some(decoded_val.into_owned());
+            if let Some(decoded) = url_decode(val) {
+                msg = Some(decoded);
             }
         } else if let Some(val) = cookie.strip_prefix("flash_level=") {
             level = match val {
@@ -79,7 +120,7 @@ pub fn extract_flash_message(headers: &HeaderMap) -> Option<FlashMessage> {
 pub fn build_flash_cookie(flash: &FlashMessage) -> (String, String) {
     let msg_cookie = format!(
         "flash_msg={}; Path=/; HttpOnly; SameSite=Lax",
-        url::form_urlencoded::byte_serialize(flash.message.as_bytes()).collect::<String>()
+        url_encode(&flash.message)
     );
     let level_cookie = format!(
         "flash_level={}; Path=/; HttpOnly; SameSite=Lax",
