@@ -738,14 +738,11 @@ pub async fn get_run_screenshots_zip_handler(
     use zip::write::SimpleFileOptions;
 
     let run_exists: bool =
-        match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = $1)")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = $1)")
             .bind(id)
             .fetch_one(&state.db)
             .await
-        {
-            Ok(exists) => exists,
-            Err(_) => false,
-        };
+            .unwrap_or_default();
 
     if !run_exists {
         return (StatusCode::NOT_FOUND, "Task run not found").into_response();
@@ -793,21 +790,21 @@ pub async fn get_run_screenshots_zip_handler(
                 .get::<Option<String>, _>("screenshot_object_key")
                 .or_else(|| row.get("step_screenshot_key"));
 
-            if let Some(key) = screenshot_key {
-                if let Ok(bytes) = storage.get_object(&key).await {
-                    let seq: Option<i32> = row.get("seq");
-                    let step_id: i64 = row.get("step_id");
-                    let filename = format!(
-                        "step_{:03}_seq_{}_step_{}.png",
-                        idx + 1,
-                        seq.unwrap_or((idx + 1) as i32),
-                        step_id
-                    );
+            if let Some(key) = screenshot_key
+                && let Ok(bytes) = storage.get_object(&key).await
+            {
+                let seq: Option<i32> = row.get("seq");
+                let step_id: i64 = row.get("step_id");
+                let filename = format!(
+                    "step_{:03}_seq_{}_step_{}.png",
+                    idx + 1,
+                    seq.unwrap_or((idx + 1) as i32),
+                    step_id
+                );
 
-                    if zip_writer.start_file(filename, options).is_ok() {
-                        let _ = zip_writer.write_all(&bytes);
-                        count += 1;
-                    }
+                if zip_writer.start_file(filename, options).is_ok() {
+                    let _ = zip_writer.write_all(&bytes);
+                    count += 1;
                 }
             }
         }

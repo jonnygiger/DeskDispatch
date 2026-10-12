@@ -38,15 +38,14 @@ fn extract_form_action_and_inputs(html: &str) -> Option<(String, Vec<(String, St
             .unwrap_or(form_str.len());
         let tag_str = &form_str[abs_pos..tag_end];
 
-        if tag_str.contains("type=\"hidden\"") {
-            if let (Some(name), Some(val)) = (
+        if tag_str.contains("type=\"hidden\"")
+            && let (Some(name), Some(val)) = (
                 extract_attr_value(tag_str, "name"),
                 extract_attr_value(tag_str, "value"),
-            ) {
-                if name != "csrf_token" {
-                    fields.push((name, val));
-                }
-            }
+            )
+            && name != "csrf_token"
+        {
+            fields.push((name, val));
         }
 
         search_idx = tag_end + 1;
@@ -99,11 +98,11 @@ async fn test_docker_e2e_bitmap_upload_flow() {
     let mut is_ready = false;
 
     while start_time.elapsed() < timeout {
-        if let Ok(resp) = client.get(&ready_endpoint).send().await {
-            if resp.status().is_success() {
-                is_ready = true;
-                break;
-            }
+        if let Ok(resp) = client.get(&ready_endpoint).send().await
+            && resp.status().is_success()
+        {
+            is_ready = true;
+            break;
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }

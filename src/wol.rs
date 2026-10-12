@@ -69,19 +69,19 @@ mod tests {
 
     #[test]
     fn test_parse_mac_address_colon_format() {
-        let mac = parse_mac_address("00:11:22:33:44:55").unwrap();
+        let mac = parse_mac_address("00:11:22:33:44:55").expect("valid mac");
         assert_eq!(mac, [0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
     }
 
     #[test]
     fn test_parse_mac_address_hyphen_format() {
-        let mac = parse_mac_address("AA-BB-CC-DD-EE-FF").unwrap();
+        let mac = parse_mac_address("AA-BB-CC-DD-EE-FF").expect("valid mac");
         assert_eq!(mac, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
     }
 
     #[test]
     fn test_parse_mac_address_raw_hex() {
-        let mac = parse_mac_address("0123456789ab").unwrap();
+        let mac = parse_mac_address("0123456789ab").expect("valid mac");
         assert_eq!(mac, [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB]);
     }
 

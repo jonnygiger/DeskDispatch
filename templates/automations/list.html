@@ -43,6 +43,7 @@
                 <tr>
                     <th>Name</th>
                     <th>Status</th>
+                    <th>SLA Uptime (24h / 7d / 30d / 365d)</th>
                     <th>Steps</th>
                     <th>Last Modified</th>
                     <th>Last Run</th>
@@ -59,6 +60,14 @@
                         {% endif %}
                     </td>
                     <td><span class="badge {{ auto.status_badge_class() }}">{{ auto.status }}</span></td>
+                    <td>
+                        <div style="display: flex; gap: 0.25rem; align-items: center; flex-wrap: wrap;">
+                            <span class="badge {{ auto.sla.daily_badge_class() }}" title="Daily (24h) Uptime SLA">{{ auto.sla.formatted_daily() }}</span>
+                            <span class="badge {{ auto.sla.weekly_badge_class() }}" title="Weekly (7d) Uptime SLA">{{ auto.sla.formatted_weekly() }}</span>
+                            <span class="badge {{ auto.sla.monthly_badge_class() }}" title="Monthly (30d) Uptime SLA">{{ auto.sla.formatted_monthly() }}</span>
+                            <span class="badge {{ auto.sla.yearly_badge_class() }}" title="Yearly (365d) Uptime SLA">{{ auto.sla.formatted_yearly() }}</span>
+                        </div>
+                    </td>
                     <td>{{ auto.step_count }}</td>
                     <td>{{ auto.formatted_updated_at() }}</td>
                     <td>
