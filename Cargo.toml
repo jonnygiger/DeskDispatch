@@ -16,7 +16,6 @@ explicit_auto_deref = "allow"
 deskdispatch-protocol = { path = "crates/deskdispatch-protocol" }
 argon2 = "0.6"
 askama = "0.16"
-base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 hmac = "0.13"
 sha2 = "0.11"

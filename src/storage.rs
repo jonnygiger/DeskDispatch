@@ -1,21 +1,100 @@
 use aws_sdk_s3::Client;
 use aws_sdk_s3::presigning::PresigningConfig;
-use base64::Engine;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::fmt;
-use std::fmt::Write;
 use std::time::Duration;
 
 type HmacSha256 = Hmac<Sha256>;
 
+const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+
 pub fn encode_hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for &b in bytes {
-        let _ = write!(s, "{:02x}", b);
+        s.push(HEX_CHARS[(b >> 4) as usize] as char);
+        s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
     }
     s
+}
+
+const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub fn encode_base64(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len().saturating_add(2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).map_or(0, |&b| b as u32);
+        let b2 = chunk.get(2).map_or(0, |&b| b as u32);
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        encoded.push(BASE64_CHARS[((triple >> 18) & 0x3f) as usize] as char);
+        encoded.push(BASE64_CHARS[((triple >> 12) & 0x3f) as usize] as char);
+
+        if chunk.len() > 1 {
+            encoded.push(BASE64_CHARS[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+
+        if chunk.len() > 2 {
+            encoded.push(BASE64_CHARS[(triple & 0x3f) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+    encoded
+}
+
+pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
+    let trimmed = input.trim_end_matches('=');
+    let padding_len = input.len() - trimmed.len();
+    if padding_len > 2 {
+        return None;
+    }
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+
+    fn decode_char(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let bytes = trimmed.as_bytes();
+    if bytes.len() % 4 == 1 {
+        return None;
+    }
+
+    let mut decoded = Vec::with_capacity(bytes.len() * 3 / 4);
+
+    for chunk in bytes.chunks(4) {
+        let mut buf = [0u8; 4];
+        let mut count = 0;
+        for &b in chunk {
+            buf[count] = decode_char(b)?;
+            count += 1;
+        }
+
+        if count >= 2 {
+            decoded.push((buf[0] << 2) | (buf[1] >> 4));
+        }
+        if count >= 3 {
+            decoded.push(((buf[1] & 0x0f) << 4) | (buf[2] >> 2));
+        }
+        if count >= 4 {
+            decoded.push(((buf[2] & 0x03) << 6) | buf[3]);
+        }
+    }
+
+    Some(decoded)
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
@@ -40,11 +119,10 @@ impl PresignedPost {
 }
 
 #[derive(Debug)]
-#[allow(clippy::result_large_err)]
 pub enum StorageError {
     PresigningConfig(aws_sdk_s3::presigning::PresigningConfigError),
-    GetObject(aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>),
-    PutObject(aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>),
+    GetObject(Box<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>>),
+    PutObject(Box<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>>),
     PostPolicy(String),
 }
 
@@ -71,8 +149,8 @@ impl std::error::Error for StorageError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             StorageError::PresigningConfig(e) => Some(e),
-            StorageError::GetObject(e) => Some(e),
-            StorageError::PutObject(e) => Some(e),
+            StorageError::GetObject(e) => Some(e.as_ref()),
+            StorageError::PutObject(e) => Some(e.as_ref()),
             StorageError::PostPolicy(_) => None,
         }
     }
@@ -90,7 +168,7 @@ impl From<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObje
     fn from(
         err: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>,
     ) -> Self {
-        StorageError::GetObject(err)
+        StorageError::GetObject(Box::new(err))
     }
 }
 
@@ -100,7 +178,7 @@ impl From<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObje
     fn from(
         err: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>,
     ) -> Self {
-        StorageError::PutObject(err)
+        StorageError::PutObject(Box::new(err))
     }
 }
 
@@ -116,7 +194,6 @@ pub struct StorageService {
     public_endpoint_url: Option<String>,
 }
 
-#[allow(clippy::result_large_err)]
 impl StorageService {
     pub fn new(s3_client: Client, bucket: impl Into<String>) -> Self {
         Self {
@@ -256,7 +333,6 @@ fn rewrite_url_with_public_endpoint(
 
 /// Standalone helper function to generate a presigned GET URL using an S3 Client, bucket, key, and expiration duration.
 #[tracing::instrument(skip(s3_client))]
-#[allow(clippy::result_large_err)]
 pub async fn get_presigned_get_url(
     s3_client: &Client,
     bucket: &str,
@@ -277,7 +353,7 @@ pub async fn get_presigned_get_url(
 
 /// Standalone helper function to generate a presigned POST policy and SigV4 form fields for browser-direct upload.
 #[tracing::instrument(skip(secret_key))]
-#[allow(clippy::too_many_arguments, clippy::result_large_err)]
+#[allow(clippy::too_many_arguments)]
 pub fn generate_presigned_post_policy(
     bucket: &str,
     object_key: &str,
@@ -327,7 +403,7 @@ pub fn generate_presigned_post_policy(
 
     let policy_str = policy_json.to_string();
 
-    let policy_base64 = base64::engine::general_purpose::STANDARD.encode(policy_str.as_bytes());
+    let policy_base64 = encode_base64(policy_str.as_bytes());
 
     // SigV4 Key Calculation
     let k_secret = format!("AWS4{}", secret_key);
@@ -370,7 +446,6 @@ pub fn generate_presigned_post_policy(
 
 /// Standalone helper function to generate a presigned PUT URL using an S3 Client, bucket, key, and expiration duration.
 #[tracing::instrument(skip(s3_client))]
-#[allow(clippy::result_large_err)]
 pub async fn get_presigned_put_url(
     s3_client: &Client,
     bucket: &str,
@@ -393,6 +468,30 @@ pub async fn get_presigned_put_url(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_encode_and_decode_base64() {
+        let input = b"Hello, deskdispatch!";
+        let encoded = encode_base64(input);
+        assert_eq!(encoded, "SGVsbG8sIGRlc2tkaXNwYXRjaCE=");
+        let decoded = decode_base64(&encoded).unwrap();
+        assert_eq!(decoded, input);
+
+        // Empty byte test
+        assert_eq!(encode_base64(b""), "");
+        assert_eq!(decode_base64("").unwrap(), b"");
+
+        // Invalid base64 inputs validation tests
+        assert!(decode_base64("A").is_none());
+        assert!(decode_base64("AAAAA").is_none());
+        assert!(decode_base64("====").is_none());
+    }
+
+    #[test]
+    fn test_encode_hex() {
+        let input = b"\x00\x0f\x10\xff";
+        assert_eq!(encode_hex(input), "000f10ff");
+    }
 
     #[tokio::test]
     async fn test_generate_presigned_get_url() {
@@ -507,9 +606,7 @@ mod tests {
         assert!(presigned_post.get_field("x-amz-signature").is_some());
 
         let policy_base64 = presigned_post.get_field("policy").unwrap();
-        let decoded_bytes = base64::engine::general_purpose::STANDARD
-            .decode(policy_base64)
-            .unwrap();
+        let decoded_bytes = decode_base64(policy_base64).unwrap();
         let policy_json: serde_json::Value = serde_json::from_slice(&decoded_bytes).unwrap();
 
         assert!(policy_json.get("expiration").is_some());
