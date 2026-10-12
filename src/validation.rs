@@ -19,16 +19,13 @@ impl std::fmt::Display for AutomationLintError {
     }
 }
 
-struct StepMeta {
-    step_number: usize,
-    step_type: String,
-}
-
+#[derive(Debug, Clone)]
 struct VarMeta {
     name: String,
     var_type: String,
 }
 
+#[derive(Debug, Clone)]
 struct MouseClickMeta {
     x: Option<i32>,
     y: Option<i32>,
@@ -37,12 +34,14 @@ struct MouseClickMeta {
     region_var_id: Option<i64>,
 }
 
+#[derive(Debug, Clone)]
 struct FindPixelMeta {
     x: i32,
     y: i32,
     output_var_id: Option<i64>,
 }
 
+#[derive(Debug, Clone)]
 struct FindBitmapMeta {
     reference_bitmap_id: i64,
     output_found_var_id: Option<i64>,
@@ -53,6 +52,7 @@ struct FindBitmapMeta {
     search_y: Option<i32>,
 }
 
+#[derive(Debug, Clone)]
 struct BranchMeta {
     condition_type: String,
     on_match_step_id: Option<i64>,
@@ -62,29 +62,93 @@ struct BranchMeta {
     y: Option<i32>,
 }
 
+#[derive(Debug, Clone)]
+enum StepSubtype {
+    MouseClick(MouseClickMeta),
+    FindPixel(FindPixelMeta),
+    FindBitmap(FindBitmapMeta),
+    Branch(BranchMeta),
+    Other,
+}
+
+#[derive(Debug, Clone)]
+struct StepNode {
+    id: i64,
+    step_number: usize,
+    step_type: String,
+    subtype: StepSubtype,
+}
+
+/// Compact bitset for variable initialization tracking.
+/// Every `VarBitSet` for an automation shares the exact same word vector length `num_words = num_vars.div_ceil(64)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VarBitSet {
+    words: Vec<u64>,
+}
+
+impl VarBitSet {
+    fn empty(num_vars: usize) -> Self {
+        let num_words = num_vars.div_ceil(64).max(1);
+        Self {
+            words: vec![0; num_words],
+        }
+    }
+
+    fn all(num_vars: usize) -> Self {
+        let num_words = num_vars.div_ceil(64).max(1);
+        if num_vars == 0 {
+            return Self::empty(0);
+        }
+        let mut words = vec![u64::MAX; num_words];
+        let rem = num_vars % 64;
+        if rem != 0 {
+            if let Some(last) = words.last_mut() {
+                *last = (1u64 << rem) - 1;
+            }
+        }
+        Self { words }
+    }
+
+    fn set(&mut self, idx: usize) {
+        let w_idx = idx / 64;
+        let b_idx = idx % 64;
+        if let Some(w) = self.words.get_mut(w_idx) {
+            *w |= 1u64 << b_idx;
+        }
+    }
+
+    fn contains(&self, idx: usize) -> bool {
+        let w_idx = idx / 64;
+        let b_idx = idx % 64;
+        self.words
+            .get(w_idx)
+            .is_some_and(|w| (w & (1u64 << b_idx)) != 0)
+    }
+
+    fn union_with(&mut self, other: &Self) {
+        for (a, b) in self.words.iter_mut().zip(&other.words) {
+            *a |= *b;
+        }
+    }
+
+    fn intersect_with(&mut self, other: &Self) {
+        for (a, b) in self.words.iter_mut().zip(&other.words) {
+            *a &= *b;
+        }
+    }
+}
+
 /// Lints and validates an automation to ensure it is safe and ready for execution.
 ///
-/// Checks performed:
-/// 1. Automation must exist and have at least one active (non-deleted) step.
-/// 2. Dangling or cross-automation branch targets:
-///    Branch steps `on_match_step_id` and `on_no_match_step_id` must point to valid, non-deleted steps in the same automation.
-/// 3. Cycles with no exit:
-///    Control flow graph analysis ensuring every reachable path from Step 1 can eventually reach the end of the automation or a terminal step.
-/// 4. Variables read before being written:
-///    Ensures that any variable read by a step (e.g., mouse_click coords) is initialized by parameters or a preceding step along all reachable control flow paths.
-/// 5. Type mismatches:
-///    Ensures variable types match expected types (`int` for coords, `bool` for found flags, `color`/`point`/`string`/`region` for pixel/region values).
-/// 6. Deleted or missing reference bitmaps:
-///    Ensures `reference_bitmap_id` on `find_bitmap` and `branch` steps references an existing bitmap.
-/// 7. Coordinate bounds:
-///    Ensures literal coordinates are non-negative and within realistic screen bounds (<= 10,000 px).
+/// Performance-tuned: Uses index-mapped step nodes, fixed-size adjacency vectors,
+/// boolean reachability sets, and zero-allocation bitmask operations for variable dataflow analysis.
 pub async fn validate_automation_for_activation(
     db: &PgPool,
     automation_id: i64,
 ) -> Result<(), Vec<AutomationLintError>> {
     let mut errors = Vec::new();
 
-    // 1. Concurrently fetch all step metadata, variables, parameters, subtype details, and bitmaps.
+    // 1. Concurrently fetch step metadata, variables, parameters, subtype details, and bitmaps.
     let steps_fut = sqlx::query(
         "SELECT id, position, step_type, label FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
@@ -172,44 +236,20 @@ pub async fn validate_automation_for_activation(
         return Err(errors);
     }
 
-    let mut step_map: HashMap<i64, StepMeta> = HashMap::with_capacity(raw_steps.len());
-    let mut step_id_order: Vec<i64> = Vec::with_capacity(raw_steps.len());
+    let n = raw_steps.len();
+
+    // Map step_id -> 0-based integer index
+    let mut step_id_to_idx: HashMap<i64, usize> = HashMap::with_capacity(n);
     for (idx, row) in raw_steps.iter().enumerate() {
         let sid: i64 = row.get("id");
-        let stype: String = row.get("step_type");
-        step_map.insert(
-            sid,
-            StepMeta {
-                step_number: idx + 1,
-                step_type: stype,
-            },
-        );
-        step_id_order.push(sid);
+        step_id_to_idx.insert(sid, idx);
     }
 
-    let mut vars_map: HashMap<i64, VarMeta> = HashMap::with_capacity(var_rows.len());
-    for vr in var_rows {
-        let vid: i64 = vr.get("id");
-        vars_map.insert(
-            vid,
-            VarMeta {
-                name: vr.get("name"),
-                var_type: vr.get("var_type"),
-            },
-        );
-    }
-
-    let mut available_params: HashSet<String> = HashSet::with_capacity(param_rows.len());
-    for pr in param_rows {
-        let pname: String = pr.get("name");
-        available_params.insert(pname);
-    }
-
+    // Build subtype lookup maps temporarily to initialize contiguous StepNode array
     let mut mc_map: HashMap<i64, MouseClickMeta> = HashMap::with_capacity(mc_rows.len());
     for r in mc_rows {
-        let sid: i64 = r.get("step_id");
         mc_map.insert(
-            sid,
+            r.get("step_id"),
             MouseClickMeta {
                 x: r.get("x"),
                 y: r.get("y"),
@@ -222,9 +262,8 @@ pub async fn validate_automation_for_activation(
 
     let mut fp_map: HashMap<i64, FindPixelMeta> = HashMap::with_capacity(fp_rows.len());
     for r in fp_rows {
-        let sid: i64 = r.get("step_id");
         fp_map.insert(
-            sid,
+            r.get("step_id"),
             FindPixelMeta {
                 x: r.get("x"),
                 y: r.get("y"),
@@ -235,9 +274,8 @@ pub async fn validate_automation_for_activation(
 
     let mut fb_map: HashMap<i64, FindBitmapMeta> = HashMap::with_capacity(fb_rows.len());
     for r in fb_rows {
-        let sid: i64 = r.get("step_id");
         fb_map.insert(
-            sid,
+            r.get("step_id"),
             FindBitmapMeta {
                 reference_bitmap_id: r.get("reference_bitmap_id"),
                 output_found_var_id: r.get("output_found_variable_id"),
@@ -252,9 +290,8 @@ pub async fn validate_automation_for_activation(
 
     let mut branch_map: HashMap<i64, BranchMeta> = HashMap::with_capacity(branch_rows.len());
     for r in branch_rows {
-        let sid: i64 = r.get("step_id");
         branch_map.insert(
-            sid,
+            r.get("step_id"),
             BranchMeta {
                 condition_type: r.get("condition_type"),
                 on_match_step_id: r.get("on_match_step_id"),
@@ -268,174 +305,223 @@ pub async fn validate_automation_for_activation(
 
     let existing_bitmaps: HashSet<i64> = bitmap_rows.into_iter().map(|r| r.get("id")).collect();
 
-    // 2. Validate individual steps for bounds, types, referenced IDs
-    for (idx, &sid) in step_id_order.iter().enumerate() {
-        let Some(meta) = step_map.get(&sid) else {
-            continue;
-        };
-        let step_num = idx + 1;
+    // Construct contiguous steps vector
+    let mut steps: Vec<StepNode> = Vec::with_capacity(n);
+    for (idx, row) in raw_steps.into_iter().enumerate() {
+        let sid: i64 = row.get("id");
+        let stype: String = row.get("step_type");
 
-        match meta.step_type.as_str() {
-            "mouse_click" => {
-                if let Some(mc) = mc_map.get(&sid) {
-                    validate_mouse_click(sid, step_num, mc, &vars_map, &mut errors);
-                }
+        let subtype = match stype.as_str() {
+            "mouse_click" => mc_map
+                .remove(&sid)
+                .map(StepSubtype::MouseClick)
+                .unwrap_or(StepSubtype::Other),
+            "find_pixel_rgb" => fp_map
+                .remove(&sid)
+                .map(StepSubtype::FindPixel)
+                .unwrap_or(StepSubtype::Other),
+            "find_bitmap" => fb_map
+                .remove(&sid)
+                .map(StepSubtype::FindBitmap)
+                .unwrap_or(StepSubtype::Other),
+            "branch" => branch_map
+                .remove(&sid)
+                .map(StepSubtype::Branch)
+                .unwrap_or(StepSubtype::Other),
+            _ => StepSubtype::Other,
+        };
+
+        steps.push(StepNode {
+            id: sid,
+            step_number: idx + 1,
+            step_type: stype,
+            subtype,
+        });
+    }
+
+    // Map variable ID -> index & metadata
+    let num_vars = var_rows.len();
+    let mut vars_map: HashMap<i64, (usize, VarMeta)> = HashMap::with_capacity(num_vars);
+    for (idx, vr) in var_rows.into_iter().enumerate() {
+        let vid: i64 = vr.get("id");
+        let meta = VarMeta {
+            name: vr.get("name"),
+            var_type: vr.get("var_type"),
+        };
+        vars_map.insert(vid, (idx, meta));
+    }
+
+    let mut available_params: HashSet<String> = HashSet::with_capacity(param_rows.len());
+    for pr in param_rows {
+        let pname: String = pr.get("name");
+        available_params.insert(pname);
+    }
+
+    // 2. Validate individual steps for bounds, types, referenced IDs
+    for step in &steps {
+        match &step.subtype {
+            StepSubtype::MouseClick(mc) => {
+                validate_mouse_click(step.id, step.step_number, mc, &vars_map, &mut errors);
             }
-            "find_pixel_rgb" => {
-                if let Some(fp) = fp_map.get(&sid) {
-                    validate_find_pixel(sid, step_num, fp, &vars_map, &mut errors);
-                }
+            StepSubtype::FindPixel(fp) => {
+                validate_find_pixel(step.id, step.step_number, fp, &vars_map, &mut errors);
             }
-            "find_bitmap" => {
-                if let Some(fb) = fb_map.get(&sid) {
-                    validate_find_bitmap(
-                        sid,
-                        step_num,
-                        fb,
-                        &vars_map,
-                        &existing_bitmaps,
-                        &mut errors,
-                    );
-                }
+            StepSubtype::FindBitmap(fb) => {
+                validate_find_bitmap(
+                    step.id,
+                    step.step_number,
+                    fb,
+                    &vars_map,
+                    &existing_bitmaps,
+                    &mut errors,
+                );
             }
-            "branch" => {
-                if let Some(b) = branch_map.get(&sid) {
-                    validate_branch(sid, step_num, b, &step_map, &existing_bitmaps, &mut errors);
-                }
+            StepSubtype::Branch(b) => {
+                validate_branch(
+                    step.id,
+                    step.step_number,
+                    b,
+                    &step_id_to_idx,
+                    &existing_bitmaps,
+                    &mut errors,
+                );
             }
-            _ => {}
+            StepSubtype::Other => {}
         }
     }
 
-    // 3. Control Flow Graph & Cycle Analysis (Cycles with no exit)
-    let exit_node = -1i64;
-    let mut adj: HashMap<i64, Vec<i64>> = HashMap::with_capacity(step_id_order.len());
+    // 3. Control Flow Graph Construction (Nodes: 0..N represent steps, N is EXIT_NODE)
+    let exit_node = n;
+    let mut rev_adj: Vec<Vec<usize>> = vec![Vec::new(); n + 1];
+    let mut successors: Vec<[Option<usize>; 2]> = vec![[None, None]; n];
 
-    for (i, &sid) in step_id_order.iter().enumerate() {
-        let meta = &step_map[&sid];
-        let next_in_seq = if i + 1 < step_id_order.len() {
-            step_id_order[i + 1]
-        } else {
-            exit_node
-        };
+    for (i, step) in steps.iter().enumerate() {
+        let next_in_seq = if i + 1 < n { i + 1 } else { exit_node };
 
-        if meta.step_type == "branch" {
-            if let Some(b) = branch_map.get(&sid) {
-                let mut succs = Vec::with_capacity(2);
+        if step.step_type == "branch" {
+            if let StepSubtype::Branch(b) = &step.subtype {
+                let mut count = 0;
+                let mut succs = [None, None];
+
                 if let Some(m_target) = b.on_match_step_id
-                    && step_map.contains_key(&m_target)
+                    && let Some(&m_idx) = step_id_to_idx.get(&m_target)
                 {
-                    succs.push(m_target);
+                    succs[count] = Some(m_idx);
+                    count += 1;
                 }
                 if let Some(nm_target) = b.on_no_match_step_id
-                    && step_map.contains_key(&nm_target)
+                    && let Some(&nm_idx) = step_id_to_idx.get(&nm_target)
                 {
-                    succs.push(nm_target);
+                    succs[count] = Some(nm_idx);
+                    count += 1;
                 }
-                if succs.is_empty() {
-                    succs.push(next_in_seq);
+
+                if count == 0 {
+                    succs[0] = Some(next_in_seq);
                 }
-                adj.insert(sid, succs);
+                successors[i] = succs;
             } else {
-                adj.insert(sid, vec![next_in_seq]);
+                successors[i][0] = Some(next_in_seq);
             }
         } else {
-            adj.insert(sid, vec![next_in_seq]);
+            successors[i][0] = Some(next_in_seq);
+        }
+
+        for &succ_opt in &successors[i] {
+            if let Some(s) = succ_opt {
+                rev_adj[s].push(i);
+            }
         }
     }
 
-    // Reverse reachability from EXIT node
-    let mut rev_adj: HashMap<i64, Vec<i64>> = HashMap::with_capacity(step_id_order.len());
-    for (&u, succs) in &adj {
-        for &v in succs {
-            rev_adj.entry(v).or_default().push(u);
-        }
-    }
-
-    let mut can_reach_exit: HashSet<i64> = HashSet::with_capacity(step_id_order.len() + 1);
-    let mut queue = std::collections::VecDeque::new();
+    // Reachability from EXIT_NODE (reverse BFS using boolean flag array)
+    let mut can_reach_exit = vec![false; n + 1];
+    let mut queue = std::collections::VecDeque::with_capacity(n + 1);
     queue.push_back(exit_node);
-    can_reach_exit.insert(exit_node);
+    can_reach_exit[exit_node] = true;
 
     while let Some(curr) = queue.pop_front() {
-        if let Some(preds) = rev_adj.get(&curr) {
-            for &p in preds {
-                if can_reach_exit.insert(p) {
-                    queue.push_back(p);
+        for &p in &rev_adj[curr] {
+            if !can_reach_exit[p] {
+                can_reach_exit[p] = true;
+                queue.push_back(p);
+            }
+        }
+    }
+
+    // Reachability from START_NODE (forward BFS)
+    let mut reachable_from_start = vec![false; n + 1];
+    queue.push_back(0); // Start node = index 0
+    reachable_from_start[0] = true;
+
+    while let Some(curr) = queue.pop_front() {
+        if curr < n {
+            for &succ_opt in &successors[curr] {
+                if let Some(s) = succ_opt {
+                    if s != exit_node && !reachable_from_start[s] {
+                        reachable_from_start[s] = true;
+                        queue.push_back(s);
+                    }
                 }
             }
         }
     }
 
-    // Check reachability from start node
-    let mut reachable_from_start: HashSet<i64> = HashSet::with_capacity(step_id_order.len());
-    let start_node = step_id_order[0];
-    let mut start_queue = std::collections::VecDeque::new();
-    start_queue.push_back(start_node);
-    reachable_from_start.insert(start_node);
-
-    while let Some(curr) = start_queue.pop_front() {
-        if let Some(succs) = adj.get(&curr) {
-            for &s in succs {
-                if s != exit_node && reachable_from_start.insert(s) {
-                    start_queue.push_back(s);
-                }
-            }
-        }
-    }
-
-    // Any step reachable from start that CANNOT reach exit is trapped in an infinite loop
-    for &sid in &step_id_order {
-        if reachable_from_start.contains(&sid) && !can_reach_exit.contains(&sid) {
-            let meta = &step_map[&sid];
+    // Cycle check: Any step reachable from start that CANNOT reach exit is trapped in an infinite cycle
+    for (i, step) in steps.iter().enumerate() {
+        if reachable_from_start[i] && !can_reach_exit[i] {
             errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(meta.step_number),
+                step_id: Some(step.id),
+                step_number: Some(step.step_number),
                 message: "Step is trapped in an infinite cycle with no exit path.".to_string(),
             });
             break; // Report once per cycle
         }
     }
 
-    // 4. Precompute written variables for every step ONCE prior to dataflow analysis
-    let mut step_writes: HashMap<i64, HashSet<i64>> = HashMap::with_capacity(step_id_order.len());
-    for &sid in &step_id_order {
-        let mut writes = HashSet::new();
-        if let Some(fp) = fp_map.get(&sid)
-            && let Some(vid) = fp.output_var_id
-        {
-            writes.insert(vid);
+    // 4. Precompute written variables per step ONCE as compact bitsets
+    let mut step_writes: Vec<VarBitSet> = vec![VarBitSet::empty(num_vars); n];
+    for (i, step) in steps.iter().enumerate() {
+        let mut writes = VarBitSet::empty(num_vars);
+        match &step.subtype {
+            StepSubtype::FindPixel(fp) => {
+                if let Some(vid) = fp.output_var_id
+                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
+                {
+                    writes.set(v_idx);
+                }
+            }
+            StepSubtype::FindBitmap(fb) => {
+                if let Some(vid) = fb.output_found_var_id
+                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
+                {
+                    writes.set(v_idx);
+                }
+                if let Some(vid) = fb.output_x_var_id
+                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
+                {
+                    writes.set(v_idx);
+                }
+                if let Some(vid) = fb.output_y_var_id
+                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
+                {
+                    writes.set(v_idx);
+                }
+                if let Some(vid) = fb.output_region_var_id
+                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
+                {
+                    writes.set(v_idx);
+                }
+            }
+            _ => {}
         }
-        if let Some(fb) = fb_map.get(&sid) {
-            if let Some(vid) = fb.output_found_var_id {
-                writes.insert(vid);
-            }
-            if let Some(vid) = fb.output_x_var_id {
-                writes.insert(vid);
-            }
-            if let Some(vid) = fb.output_y_var_id {
-                writes.insert(vid);
-            }
-            if let Some(vid) = fb.output_region_var_id {
-                writes.insert(vid);
-            }
-        }
-        if !writes.is_empty() {
-            step_writes.insert(sid, writes);
-        }
+        step_writes[i] = writes;
     }
 
     // 5. Zero-allocation fixed-point variable read-before-write analysis
-    let all_var_ids: HashSet<i64> = vars_map.keys().copied().collect();
-    let mut step_initialized_vars: HashMap<i64, HashSet<i64>> =
-        HashMap::with_capacity(step_id_order.len());
-
-    for &sid in &step_id_order {
-        if sid == start_node {
-            step_initialized_vars.insert(sid, HashSet::new());
-        } else {
-            step_initialized_vars.insert(sid, all_var_ids.clone());
-        }
+    let mut step_inits: Vec<VarBitSet> = vec![VarBitSet::all(num_vars); n];
+    if !step_inits.is_empty() {
+        step_inits[0] = VarBitSet::empty(num_vars); // Start node has 0 variables initialized
     }
 
     let mut changed = true;
@@ -444,81 +530,68 @@ pub async fn validate_automation_for_activation(
         changed = false;
         iterations += 1;
 
-        for &sid in &step_id_order {
-            if sid == start_node {
-                continue;
-            }
-
-            let Some(preds) = rev_adj.get(&sid) else {
-                continue;
-            };
+        for i in 1..n {
+            let preds = &rev_adj[i];
             if preds.is_empty() {
                 continue;
             }
 
-            let to_remove: Vec<i64> = step_initialized_vars[&sid]
-                .iter()
-                .copied()
-                .filter(|vid| {
-                    !preds.iter().all(|&p| {
-                        step_initialized_vars[&p].contains(vid)
-                            || step_writes.get(&p).is_some_and(|w| w.contains(vid))
-                    })
-                })
-                .collect();
+            // New inits for step `i` is the INTERSECTION of (inits[p] | writes[p]) across all predecessors `p`
+            let mut new_inits = VarBitSet::all(num_vars);
+            for &p in preds {
+                let mut pred_out = step_inits[p].clone();
+                pred_out.union_with(&step_writes[p]);
+                new_inits.intersect_with(&pred_out);
+            }
 
-            if !to_remove.is_empty() {
+            if new_inits != step_inits[i] {
+                step_inits[i] = new_inits;
                 changed = true;
-                let curr_inits = step_initialized_vars.get_mut(&sid).expect("exists");
-                for vid in to_remove {
-                    curr_inits.remove(&vid);
-                }
             }
         }
     }
 
     // Report read-before-write errors
-    for &sid in &step_id_order {
-        if !reachable_from_start.contains(&sid) {
+    for (i, step) in steps.iter().enumerate() {
+        if !reachable_from_start[i] {
             continue;
         }
 
-        let meta = &step_map[&sid];
-        let inits = &step_initialized_vars[&sid];
+        let inits = &step_inits[i];
 
-        if meta.step_type == "mouse_click"
-            && let Some(mc) = mc_map.get(&sid)
+        if step.step_type == "mouse_click"
+            && let StepSubtype::MouseClick(mc) = &step.subtype
         {
             if let Some(x_vid) = mc.x_var_id
-                && !inits.contains(&x_vid)
-                && let Some(v) = vars_map.get(&x_vid)
+                && let Some(&(v_idx, ref v)) = vars_map.get(&x_vid)
+                && !inits.contains(v_idx)
                 && !available_params.contains(&v.name)
             {
                 errors.push(AutomationLintError {
-                    step_id: Some(sid),
-                    step_number: Some(meta.step_number),
+                    step_id: Some(step.id),
+                    step_number: Some(step.step_number),
                     message: format!("Variable '{}' read for X coordinate before being written along all execution paths.", v.name),
                 });
             }
             if let Some(y_vid) = mc.y_var_id
-                && !inits.contains(&y_vid)
-                && let Some(v) = vars_map.get(&y_vid)
+                && let Some(&(v_idx, ref v)) = vars_map.get(&y_vid)
+                && !inits.contains(v_idx)
                 && !available_params.contains(&v.name)
             {
                 errors.push(AutomationLintError {
-                    step_id: Some(sid),
-                    step_number: Some(meta.step_number),
+                    step_id: Some(step.id),
+                    step_number: Some(step.step_number),
                     message: format!("Variable '{}' read for Y coordinate before being written along all execution paths.", v.name),
                 });
             }
             if let Some(r_vid) = mc.region_var_id
-                && !inits.contains(&r_vid)
-                && let Some(v) = vars_map.get(&r_vid)
+                && let Some(&(v_idx, ref v)) = vars_map.get(&r_vid)
+                && !inits.contains(v_idx)
                 && !available_params.contains(&v.name)
             {
                 errors.push(AutomationLintError {
-                    step_id: Some(sid),
-                    step_number: Some(meta.step_number),
+                    step_id: Some(step.id),
+                    step_number: Some(step.step_number),
                     message: format!("Variable '{}' read for region click before being written along all execution paths.", v.name),
                 });
             }
@@ -536,7 +609,7 @@ fn validate_mouse_click(
     sid: i64,
     step_num: usize,
     mc: &MouseClickMeta,
-    vars_map: &HashMap<i64, VarMeta>,
+    vars_map: &HashMap<i64, (usize, VarMeta)>,
     errors: &mut Vec<AutomationLintError>,
 ) {
     if let Some(x) = mc.x
@@ -607,10 +680,10 @@ fn validate_var_ref(
     var_id: i64,
     usage_label: &str,
     expected_type: &str,
-    vars_map: &HashMap<i64, VarMeta>,
+    vars_map: &HashMap<i64, (usize, VarMeta)>,
     errors: &mut Vec<AutomationLintError>,
 ) {
-    if let Some(v) = vars_map.get(&var_id) {
+    if let Some((_, v)) = vars_map.get(&var_id) {
         if v.var_type != expected_type {
             errors.push(AutomationLintError {
                 step_id: Some(sid),
@@ -637,7 +710,7 @@ fn validate_find_pixel(
     sid: i64,
     step_num: usize,
     fp: &FindPixelMeta,
-    vars_map: &HashMap<i64, VarMeta>,
+    vars_map: &HashMap<i64, (usize, VarMeta)>,
     errors: &mut Vec<AutomationLintError>,
 ) {
     if !(0..=10000).contains(&fp.x) || !(0..=10000).contains(&fp.y) {
@@ -652,7 +725,7 @@ fn validate_find_pixel(
     }
 
     if let Some(out_vid) = fp.output_var_id {
-        if let Some(v) = vars_map.get(&out_vid) {
+        if let Some((_, v)) = vars_map.get(&out_vid) {
             if !matches!(
                 v.var_type.as_str(),
                 "color" | "point" | "string" | "int" | "region"
@@ -680,7 +753,7 @@ fn validate_find_bitmap(
     sid: i64,
     step_num: usize,
     fb: &FindBitmapMeta,
-    vars_map: &HashMap<i64, VarMeta>,
+    vars_map: &HashMap<i64, (usize, VarMeta)>,
     existing_bitmaps: &HashSet<i64>,
     errors: &mut Vec<AutomationLintError>,
 ) {
@@ -742,10 +815,10 @@ fn validate_output_var(
     var_id: i64,
     output_name: &str,
     expected_type: &str,
-    vars_map: &HashMap<i64, VarMeta>,
+    vars_map: &HashMap<i64, (usize, VarMeta)>,
     errors: &mut Vec<AutomationLintError>,
 ) {
-    if let Some(v) = vars_map.get(&var_id)
+    if let Some((_, v)) = vars_map.get(&var_id)
         && v.var_type != expected_type
     {
         errors.push(AutomationLintError {
@@ -763,13 +836,13 @@ fn validate_branch(
     sid: i64,
     step_num: usize,
     b: &BranchMeta,
-    step_map: &HashMap<i64, StepMeta>,
+    step_id_to_idx: &HashMap<i64, usize>,
     existing_bitmaps: &HashSet<i64>,
     errors: &mut Vec<AutomationLintError>,
 ) {
     match b.on_match_step_id {
         Some(target_id) => {
-            if !step_map.contains_key(&target_id) {
+            if !step_id_to_idx.contains_key(&target_id) {
                 errors.push(AutomationLintError {
                     step_id: Some(sid),
                     step_number: Some(step_num),
@@ -791,7 +864,7 @@ fn validate_branch(
 
     match b.on_no_match_step_id {
         Some(target_id) => {
-            if !step_map.contains_key(&target_id) {
+            if !step_id_to_idx.contains_key(&target_id) {
                 errors.push(AutomationLintError {
                     step_id: Some(sid),
                     step_number: Some(step_num),
@@ -877,5 +950,60 @@ mod tests {
             message: "Automation has no active steps.".to_string(),
         };
         assert_eq!(format!("{}", err2), "Automation has no active steps.");
+    }
+
+    #[test]
+    fn test_var_bitset_operations() {
+        let mut bs = VarBitSet::empty(10);
+        assert!(!bs.contains(0));
+
+        bs.set(0);
+        bs.set(5);
+        assert!(bs.contains(0));
+        assert!(bs.contains(5));
+        assert!(!bs.contains(1));
+
+        let all = VarBitSet::all(10);
+        assert!(all.contains(0));
+        assert!(all.contains(9));
+        assert!(!all.contains(10));
+
+        let mut b1 = VarBitSet::all(10);
+        let mut b2 = VarBitSet::empty(10);
+        b2.set(3);
+
+        b1.intersect_with(&b2);
+        assert!(!b1.contains(0));
+        assert!(b1.contains(3));
+
+        b1.union_with(&all);
+        assert!(b1.contains(0));
+    }
+
+    #[test]
+    fn test_var_bitset_operations_large() {
+        // Test with 150 variables (> 2 x 64 bits)
+        let num_vars = 150;
+        let mut empty = VarBitSet::empty(num_vars);
+        let all = VarBitSet::all(num_vars);
+
+        assert!(!empty.contains(0));
+        assert!(!empty.contains(65));
+        assert!(!empty.contains(149));
+
+        assert!(all.contains(0));
+        assert!(all.contains(64));
+        assert!(all.contains(149));
+        assert!(!all.contains(150));
+
+        // Union empty with set bit at index 100
+        empty.set(100);
+        assert!(empty.contains(100));
+
+        let mut intersected = all.clone();
+        intersected.intersect_with(&empty);
+        assert!(!intersected.contains(0));
+        assert!(intersected.contains(100));
+        assert!(!intersected.contains(101));
     }
 }
