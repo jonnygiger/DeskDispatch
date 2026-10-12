@@ -11,12 +11,12 @@ type HmacSha256 = Hmac<Sha256>;
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 
 pub fn encode_hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        s.push(HEX_CHARS[(b >> 4) as usize] as char);
-        s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
+    let mut buf = vec![0u8; bytes.len() * 2];
+    for (i, &b) in bytes.iter().enumerate() {
+        buf[i * 2] = HEX_CHARS[(b >> 4) as usize];
+        buf[i * 2 + 1] = HEX_CHARS[(b & 0x0f) as usize];
     }
-    s
+    String::from_utf8(buf).unwrap_or_default()
 }
 
 const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

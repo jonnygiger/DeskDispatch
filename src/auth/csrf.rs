@@ -19,12 +19,7 @@ pub fn generate_csrf_token(session_id: Uuid, session_secret: &str) -> String {
     let str_uuid = session_id.hyphenated().encode_lower(&mut buf);
     mac.update(str_uuid.as_bytes());
     let result = mac.finalize();
-    let mut token = String::with_capacity(64);
-    for b in result.into_bytes() {
-        use std::fmt::Write;
-        let _ = write!(token, "{:02x}", b);
-    }
-    token
+    crate::storage::encode_hex(&result.into_bytes())
 }
 
 pub fn validate_csrf_token(token: &str, expected_token: &str) -> bool {
@@ -79,25 +74,34 @@ where
             }
         };
 
-        let mut provided_csrf: Option<String> = parts
-            .headers
-            .get("X-CSRF-Token")
-            .and_then(|h| h.to_str().ok())
-            .map(|s| s.to_string());
-
-        if provided_csrf.is_none()
-            && let Ok(params) =
-                serde_urlencoded::from_bytes::<std::collections::HashMap<String, String>>(&bytes)
-        {
-            provided_csrf = params.get("csrf_token").cloned();
+        #[derive(serde::Deserialize)]
+        struct CsrfExtractor<'a> {
+            #[serde(borrow)]
+            csrf_token: Option<std::borrow::Cow<'a, str>>,
         }
 
-        let csrf = match provided_csrf {
-            Some(c) => c,
-            None => return Err((StatusCode::FORBIDDEN, "Missing CSRF token").into_response()),
+        let header_csrf = parts
+            .headers
+            .get("X-CSRF-Token")
+            .and_then(|h| h.to_str().ok());
+
+        let body_csrf = if header_csrf.is_none() {
+            serde_urlencoded::from_bytes::<CsrfExtractor>(&bytes)
+                .ok()
+                .and_then(|ext| ext.csrf_token)
+        } else {
+            None
         };
 
-        if !validate_csrf_token(&csrf, &user.csrf_token) {
+        let csrf = match (header_csrf, &body_csrf) {
+            (Some(c), _) => c,
+            (None, Some(c)) => c.as_ref(),
+            (None, None) => {
+                return Err((StatusCode::FORBIDDEN, "Missing CSRF token").into_response());
+            }
+        };
+
+        if !validate_csrf_token(csrf, &user.csrf_token) {
             return Err((StatusCode::FORBIDDEN, "Invalid CSRF token").into_response());
         }
 
