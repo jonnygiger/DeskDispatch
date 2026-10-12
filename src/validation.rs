@@ -125,15 +125,14 @@ impl VarBitSet {
             .is_some_and(|w| (w & (1u64 << b_idx)) != 0)
     }
 
-    fn union_with(&mut self, other: &Self) {
-        for (a, b) in self.words.iter_mut().zip(&other.words) {
-            *a |= *b;
-        }
-    }
-
-    fn intersect_with(&mut self, other: &Self) {
-        for (a, b) in self.words.iter_mut().zip(&other.words) {
-            *a &= *b;
+    /// Intersects `self` in-place with `(pred_inits | pred_writes)` for predecessor node `p`.
+    fn intersect_with_pred_output(&mut self, pred_inits: &Self, pred_writes: &Self) {
+        for (w, (&a, &b)) in self
+            .words
+            .iter_mut()
+            .zip(pred_inits.words.iter().zip(&pred_writes.words))
+        {
+            *w &= a | b;
         }
     }
 }
@@ -539,9 +538,7 @@ pub async fn validate_automation_for_activation(
             // New inits for step `i` is the INTERSECTION of (inits[p] | writes[p]) across all predecessors `p`
             let mut new_inits = VarBitSet::all(num_vars);
             for &p in preds {
-                let mut pred_out = step_inits[p].clone();
-                pred_out.union_with(&step_writes[p]);
-                new_inits.intersect_with(&pred_out);
+                new_inits.intersect_with_pred_output(&step_inits[p], &step_writes[p]);
             }
 
             if new_inits != step_inits[i] {
@@ -970,14 +967,12 @@ mod tests {
 
         let mut b1 = VarBitSet::all(10);
         let mut b2 = VarBitSet::empty(10);
+        let writes = VarBitSet::empty(10);
         b2.set(3);
 
-        b1.intersect_with(&b2);
+        b1.intersect_with_pred_output(&b2, &writes);
         assert!(!b1.contains(0));
         assert!(b1.contains(3));
-
-        b1.union_with(&all);
-        assert!(b1.contains(0));
     }
 
     #[test]
@@ -1001,7 +996,8 @@ mod tests {
         assert!(empty.contains(100));
 
         let mut intersected = all.clone();
-        intersected.intersect_with(&empty);
+        let empty_writes = VarBitSet::empty(num_vars);
+        intersected.intersect_with_pred_output(&empty, &empty_writes);
         assert!(!intersected.contains(0));
         assert!(intersected.contains(100));
         assert!(!intersected.contains(101));

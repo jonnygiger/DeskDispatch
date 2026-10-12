@@ -450,7 +450,8 @@ pub async fn get_next_assignment_handler(
         if let Some(row) = select_res {
             let task_run_id: i64 = row.get("task_run_id");
             let automation_id: i64 = row.get("automation_id");
-            let existing_dispatched: Option<serde_json::Value> = row.get("dispatched_automation_json");
+            let existing_dispatched: Option<serde_json::Value> =
+                row.get("dispatched_automation_json");
             let parameter_overrides: Option<serde_json::Value> = row.get("parameter_overrides");
 
             let automation_json = match existing_dispatched {
@@ -477,7 +478,8 @@ pub async fn get_next_assignment_handler(
                     } else {
                         Some(&overrides_map)
                     };
-                    fetch_full_automation_json_with_overrides(&mut tx, automation_id, overrides_ref).await?
+                    fetch_full_automation_json_with_overrides(&mut tx, automation_id, overrides_ref)
+                        .await?
                 }
             };
 
@@ -1108,7 +1110,13 @@ pub async fn post_task_run_screenshot_commit_with_key_handler(
     if req.object_key.is_none() {
         req.object_key = Some(object_key);
     }
-    post_task_run_screenshot_commit_handler(worker, State(state), Path(task_run_id), Some(Json(req))).await
+    post_task_run_screenshot_commit_handler(
+        worker,
+        State(state),
+        Path(task_run_id),
+        Some(Json(req)),
+    )
+    .await
 }
 
 #[tracing::instrument(skip(worker, state, payload))]

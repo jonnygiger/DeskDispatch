@@ -358,7 +358,10 @@ impl SimulatedWorker {
         task_run_id: i64,
         api_key: &str,
     ) -> Result<TaskRunResponse, String> {
-        let url = format!("{}/api/v1/workers/task-runs/{}", self.config.server_url, task_run_id);
+        let url = format!(
+            "{}/api/v1/workers/task-runs/{}",
+            self.config.server_url, task_run_id
+        );
         let resp = self
             .client
             .get(&url)
@@ -829,7 +832,10 @@ mod tests {
 
         let worker = SimulatedWorker::new(config);
         let task_run_id = 99;
-        let url = format!("{}/api/v1/workers/task-runs/{}", worker.config.server_url, task_run_id);
+        let url = format!(
+            "{}/api/v1/workers/task-runs/{}",
+            worker.config.server_url, task_run_id
+        );
         assert_eq!(url, "http://127.0.0.1:3000/api/v1/workers/task-runs/99");
     }
 }
