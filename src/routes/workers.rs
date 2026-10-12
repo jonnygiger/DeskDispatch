@@ -708,17 +708,17 @@ pub async fn post_create_worker_handler(
         .into_response();
     }
 
-    if let Some(mac_str) = mac_address {
-        if let Err(e) = crate::wol::parse_mac_address(mac_str) {
-            return HtmlTemplate(WorkerNewTemplate {
-                user,
-                hostname: hostname.to_string(),
-                display_name: display_name.to_string(),
-                mac_address: mac_str.to_string(),
-                error: Some(format!("Invalid MAC address: {}", e)),
-            })
-            .into_response();
-        }
+    if let Some(mac_str) = mac_address
+        && let Err(e) = crate::wol::parse_mac_address(mac_str)
+    {
+        return HtmlTemplate(WorkerNewTemplate {
+            user,
+            hostname: hostname.to_string(),
+            display_name: display_name.to_string(),
+            mac_address: mac_str.to_string(),
+            error: Some(format!("Invalid MAC address: {}", e)),
+        })
+        .into_response();
     }
 
     let token = generate_registration_token();
@@ -1112,14 +1112,14 @@ pub async fn post_edit_worker_handler(
             .into_response();
     }
 
-    if let Some(mac_str) = mac_address {
-        if let Err(e) = crate::wol::parse_mac_address(mac_str) {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Invalid MAC address: {}", e),
-            )
-                .into_response();
-        }
+    if let Some(mac_str) = mac_address
+        && let Err(e) = crate::wol::parse_mac_address(mac_str)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid MAC address: {}", e),
+        )
+            .into_response();
     }
 
     let mut tx = match state.db.begin().await {
