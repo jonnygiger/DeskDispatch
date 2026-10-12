@@ -484,7 +484,7 @@ pub async fn post_bitmaps_handler(
     let redirect_url = format!(
         "{}/bitmaps/commit?name={}",
         base_url,
-        urlencoding::encode(&bitmap_name)
+        crate::auth::flash::url_encode(&bitmap_name)
     );
 
     let storage = state.storage_service();
@@ -546,7 +546,7 @@ pub async fn post_automation_bitmaps_handler(
     let redirect_url = format!(
         "{}/bitmaps/commit?name={}&automation_id={}",
         base_url,
-        urlencoding::encode(&bitmap_name),
+        crate::auth::flash::url_encode(&bitmap_name),
         id
     );
 

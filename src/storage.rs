@@ -4,23 +4,30 @@ use base64::Engine;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
-use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
 
 type HmacSha256 = Hmac<Sha256>;
 
-fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key length valid");
     mac.update(data);
-    mac.finalize().into_bytes().to_vec()
+    mac.finalize().into_bytes().into()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct PresignedPost {
     pub url: String,
-    pub fields: HashMap<String, String>,
     pub ordered_fields: Vec<(String, String)>,
+}
+
+impl PresignedPost {
+    pub fn get_field(&self, name: &str) -> Option<&str> {
+        self.ordered_fields
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 #[derive(Debug)]
@@ -320,21 +327,11 @@ pub fn generate_presigned_post_policy(
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
 
     let signature_bytes = hmac_sha256(&k_signing, policy_base64.as_bytes());
-    let signature_hex = hex::encode(signature_bytes);
-
-    let mut fields = HashMap::new();
-    fields.insert("key".to_string(), object_key.to_string());
-    fields.insert(
-        "x-amz-algorithm".to_string(),
-        "AWS4-HMAC-SHA256".to_string(),
-    );
-    fields.insert("x-amz-credential".to_string(), credential.clone());
-    fields.insert("x-amz-date".to_string(), amz_date.clone());
-    if let Some(redirect) = success_action_redirect {
-        fields.insert("success_action_redirect".to_string(), redirect.to_string());
+    let mut signature_hex = String::with_capacity(64);
+    for b in signature_bytes {
+        use std::fmt::Write;
+        let _ = write!(signature_hex, "{:02x}", b);
     }
-    fields.insert("policy".to_string(), policy_base64.clone());
-    fields.insert("x-amz-signature".to_string(), signature_hex.clone());
 
     let mut ordered_fields = vec![
         ("key".to_string(), object_key.to_string()),
@@ -361,7 +358,6 @@ pub fn generate_presigned_post_policy(
 
     Ok(PresignedPost {
         url,
-        fields,
         ordered_fields,
     })
 }
@@ -488,23 +484,23 @@ mod tests {
 
         assert_eq!(presigned_post.url, "http://localhost:9000/test-bucket");
         assert_eq!(
-            presigned_post.fields.get("key").unwrap(),
+            presigned_post.get_field("key").unwrap(),
             "bitmaps/button.png"
         );
         assert_eq!(
-            presigned_post.fields.get("x-amz-algorithm").unwrap(),
+            presigned_post.get_field("x-amz-algorithm").unwrap(),
             "AWS4-HMAC-SHA256"
         );
 
-        let credential = presigned_post.fields.get("x-amz-credential").unwrap();
+        let credential = presigned_post.get_field("x-amz-credential").unwrap();
         assert!(credential.starts_with("test_access_key/"));
         assert!(credential.ends_with("/us-east-1/s3/aws4_request"));
 
-        assert!(presigned_post.fields.contains_key("x-amz-date"));
-        assert!(presigned_post.fields.contains_key("policy"));
-        assert!(presigned_post.fields.contains_key("x-amz-signature"));
+        assert!(presigned_post.get_field("x-amz-date").is_some());
+        assert!(presigned_post.get_field("policy").is_some());
+        assert!(presigned_post.get_field("x-amz-signature").is_some());
 
-        let policy_base64 = presigned_post.fields.get("policy").unwrap();
+        let policy_base64 = presigned_post.get_field("policy").unwrap();
         let decoded_bytes = base64::engine::general_purpose::STANDARD
             .decode(policy_base64)
             .unwrap();
@@ -561,10 +557,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(post.url, "http://s3.local:9000/deskdispatch-bucket");
-        assert_eq!(post.fields.get("key").unwrap(), "bitmaps/upload_1.png");
+        assert_eq!(post.get_field("key").unwrap(), "bitmaps/upload_1.png");
         assert!(
-            post.fields
-                .get("x-amz-credential")
+            post.get_field("x-amz-credential")
                 .unwrap()
                 .starts_with("my_key/")
         );
