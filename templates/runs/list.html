@@ -92,7 +92,7 @@
                     <td>{{ run.triggered_by }}</td>
                     <td>{{ run.formatted_queued_at() }}</td>
                     <td>{{ run.duration_display() }}</td>
-                    <td><a href="/runs/{{ run.id }}" class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">View</a></td>
+                    <td><a href="/runs/{{ run.id }}" class="btn btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" aria-label="View task run #{{ run.id }}">View</a></td>
                 </tr>
                 {% endfor %}
             </tbody>
