@@ -47,20 +47,23 @@ impl FlashMessage {
     }
 }
 
+const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
+
 pub fn url_encode(input: &str) -> String {
-    let mut encoded = String::with_capacity(input.len());
+    let mut encoded = Vec::with_capacity(input.len());
     for b in input.bytes() {
         match b {
             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(b as char);
+                encoded.push(b);
             }
             _ => {
-                use std::fmt::Write;
-                let _ = write!(encoded, "%{:02X}", b);
+                encoded.push(b'%');
+                encoded.push(HEX_CHARS_UPPER[(b >> 4) as usize]);
+                encoded.push(HEX_CHARS_UPPER[(b & 0x0f) as usize]);
             }
         }
     }
-    encoded
+    String::from_utf8(encoded).unwrap_or_default()
 }
 
 pub fn url_decode(input: &str) -> Option<String> {
