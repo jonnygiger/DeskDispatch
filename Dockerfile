@@ -8,6 +8,8 @@ WORKDIR /usr/src/app
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    pkg-config \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-build dependencies to leverage Docker layer caching

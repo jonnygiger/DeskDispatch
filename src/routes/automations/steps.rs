@@ -11,6 +11,23 @@ use crate::AppState;
 use crate::auth::{AuthUser, CsrfForm, log_audit};
 use crate::routes::auth::HtmlTemplate;
 
+// ============================================================================
+// Helper Functions for Validation, Delay & Step Database Operations
+// ============================================================================
+
+#[inline]
+pub fn seconds_to_post_delay_ms(post_delay_seconds: Option<f64>) -> i32 {
+    ((post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32
+}
+
+#[inline]
+pub fn sanitize_label(label: Option<&str>) -> Option<String> {
+    label
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
 pub fn validate_literal_or_reference<T>(
     mode: Option<&str>,
     literal: Option<T>,
@@ -61,6 +78,104 @@ pub fn validate_literal_or_reference<T>(
         _ => unreachable!(),
     }
 }
+
+async fn get_next_step_position<'e, E>(executor: E, automation_id: i64) -> f64
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let max_pos_row = sqlx::query(
+        "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
+    )
+    .bind(automation_id)
+    .fetch_one(executor)
+    .await;
+
+    match max_pos_row {
+        Ok(r) => r
+            .get::<Option<f64>, _>("max_pos")
+            .map(|p| p + 10.0)
+            .unwrap_or(10.0),
+        _ => 10.0,
+    }
+}
+
+async fn insert_base_step(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    automation_id: i64,
+    step_type: &str,
+    label: Option<&str>,
+    post_delay_seconds: Option<f64>,
+) -> Result<i64, sqlx::Error> {
+    let next_pos = get_next_step_position(&mut **tx, automation_id).await;
+    let post_delay_ms = seconds_to_post_delay_ms(post_delay_seconds);
+    let clean_label = sanitize_label(label);
+
+    let row = sqlx::query(
+        "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(automation_id)
+    .bind(next_pos)
+    .bind(step_type)
+    .bind(&clean_label)
+    .bind(post_delay_ms)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    Ok(row.get("id"))
+}
+
+async fn update_base_step(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    automation_id: i64,
+    step_id: i64,
+    label: Option<&str>,
+    post_delay_seconds: Option<f64>,
+) -> Result<(), sqlx::Error> {
+    let post_delay_ms = seconds_to_post_delay_ms(post_delay_seconds);
+    let clean_label = sanitize_label(label);
+
+    sqlx::query(
+        "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+    )
+    .bind(&clean_label)
+    .bind(post_delay_ms)
+    .bind(step_id)
+    .bind(automation_id)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+        .bind(automation_id)
+        .execute(&mut **tx)
+        .await?;
+
+    Ok(())
+}
+
+async fn commit_step_tx_and_audit(
+    db: &PgPool,
+    tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: i64,
+    action: &str,
+    step_id: i64,
+    audit_details: serde_json::Value,
+) {
+    if tx.commit().await.is_ok() {
+        let _ = log_audit(
+            db,
+            Some(user_id),
+            action,
+            "automation_step",
+            Some(step_id),
+            Some(audit_details),
+        )
+        .await;
+    }
+}
+
+// ============================================================================
+// Query & Summary Formatting Helpers
+// ============================================================================
 
 pub async fn fetch_automation_step_options(
     db: &PgPool,
@@ -227,9 +342,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         return Vec::new();
     }
 
-    // Build target step label map in memory (step_id -> "Step N (label/type)")
     let mut step_target_map: std::collections::HashMap<i64, String> =
-        std::collections::HashMap::new();
+        std::collections::HashMap::with_capacity(raw_steps.len());
     for (idx, row) in raw_steps.iter().enumerate() {
         let step_id: i64 = row.get("id");
         let step_num = idx + 1;
@@ -243,14 +357,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         step_target_map.insert(step_id, target_str);
     }
 
-    // Run 5 bulk subtype queries concurrently across PgPool connections using tokio::join!
-    let (
-        kp_res,
-        mc_res,
-        fp_res,
-        fb_res,
-        br_res,
-    ) = tokio::join!(
+    let (kp_res, mc_res, fp_res, fb_res, br_res) = tokio::join!(
         sqlx::query(
             r#"
             SELECT skp.step_id, skp.key_combo
@@ -318,11 +425,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     let key_presses_map: std::collections::HashMap<i64, String> = kp_res
         .unwrap_or_default()
         .into_iter()
-        .map(|r| {
-            let step_id: i64 = r.get("step_id");
-            let key_combo: String = r.get("key_combo");
-            (step_id, key_combo)
-        })
+        .map(|r| (r.get("step_id"), r.get("key_combo")))
         .collect();
 
     let mouse_clicks_map: std::collections::HashMap<
@@ -340,24 +443,16 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .unwrap_or_default()
         .into_iter()
         .map(|r| {
-            let step_id: i64 = r.get("step_id");
-            let x: Option<i32> = r.get("x");
-            let y: Option<i32> = r.get("y");
-            let x_var_name: Option<String> = r.get("x_var_name");
-            let y_var_name: Option<String> = r.get("y_var_name");
-            let region_var_name: Option<String> = r.get("region_var_name");
-            let button: String = r.get("button");
-            let click_type: String = r.get("click_type");
             (
-                step_id,
+                r.get("step_id"),
                 (
-                    x,
-                    y,
-                    x_var_name,
-                    y_var_name,
-                    region_var_name,
-                    button,
-                    click_type,
+                    r.get("x"),
+                    r.get("y"),
+                    r.get("x_var_name"),
+                    r.get("y_var_name"),
+                    r.get("region_var_name"),
+                    r.get("button"),
+                    r.get("click_type"),
                 ),
             )
         })
@@ -367,23 +462,17 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .unwrap_or_default()
         .into_iter()
         .map(|r| {
-            let step_id: i64 = r.get("step_id");
-            let x: i32 = r.get("x");
-            let y: i32 = r.get("y");
-            let var_name: Option<String> = r.get("var_name");
-            (step_id, (x, y, var_name))
+            (
+                r.get("step_id"),
+                (r.get("x"), r.get("y"), r.get("var_name")),
+            )
         })
         .collect();
 
     let find_bitmap_map: std::collections::HashMap<i64, (String, Option<String>)> = fb_res
         .unwrap_or_default()
         .into_iter()
-        .map(|r| {
-            let step_id: i64 = r.get("step_id");
-            let bitmap_name: String = r.get("bitmap_name");
-            let var_name: Option<String> = r.get("var_name");
-            (step_id, (bitmap_name, var_name))
-        })
+        .map(|r| (r.get("step_id"), (r.get("bitmap_name"), r.get("var_name"))))
         .collect();
 
     let branch_map: std::collections::HashMap<
@@ -404,30 +493,19 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .unwrap_or_default()
         .into_iter()
         .map(|r| {
-            let step_id: i64 = r.get("step_id");
-            let condition_type: String = r.get("condition_type");
-            let x: Option<i32> = r.get("x");
-            let y: Option<i32> = r.get("y");
-            let expected_r: Option<i16> = r.get("expected_r");
-            let expected_g: Option<i16> = r.get("expected_g");
-            let expected_b: Option<i16> = r.get("expected_b");
-            let tolerance: Option<i16> = r.get("tolerance");
-            let bitmap_name: Option<String> = r.get("bitmap_name");
-            let on_match_step_id: Option<i64> = r.get("on_match_step_id");
-            let on_no_match_step_id: Option<i64> = r.get("on_no_match_step_id");
             (
-                step_id,
+                r.get("step_id"),
                 (
-                    condition_type,
-                    x,
-                    y,
-                    expected_r,
-                    expected_g,
-                    expected_b,
-                    tolerance,
-                    bitmap_name,
-                    on_match_step_id,
-                    on_no_match_step_id,
+                    r.get("condition_type"),
+                    r.get("x"),
+                    r.get("y"),
+                    r.get("expected_r"),
+                    r.get("expected_g"),
+                    r.get("expected_b"),
+                    r.get("tolerance"),
+                    r.get("bitmap_name"),
+                    r.get("on_match_step_id"),
+                    r.get("on_no_match_step_id"),
                 ),
             )
         })
@@ -442,82 +520,76 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         let position: f64 = row.get("position");
 
         let description = match step_type.as_str() {
-            "key_press" => {
-                if let Some(combo) = key_presses_map.get(&step_id) {
-                    format!("Press {}", combo)
-                } else {
-                    "Press key".to_string()
-                }
-            }
-            "mouse_click" => {
-                if let Some((x, y, x_var_name, y_var_name, region_var_name, button, click_type)) =
-                    mouse_clicks_map.get(&step_id)
-                {
-                    generate_mouse_click_summary(
-                        *x,
-                        *y,
-                        x_var_name.as_deref(),
-                        y_var_name.as_deref(),
-                        region_var_name.as_deref(),
-                        button,
-                        click_type,
-                    )
-                } else {
-                    "Click mouse".to_string()
-                }
-            }
-            "find_pixel_rgb" => {
-                if let Some((x, y, var_name)) = find_pixel_map.get(&step_id) {
+            "key_press" => key_presses_map
+                .get(&step_id)
+                .map(|combo| format!("Press {}", combo))
+                .unwrap_or_else(|| "Press key".to_string()),
+            "mouse_click" => mouse_clicks_map
+                .get(&step_id)
+                .map(
+                    |(x, y, x_var_name, y_var_name, region_var_name, button, click_type)| {
+                        generate_mouse_click_summary(
+                            *x,
+                            *y,
+                            x_var_name.as_deref(),
+                            y_var_name.as_deref(),
+                            region_var_name.as_deref(),
+                            button,
+                            click_type,
+                        )
+                    },
+                )
+                .unwrap_or_else(|| "Click mouse".to_string()),
+            "find_pixel_rgb" => find_pixel_map
+                .get(&step_id)
+                .map(|(x, y, var_name)| {
                     generate_find_pixel_rgb_summary(*x, *y, var_name.as_deref())
-                } else {
-                    "Read pixel at coordinate".to_string()
-                }
-            }
-            "find_bitmap" => {
-                if let Some((bitmap_name, var_name)) = find_bitmap_map.get(&step_id) {
+                })
+                .unwrap_or_else(|| "Read pixel at coordinate".to_string()),
+            "find_bitmap" => find_bitmap_map
+                .get(&step_id)
+                .map(|(bitmap_name, var_name)| {
                     generate_find_bitmap_summary(bitmap_name, var_name.as_deref())
-                } else {
-                    "Search for bitmap on screen".to_string()
-                }
-            }
-            "branch" => {
-                if let Some((
-                    condition_type,
-                    x,
-                    y,
-                    expected_r,
-                    expected_g,
-                    expected_b,
-                    tolerance,
-                    bitmap_name,
-                    match_id,
-                    no_match_id,
-                )) = branch_map.get(&step_id)
-                {
-                    let match_target_str = match_id
-                        .and_then(|m_id| step_target_map.get(&m_id).cloned())
-                        .unwrap_or_else(|| "Next Step".to_string());
-
-                    let no_match_target_str = no_match_id
-                        .and_then(|n_id| step_target_map.get(&n_id).cloned())
-                        .unwrap_or_else(|| "Next Step".to_string());
-
-                    generate_branch_summary(
+                })
+                .unwrap_or_else(|| "Search for bitmap on screen".to_string()),
+            "branch" => branch_map
+                .get(&step_id)
+                .map(
+                    |(
                         condition_type,
-                        *x,
-                        *y,
-                        *expected_r,
-                        *expected_g,
-                        *expected_b,
-                        *tolerance,
-                        bitmap_name.as_deref(),
-                        Some(&match_target_str),
-                        Some(&no_match_target_str),
-                    )
-                } else {
-                    "BRANCH evaluation".to_string()
-                }
-            }
+                        x,
+                        y,
+                        expected_r,
+                        expected_g,
+                        expected_b,
+                        tolerance,
+                        bitmap_name,
+                        match_id,
+                        no_match_id,
+                    )| {
+                        let match_target_str = match_id
+                            .and_then(|m_id| step_target_map.get(&m_id).cloned())
+                            .unwrap_or_else(|| "Next Step".to_string());
+
+                        let no_match_target_str = no_match_id
+                            .and_then(|n_id| step_target_map.get(&n_id).cloned())
+                            .unwrap_or_else(|| "Next Step".to_string());
+
+                        generate_branch_summary(
+                            condition_type,
+                            *x,
+                            *y,
+                            *expected_r,
+                            *expected_g,
+                            *expected_b,
+                            *tolerance,
+                            bitmap_name.as_deref(),
+                            Some(&match_target_str),
+                            Some(&no_match_target_str),
+                        )
+                    },
+                )
+                .unwrap_or_else(|| "BRANCH evaluation".to_string()),
             _ => "Unknown step".to_string(),
         };
 
@@ -736,6 +808,10 @@ async fn get_step_target_label(
     }
 }
 
+// ============================================================================
+// GET Handlers for New Step Creation Forms
+// ============================================================================
+
 /// GET /automations/{id}/steps/new
 #[tracing::instrument(skip(user))]
 pub async fn get_step_type_picker_handler(
@@ -780,8 +856,10 @@ pub async fn get_new_branch_step_handler(
     let condition_type = query
         .condition_type
         .unwrap_or_else(|| "pixel_rgb".to_string());
-    let steps = fetch_automation_step_options(&state.db, id, None).await;
-    let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+    let (steps, bitmaps) = tokio::join!(
+        fetch_automation_step_options(&state.db, id, None),
+        fetch_available_bitmaps(&state.db, id)
+    );
 
     HtmlTemplate(StepBranchTemplate {
         user,
@@ -821,8 +899,10 @@ pub async fn get_new_find_bitmap_step_handler(
     Query(query): Query<NewFindBitmapQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
-    let bitmaps = fetch_available_bitmaps(&state.db, id).await;
-    let variables = fetch_automation_variables(&state.db, id).await;
+    let (bitmaps, variables) = tokio::join!(
+        fetch_available_bitmaps(&state.db, id),
+        fetch_automation_variables(&state.db, id)
+    );
 
     HtmlTemplate(StepFindBitmapTemplate {
         user,
@@ -909,6 +989,10 @@ pub async fn get_new_mouse_click_step_handler(
     })
 }
 
+// ============================================================================
+// POST Handlers for Step Creation & Editing
+// ============================================================================
+
 /// POST /automations/{id}/steps
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_create_step_handler(
@@ -925,6 +1009,7 @@ pub async fn post_create_step_handler(
 
     let step_type_str = form.step_type.as_deref().unwrap_or("");
 
+    // 1. Branch Step Creation
     if step_type_str == "branch" {
         let condition_type = form
             .condition_type
@@ -951,8 +1036,10 @@ pub async fn post_create_step_handler(
         }
 
         if let Some(err) = error_msg {
-            let steps = fetch_automation_step_options(&state.db, id, None).await;
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+            let (steps, bitmaps) = tokio::join!(
+                fetch_automation_step_options(&state.db, id, None),
+                fetch_available_bitmaps(&state.db, id)
+            );
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepBranchTemplate {
@@ -986,29 +1073,6 @@ pub async fn post_create_step_handler(
                 .into_response();
         }
 
-        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s: &&str| !s.is_empty())
-            .map(String::from);
-
-        let max_pos_row = sqlx::query(
-            "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
-        )
-        .bind(id)
-        .fetch_one(&state.db)
-        .await;
-
-        let next_pos: f64 = match max_pos_row {
-            Ok(r) => {
-                let max_pos: Option<f64> = r.get("max_pos");
-                max_pos.map(|p| p + 10.0).unwrap_or(10.0)
-            }
-            _ => 10.0,
-        };
-
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
             Err(e) => {
@@ -1017,18 +1081,16 @@ pub async fn post_create_step_handler(
             }
         };
 
-        let step_row = sqlx::query(
-            "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'branch', $3, $4) RETURNING id",
+        let step_id = match insert_base_step(
+            &mut tx,
+            id,
+            "branch",
+            form.label.as_deref(),
+            form.post_delay_seconds,
         )
-        .bind(id)
-        .bind(next_pos)
-        .bind(&label)
-        .bind(post_delay_ms)
-        .fetch_one(&mut *tx)
-        .await;
-
-        let step_id: i64 = match step_row {
-            Ok(r) => r.get("id"),
+        .await
+        {
+            Ok(sid) => sid,
             Err(e) => {
                 tracing::error!("Failed to insert branch step: {}", e);
                 return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -1091,30 +1153,28 @@ pub async fn post_create_step_handler(
             .execute(&mut *tx)
             .await;
 
-        if tx.commit().await.is_ok() {
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "create_step",
-                "automation_step",
-                Some(step_id),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "step_type": "branch",
-                    "condition_type": condition_type,
-                    "on_match_step_id": form.on_match_step_id,
-                    "on_no_match_step_id": form.on_no_match_step_id
-                })),
-            )
-            .await;
-        }
+        commit_step_tx_and_audit(
+            &state.db,
+            tx,
+            user.id,
+            "create_step",
+            step_id,
+            serde_json::json!({
+                "automation_id": id,
+                "step_type": "branch",
+                "condition_type": condition_type,
+                "on_match_step_id": form.on_match_step_id,
+                "on_no_match_step_id": form.on_no_match_step_id
+            }),
+        )
+        .await;
 
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
+    // 2. Find Pixel RGB Step Creation
     if step_type_str == "find_pixel_rgb" {
         let (final_x, final_y): (Option<i32>, Option<i32>) = (form.x, form.y);
-
         let variables = fetch_automation_variables(&state.db, id).await;
 
         if final_x.is_none() || final_y.is_none() {
@@ -1163,29 +1223,6 @@ pub async fn post_create_step_handler(
                 .into_response();
         }
 
-        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s: &&str| !s.is_empty())
-            .map(String::from);
-
-        let max_pos_row = sqlx::query(
-            "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
-        )
-        .bind(id)
-        .fetch_one(&state.db)
-        .await;
-
-        let next_pos: f64 = match max_pos_row {
-            Ok(r) => {
-                let max_pos: Option<f64> = r.get("max_pos");
-                max_pos.map(|p| p + 10.0).unwrap_or(10.0)
-            }
-            _ => 10.0,
-        };
-
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
             Err(e) => {
@@ -1194,18 +1231,16 @@ pub async fn post_create_step_handler(
             }
         };
 
-        let step_row = sqlx::query(
-            "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'find_pixel_rgb', $3, $4) RETURNING id",
+        let step_id = match insert_base_step(
+            &mut tx,
+            id,
+            "find_pixel_rgb",
+            form.label.as_deref(),
+            form.post_delay_seconds,
         )
-        .bind(id)
-        .bind(next_pos)
-        .bind(&label)
-        .bind(post_delay_ms)
-        .fetch_one(&mut *tx)
-        .await;
-
-        let step_id: i64 = match step_row {
-            Ok(r) => r.get("id"),
+        .await
+        {
+            Ok(sid) => sid,
             Err(e) => {
                 tracing::error!("Failed to insert step: {}", e);
                 return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -1232,33 +1267,35 @@ pub async fn post_create_step_handler(
             .execute(&mut *tx)
             .await;
 
-        if tx.commit().await.is_ok() {
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "create_step",
-                "automation_step",
-                Some(step_id),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "step_type": "find_pixel_rgb",
-                    "x": final_x,
-                    "y": final_y,
-                    "output_variable_id": form.output_variable_id
-                })),
-            )
-            .await;
-        }
+        commit_step_tx_and_audit(
+            &state.db,
+            tx,
+            user.id,
+            "create_step",
+            step_id,
+            serde_json::json!({
+                "automation_id": id,
+                "step_type": "find_pixel_rgb",
+                "x": final_x,
+                "y": final_y,
+                "output_variable_id": form.output_variable_id
+            }),
+        )
+        .await;
 
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
+    // 3. Find Bitmap Step Creation
     if step_type_str == "find_bitmap" {
+        let (bitmaps, variables) = tokio::join!(
+            fetch_available_bitmaps(&state.db, id),
+            fetch_automation_variables(&state.db, id)
+        );
+
         let ref_bitmap_id = match form.reference_bitmap_id {
             Some(id) if id > 0 => id,
             _ => {
-                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
-                let variables = fetch_automation_variables(&state.db, id).await;
                 return (
                     StatusCode::BAD_REQUEST,
                     HtmlTemplate(StepFindBitmapTemplate {
@@ -1288,12 +1325,9 @@ pub async fn post_create_step_handler(
             }
         };
 
-        let variables = fetch_automation_variables(&state.db, id).await;
-
         if let Some(var_id) = form.output_found_variable_id
             && !variables.iter().any(|v| v.id == var_id)
         {
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindBitmapTemplate {
@@ -1328,7 +1362,6 @@ pub async fn post_create_step_handler(
         if let Some(var_id) = form.output_x_variable_id
             && !variables.iter().any(|v| v.id == var_id)
         {
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindBitmapTemplate {
@@ -1363,7 +1396,6 @@ pub async fn post_create_step_handler(
         if let Some(var_id) = form.output_y_variable_id
             && !variables.iter().any(|v| v.id == var_id)
         {
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindBitmapTemplate {
@@ -1398,7 +1430,6 @@ pub async fn post_create_step_handler(
         if let Some(var_id) = form.output_region_variable_id
             && !variables.iter().any(|v| v.id == var_id)
         {
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindBitmapTemplate {
@@ -1430,29 +1461,7 @@ pub async fn post_create_step_handler(
                 .into_response();
         }
 
-        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s: &&str| !s.is_empty())
-            .map(String::from);
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
-
-        let max_pos_row = sqlx::query(
-            "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
-        )
-        .bind(id)
-        .fetch_one(&state.db)
-        .await;
-
-        let next_pos: f64 = match max_pos_row {
-            Ok(r) => {
-                let max_pos: Option<f64> = r.get("max_pos");
-                max_pos.map(|p| p + 10.0).unwrap_or(10.0)
-            }
-            _ => 10.0,
-        };
 
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
@@ -1462,18 +1471,16 @@ pub async fn post_create_step_handler(
             }
         };
 
-        let step_row = sqlx::query(
-            "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'find_bitmap', $3, $4) RETURNING id",
+        let step_id = match insert_base_step(
+            &mut tx,
+            id,
+            "find_bitmap",
+            form.label.as_deref(),
+            form.post_delay_seconds,
         )
-        .bind(id)
-        .bind(next_pos)
-        .bind(&label)
-        .bind(post_delay_ms)
-        .fetch_one(&mut *tx)
-        .await;
-
-        let step_id: i64 = match step_row {
-            Ok(r) => r.get("id"),
+        .await
+        {
+            Ok(sid) => sid,
             Err(e) => {
                 tracing::error!("Failed to insert step: {}", e);
                 return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -1483,8 +1490,8 @@ pub async fn post_create_step_handler(
         let detail_res = sqlx::query(
             r#"
             INSERT INTO step_find_bitmap
-                (step_id, reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                (step_id, reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(step_id)
@@ -1497,6 +1504,7 @@ pub async fn post_create_step_handler(
         .bind(form.output_found_variable_id)
         .bind(form.output_x_variable_id)
         .bind(form.output_y_variable_id)
+        .bind(form.output_region_variable_id)
         .execute(&mut *tx)
         .await;
 
@@ -1510,34 +1518,33 @@ pub async fn post_create_step_handler(
             .execute(&mut *tx)
             .await;
 
-        if tx.commit().await.is_ok() {
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "create_step",
-                "automation_step",
-                Some(step_id),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "step_type": "find_bitmap",
-                    "reference_bitmap_id": ref_bitmap_id,
-                    "search_x": form.search_x,
-                    "search_y": form.search_y,
-                    "search_width": form.search_width,
-                    "search_height": form.search_height,
-                    "match_threshold": match_threshold,
-                    "output_found_variable_id": form.output_found_variable_id,
-                    "output_x_variable_id": form.output_x_variable_id,
-                    "output_y_variable_id": form.output_y_variable_id,
-                    "output_region_variable_id": form.output_region_variable_id
-                })),
-            )
-            .await;
-        }
+        commit_step_tx_and_audit(
+            &state.db,
+            tx,
+            user.id,
+            "create_step",
+            step_id,
+            serde_json::json!({
+                "automation_id": id,
+                "step_type": "find_bitmap",
+                "reference_bitmap_id": ref_bitmap_id,
+                "search_x": form.search_x,
+                "search_y": form.search_y,
+                "search_width": form.search_width,
+                "search_height": form.search_height,
+                "match_threshold": match_threshold,
+                "output_found_variable_id": form.output_found_variable_id,
+                "output_x_variable_id": form.output_x_variable_id,
+                "output_y_variable_id": form.output_y_variable_id,
+                "output_region_variable_id": form.output_region_variable_id
+            }),
+        )
+        .await;
 
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
+    // 4. Mouse Click Step Creation
     let is_mouse_click = step_type_str == "mouse_click"
         || form.click_mode.as_deref() == Some("region")
         || form.region_variable_id.is_some()
@@ -1657,29 +1664,6 @@ pub async fn post_create_step_handler(
         }
         .to_string();
 
-        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s: &&str| !s.is_empty())
-            .map(String::from);
-
-        let max_pos_row = sqlx::query(
-            "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
-        )
-        .bind(id)
-        .fetch_one(&state.db)
-        .await;
-
-        let next_pos: f64 = match max_pos_row {
-            Ok(r) => {
-                let max_pos: Option<f64> = r.get("max_pos");
-                max_pos.map(|p| p + 10.0).unwrap_or(10.0)
-            }
-            _ => 10.0,
-        };
-
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
             Err(e) => {
@@ -1688,18 +1672,16 @@ pub async fn post_create_step_handler(
             }
         };
 
-        let step_row = sqlx::query(
-            "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'mouse_click', $3, $4) RETURNING id",
+        let step_id = match insert_base_step(
+            &mut tx,
+            id,
+            "mouse_click",
+            form.label.as_deref(),
+            form.post_delay_seconds,
         )
-        .bind(id)
-        .bind(next_pos)
-        .bind(&label)
-        .bind(post_delay_ms)
-        .fetch_one(&mut *tx)
-        .await;
-
-        let step_id: i64 = match step_row {
-            Ok(r) => r.get("id"),
+        .await
+        {
+            Ok(sid) => sid,
             Err(e) => {
                 tracing::error!("Failed to insert step: {}", e);
                 return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -1707,13 +1689,14 @@ pub async fn post_create_step_handler(
         };
 
         let detail_res = sqlx::query(
-            "INSERT INTO step_mouse_clicks (step_id, x, y, x_variable_id, y_variable_id, button, click_type) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO step_mouse_clicks (step_id, x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(step_id)
         .bind(final_x)
         .bind(final_y)
         .bind(final_x_var)
         .bind(final_y_var)
+        .bind(final_region_var)
         .bind(&button)
         .bind(&click_type)
         .execute(&mut *tx)
@@ -1729,31 +1712,30 @@ pub async fn post_create_step_handler(
             .execute(&mut *tx)
             .await;
 
-        if tx.commit().await.is_ok() {
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "create_step",
-                "automation_step",
-                Some(step_id),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "step_type": "mouse_click",
-                    "x": final_x,
-                    "y": final_y,
-                    "x_variable_id": final_x_var,
-                    "y_variable_id": final_y_var,
-                    "region_variable_id": final_region_var,
-                    "button": button,
-                    "click_type": click_type
-                })),
-            )
-            .await;
-        }
+        commit_step_tx_and_audit(
+            &state.db,
+            tx,
+            user.id,
+            "create_step",
+            step_id,
+            serde_json::json!({
+                "automation_id": id,
+                "step_type": "mouse_click",
+                "x": final_x,
+                "y": final_y,
+                "x_variable_id": final_x_var,
+                "y_variable_id": final_y_var,
+                "region_variable_id": final_region_var,
+                "button": button,
+                "click_type": click_type
+            }),
+        )
+        .await;
 
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
+    // 5. Key Press Step Creation
     let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
     if key_combo.is_empty() {
         return (
@@ -1773,29 +1755,6 @@ pub async fn post_create_step_handler(
             .into_response();
     }
 
-    let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-    let label = form
-        .label
-        .as_deref()
-        .map(str::trim)
-        .filter(|s: &&str| !s.is_empty())
-        .map(String::from);
-
-    let max_pos_row = sqlx::query(
-        "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await;
-
-    let next_pos: f64 = match max_pos_row {
-        Ok(r) => {
-            let max_pos: Option<f64> = r.get("max_pos");
-            max_pos.map(|p| p + 10.0).unwrap_or(10.0)
-        }
-        _ => 10.0,
-    };
-
     let mut tx = match state.db.begin().await {
         Ok(tx) => tx,
         Err(e) => {
@@ -1804,18 +1763,16 @@ pub async fn post_create_step_handler(
         }
     };
 
-    let step_row = sqlx::query(
-        "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'key_press', $3, $4) RETURNING id",
+    let step_id = match insert_base_step(
+        &mut tx,
+        id,
+        "key_press",
+        form.label.as_deref(),
+        form.post_delay_seconds,
     )
-    .bind(id)
-    .bind(next_pos)
-    .bind(&label)
-    .bind(post_delay_ms)
-    .fetch_one(&mut *tx)
-    .await;
-
-    let step_id: i64 = match step_row {
-        Ok(r) => r.get("id"),
+    .await
+    {
+        Ok(sid) => sid,
         Err(e) => {
             tracing::error!("Failed to insert step: {}", e);
             return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -1834,26 +1791,20 @@ pub async fn post_create_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let update_auto = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
+    let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
         .bind(id)
         .execute(&mut *tx)
         .await;
 
-    if let Err(e) = update_auto {
-        tracing::error!("Failed to update automation updated_at: {}", e);
-    }
-
-    if tx.commit().await.is_ok() {
-        let _ = log_audit(
-            &state.db,
-            Some(user.id),
-            "create_step",
-            "automation_step",
-            Some(step_id),
-            Some(serde_json::json!({ "automation_id": id, "step_type": "key_press", "key_combo": key_combo })),
-        )
-        .await;
-    }
+    commit_step_tx_and_audit(
+        &state.db,
+        tx,
+        user.id,
+        "create_step",
+        step_id,
+        serde_json::json!({ "automation_id": id, "step_type": "key_press", "key_combo": key_combo }),
+    )
+    .await;
 
     Redirect::to(&format!("/automations/{}", id)).into_response()
 }
@@ -1869,7 +1820,7 @@ pub async fn get_edit_step_handler(
     let csrf_token = user.csrf_token.clone();
 
     let step_row = match sqlx::query(
-        "SELECT step_type, label, post_delay_ms FROM automation_steps WHERE id = $1 AND automation_id = $2",
+        "SELECT step_type, label, post_delay_ms FROM automation_steps WHERE id = $1 AND automation_id = $2 AND deleted_at IS NULL",
     )
     .bind(sid)
     .bind(id)
@@ -1948,8 +1899,10 @@ pub async fn get_edit_step_handler(
         let search_width = query.search_width.or(db_search_width);
         let search_height = query.search_height.or(db_search_height);
 
-        let bitmaps = fetch_available_bitmaps(&state.db, id).await;
-        let variables = fetch_automation_variables(&state.db, id).await;
+        let (bitmaps, variables) = tokio::join!(
+            fetch_available_bitmaps(&state.db, id),
+            fetch_automation_variables(&state.db, id)
+        );
 
         HtmlTemplate(StepFindBitmapTemplate {
             user,
@@ -2061,8 +2014,10 @@ pub async fn get_edit_step_handler(
         let search_width = branch_query.search_width.or(db_search_width);
         let search_height = branch_query.search_height.or(db_search_height);
 
-        let steps = fetch_automation_step_options(&state.db, id, Some(sid)).await;
-        let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+        let (steps, bitmaps) = tokio::join!(
+            fetch_automation_step_options(&state.db, id, Some(sid)),
+            fetch_available_bitmaps(&state.db, id)
+        );
 
         HtmlTemplate(StepBranchTemplate {
             user,
@@ -2127,7 +2082,7 @@ pub async fn get_edit_step_handler(
         })
         .into_response()
     } else if step_type == "mouse_click" {
-        let mc_row = sqlx::query("SELECT x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
+        let mc_row = sqlx::query("SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
             .bind(sid)
             .fetch_optional(&state.db)
             .await;
@@ -2216,18 +2171,20 @@ pub async fn post_edit_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let step_type_row =
-        sqlx::query("SELECT step_type FROM automation_steps WHERE id = $1 AND automation_id = $2")
-            .bind(sid)
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await;
+    let step_type_row = sqlx::query(
+        "SELECT step_type FROM automation_steps WHERE id = $1 AND automation_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(sid)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
 
     let step_type: String = match step_type_row {
         Ok(Some(r)) => r.get("step_type"),
         _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     };
 
+    // 1. Branch Step Edit
     if step_type == "branch" {
         let condition_type = form
             .condition_type
@@ -2254,8 +2211,10 @@ pub async fn post_edit_step_handler(
         }
 
         if let Some(err) = error_msg {
-            let steps = fetch_automation_step_options(&state.db, id, Some(sid)).await;
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
+            let (steps, bitmaps) = tokio::join!(
+                fetch_automation_step_options(&state.db, id, Some(sid)),
+                fetch_available_bitmaps(&state.db, id)
+            );
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepBranchTemplate {
@@ -2289,28 +2248,23 @@ pub async fn post_edit_step_handler(
                 .into_response();
         }
 
-        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s: &&str| !s.is_empty())
-            .map(String::from);
-
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
             Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
         };
 
-        let _ = sqlx::query(
-            "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+        if let Err(e) = update_base_step(
+            &mut tx,
+            id,
+            sid,
+            form.label.as_deref(),
+            form.post_delay_seconds,
         )
-        .bind(&label)
-        .bind(post_delay_ms)
-        .bind(sid)
-        .bind(id)
-        .execute(&mut *tx)
-        .await;
+        .await
+        {
+            tracing::error!("Failed to update base step: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
 
         let detail_res = if condition_type == "pixel_rgb" {
             sqlx::query(
@@ -2365,35 +2319,28 @@ pub async fn post_edit_step_handler(
             return Redirect::to(&format!("/automations/{}", id)).into_response();
         }
 
-        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await;
-
-        if tx.commit().await.is_ok() {
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "update_step",
-                "automation_step",
-                Some(sid),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "step_type": "branch",
-                    "condition_type": condition_type,
-                    "on_match_step_id": form.on_match_step_id,
-                    "on_no_match_step_id": form.on_no_match_step_id
-                })),
-            )
-            .await;
-        }
+        commit_step_tx_and_audit(
+            &state.db,
+            tx,
+            user.id,
+            "update_step",
+            sid,
+            serde_json::json!({
+                "automation_id": id,
+                "step_type": "branch",
+                "condition_type": condition_type,
+                "on_match_step_id": form.on_match_step_id,
+                "on_no_match_step_id": form.on_no_match_step_id
+            }),
+        )
+        .await;
 
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
+    // 2. Find Pixel RGB Step Edit
     if step_type == "find_pixel_rgb" {
         let (final_x, final_y): (Option<i32>, Option<i32>) = (form.x, form.y);
-
         let variables = fetch_automation_variables(&state.db, id).await;
 
         if final_x.is_none() || final_y.is_none() {
@@ -2442,28 +2389,23 @@ pub async fn post_edit_step_handler(
                 .into_response();
         }
 
-        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s: &&str| !s.is_empty())
-            .map(String::from);
-
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
             Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
         };
 
-        let _ = sqlx::query(
-            "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+        if let Err(e) = update_base_step(
+            &mut tx,
+            id,
+            sid,
+            form.label.as_deref(),
+            form.post_delay_seconds,
         )
-        .bind(&label)
-        .bind(post_delay_ms)
-        .bind(sid)
-        .bind(id)
-        .execute(&mut *tx)
-        .await;
+        .await
+        {
+            tracing::error!("Failed to update base step: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
 
         let _ = sqlx::query(
             "UPDATE step_find_pixel_rgb SET x = $1, y = $2, output_variable_id = $3 WHERE step_id = $4",
@@ -2475,38 +2417,35 @@ pub async fn post_edit_step_handler(
         .execute(&mut *tx)
         .await;
 
-        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await;
-
-        if tx.commit().await.is_ok() {
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "update_step",
-                "automation_step",
-                Some(sid),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "step_type": "find_pixel_rgb",
-                    "x": final_x,
-                    "y": final_y,
-                    "output_variable_id": form.output_variable_id
-                })),
-            )
-            .await;
-        }
+        commit_step_tx_and_audit(
+            &state.db,
+            tx,
+            user.id,
+            "update_step",
+            sid,
+            serde_json::json!({
+                "automation_id": id,
+                "step_type": "find_pixel_rgb",
+                "x": final_x,
+                "y": final_y,
+                "output_variable_id": form.output_variable_id
+            }),
+        )
+        .await;
 
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
+    // 3. Find Bitmap Step Edit
     if step_type == "find_bitmap" {
+        let (bitmaps, variables) = tokio::join!(
+            fetch_available_bitmaps(&state.db, id),
+            fetch_automation_variables(&state.db, id)
+        );
+
         let ref_bitmap_id = match form.reference_bitmap_id {
             Some(id) if id > 0 => id,
             _ => {
-                let bitmaps = fetch_available_bitmaps(&state.db, id).await;
-                let variables = fetch_automation_variables(&state.db, id).await;
                 return (
                     StatusCode::BAD_REQUEST,
                     HtmlTemplate(StepFindBitmapTemplate {
@@ -2536,12 +2475,9 @@ pub async fn post_edit_step_handler(
             }
         };
 
-        let variables = fetch_automation_variables(&state.db, id).await;
-
         if let Some(var_id) = form.output_found_variable_id
             && !variables.iter().any(|v| v.id == var_id)
         {
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindBitmapTemplate {
@@ -2576,7 +2512,6 @@ pub async fn post_edit_step_handler(
         if let Some(var_id) = form.output_x_variable_id
             && !variables.iter().any(|v| v.id == var_id)
         {
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindBitmapTemplate {
@@ -2611,7 +2546,6 @@ pub async fn post_edit_step_handler(
         if let Some(var_id) = form.output_y_variable_id
             && !variables.iter().any(|v| v.id == var_id)
         {
-            let bitmaps = fetch_available_bitmaps(&state.db, id).await;
             return (
                 StatusCode::BAD_REQUEST,
                 HtmlTemplate(StepFindBitmapTemplate {
@@ -2643,13 +2577,40 @@ pub async fn post_edit_step_handler(
                 .into_response();
         }
 
-        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s: &&str| !s.is_empty())
-            .map(String::from);
+        if let Some(var_id) = form.output_region_variable_id
+            && !variables.iter().any(|v| v.id == var_id)
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                HtmlTemplate(StepFindBitmapTemplate {
+                    user,
+                    csrf_token,
+                    automation_id: id,
+                    step_id: Some(sid),
+                    label: form.label.unwrap_or_default(),
+                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
+                    reference_bitmap_id: form.reference_bitmap_id,
+                    search_x: form.search_x,
+                    search_y: form.search_y,
+                    search_width: form.search_width,
+                    search_height: form.search_height,
+                    match_threshold: form.match_threshold.unwrap_or(0.95),
+                    output_found_variable_id: form.output_found_variable_id,
+                    output_x_variable_id: form.output_x_variable_id,
+                    output_y_variable_id: form.output_y_variable_id,
+                    output_region_variable_id: form.output_region_variable_id,
+                    bitmaps,
+                    variables,
+                    error: Some(
+                        "Selected 'Found Region' output variable is invalid for this automation."
+                            .to_string(),
+                    ),
+                    is_edit: true,
+                }),
+            )
+                .into_response();
+        }
+
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
 
         let mut tx = match state.db.begin().await {
@@ -2657,22 +2618,25 @@ pub async fn post_edit_step_handler(
             Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
         };
 
-        let _ = sqlx::query(
-            "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+        if let Err(e) = update_base_step(
+            &mut tx,
+            id,
+            sid,
+            form.label.as_deref(),
+            form.post_delay_seconds,
         )
-        .bind(&label)
-        .bind(post_delay_ms)
-        .bind(sid)
-        .bind(id)
-        .execute(&mut *tx)
-        .await;
+        .await
+        {
+            tracing::error!("Failed to update base step: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
 
         let _ = sqlx::query(
             r#"
             UPDATE step_find_bitmap
             SET reference_bitmap_id = $1, search_x = $2, search_y = $3, search_width = $4, search_height = $5,
-                match_threshold = $6, output_found_variable_id = $7, output_x_variable_id = $8, output_y_variable_id = $9
-            WHERE step_id = $10
+                match_threshold = $6, output_found_variable_id = $7, output_x_variable_id = $8, output_y_variable_id = $9, output_region_variable_id = $10
+            WHERE step_id = $11
             "#,
         )
         .bind(ref_bitmap_id)
@@ -2684,43 +2648,38 @@ pub async fn post_edit_step_handler(
         .bind(form.output_found_variable_id)
         .bind(form.output_x_variable_id)
         .bind(form.output_y_variable_id)
+        .bind(form.output_region_variable_id)
         .bind(sid)
         .execute(&mut *tx)
         .await;
 
-        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await;
-
-        if tx.commit().await.is_ok() {
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "update_step",
-                "automation_step",
-                Some(sid),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "step_type": "find_bitmap",
-                    "reference_bitmap_id": ref_bitmap_id,
-                    "search_x": form.search_x,
-                    "search_y": form.search_y,
-                    "search_width": form.search_width,
-                    "search_height": form.search_height,
-                    "match_threshold": match_threshold,
-                    "output_found_variable_id": form.output_found_variable_id,
-                    "output_x_variable_id": form.output_x_variable_id,
-                    "output_y_variable_id": form.output_y_variable_id,
-                    "output_region_variable_id": form.output_region_variable_id
-                })),
-            )
-            .await;
-        }
+        commit_step_tx_and_audit(
+            &state.db,
+            tx,
+            user.id,
+            "update_step",
+            sid,
+            serde_json::json!({
+                "automation_id": id,
+                "step_type": "find_bitmap",
+                "reference_bitmap_id": ref_bitmap_id,
+                "search_x": form.search_x,
+                "search_y": form.search_y,
+                "search_width": form.search_width,
+                "search_height": form.search_height,
+                "match_threshold": match_threshold,
+                "output_found_variable_id": form.output_found_variable_id,
+                "output_x_variable_id": form.output_x_variable_id,
+                "output_y_variable_id": form.output_y_variable_id,
+                "output_region_variable_id": form.output_region_variable_id
+            }),
+        )
+        .await;
 
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
+    // 4. Mouse Click Step Edit
     if step_type == "mouse_click" {
         let is_region_mode = form.click_mode.as_deref() == Some("region")
             || (form.click_mode.is_none() && form.region_variable_id.is_some());
@@ -2835,72 +2794,62 @@ pub async fn post_edit_step_handler(
         }
         .to_string();
 
-        let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-        let label = form
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s: &&str| !s.is_empty())
-            .map(String::from);
-
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
             Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
         };
 
-        let _ = sqlx::query(
-            "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+        if let Err(e) = update_base_step(
+            &mut tx,
+            id,
+            sid,
+            form.label.as_deref(),
+            form.post_delay_seconds,
         )
-        .bind(&label)
-        .bind(post_delay_ms)
-        .bind(sid)
-        .bind(id)
-        .execute(&mut *tx)
-        .await;
+        .await
+        {
+            tracing::error!("Failed to update base step: {}", e);
+            return Redirect::to(&format!("/automations/{}", id)).into_response();
+        }
 
         let _ = sqlx::query(
-            "UPDATE step_mouse_clicks SET x = $1, y = $2, x_variable_id = $3, y_variable_id = $4, button = $5, click_type = $6 WHERE step_id = $7",
+            "UPDATE step_mouse_clicks SET x = $1, y = $2, x_variable_id = $3, y_variable_id = $4, region_variable_id = $5, button = $6, click_type = $7 WHERE step_id = $8",
         )
         .bind(final_x)
         .bind(final_y)
         .bind(final_x_var)
         .bind(final_y_var)
+        .bind(final_region_var)
         .bind(&button)
         .bind(&click_type)
         .bind(sid)
         .execute(&mut *tx)
         .await;
 
-        let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await;
-
-        if tx.commit().await.is_ok() {
-            let _ = log_audit(
-                &state.db,
-                Some(user.id),
-                "update_step",
-                "automation_step",
-                Some(sid),
-                Some(serde_json::json!({
-                    "automation_id": id,
-                    "step_type": "mouse_click",
-                    "x": final_x,
-                    "y": final_y,
-                    "x_variable_id": final_x_var,
-                    "y_variable_id": final_y_var,
-                    "region_variable_id": final_region_var,
-                    "button": button,
-                    "click_type": click_type
-                })),
-            )
-            .await;
-        }
+        commit_step_tx_and_audit(
+            &state.db,
+            tx,
+            user.id,
+            "update_step",
+            sid,
+            serde_json::json!({
+                "automation_id": id,
+                "step_type": "mouse_click",
+                "x": final_x,
+                "y": final_y,
+                "x_variable_id": final_x_var,
+                "y_variable_id": final_y_var,
+                "region_variable_id": final_region_var,
+                "button": button,
+                "click_type": click_type
+            }),
+        )
+        .await;
 
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
+    // 5. Key Press Step Edit
     let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
     if key_combo.is_empty() {
         return (
@@ -2920,28 +2869,23 @@ pub async fn post_edit_step_handler(
             .into_response();
     }
 
-    let post_delay_ms = ((form.post_delay_seconds.unwrap_or(0.0).max(0.0)) * 1000.0) as i32;
-    let label = form
-        .label
-        .as_deref()
-        .map(str::trim)
-        .filter(|s: &&str| !s.is_empty())
-        .map(String::from);
-
     let mut tx = match state.db.begin().await {
         Ok(tx) => tx,
         Err(_) => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     };
 
-    let _ = sqlx::query(
-        "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
+    if let Err(e) = update_base_step(
+        &mut tx,
+        id,
+        sid,
+        form.label.as_deref(),
+        form.post_delay_seconds,
     )
-    .bind(&label)
-    .bind(post_delay_ms)
-    .bind(sid)
-    .bind(id)
-    .execute(&mut *tx)
-    .await;
+    .await
+    {
+        tracing::error!("Failed to update base step: {}", e);
+        return Redirect::to(&format!("/automations/{}", id)).into_response();
+    }
 
     let _ = sqlx::query("UPDATE step_key_presses SET key_combo = $1 WHERE step_id = $2")
         .bind(key_combo)
@@ -2949,25 +2893,22 @@ pub async fn post_edit_step_handler(
         .execute(&mut *tx)
         .await;
 
-    let _ = sqlx::query("UPDATE automations SET updated_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(&mut *tx)
-        .await;
-
-    if tx.commit().await.is_ok() {
-        let _ = log_audit(
-            &state.db,
-            Some(user.id),
-            "update_step",
-            "automation_step",
-            Some(sid),
-            Some(serde_json::json!({ "automation_id": id, "key_combo": key_combo })),
-        )
-        .await;
-    }
+    commit_step_tx_and_audit(
+        &state.db,
+        tx,
+        user.id,
+        "update_step",
+        sid,
+        serde_json::json!({ "automation_id": id, "key_combo": key_combo }),
+    )
+    .await;
 
     Redirect::to(&format!("/automations/{}", id)).into_response()
 }
+
+// ============================================================================
+// Reordering & Deletion Handlers
+// ============================================================================
 
 /// POST /automations/{id}/steps/{sid}/move-up
 #[tracing::instrument(skip(state, user))]
@@ -3019,7 +2960,7 @@ pub async fn reorder_step(
         .fetch_optional(&mut *tx)
         .await?;
 
-    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC")
+    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC")
         .bind(automation_id)
         .fetch_all(&mut *tx)
         .await?;
@@ -3201,12 +3142,17 @@ pub async fn compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sq
     Ok(())
 }
 
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_mouse_click_summary_and_region_variable() {
-        // Test region variable click summary
         let summary_region = generate_mouse_click_summary(
             None,
             None,
@@ -3221,21 +3167,16 @@ mod tests {
             "Click center of region «login_box» [left, single]"
         );
 
-        // Test fallback to coordinates when no region variable is present
         let summary_coords =
             generate_mouse_click_summary(Some(100), Some(200), None, None, None, "left", "single");
         assert_eq!(summary_coords, "Click (100, 200) [left, single]");
     }
 
-    use super::*;
-
     #[test]
     fn test_validate_literal_or_reference() {
-        // 1. Mode "fixed" with literal value present -> Ok((Some(val), None))
         let r1 = validate_literal_or_reference(Some("fixed"), Some(824), None, "X coordinate");
         assert_eq!(r1, Ok((Some(824), None)));
 
-        // 2. Mode "fixed" with missing literal -> Err
         let r2 = validate_literal_or_reference::<i32>(Some("fixed"), None, None, "X coordinate");
         assert!(r2.is_err());
         assert!(
@@ -3243,12 +3184,10 @@ mod tests {
                 .contains("Please provide a fixed value for X coordinate.")
         );
 
-        // 3. Mode "variable" with valid variable ID (> 0) -> Ok((None, Some(var_id)))
         let r3 =
             validate_literal_or_reference::<i32>(Some("variable"), None, Some(10), "X coordinate");
         assert_eq!(r3, Ok((None, Some(10))));
 
-        // 4. Mode "variable" with invalid variable ID (None or <= 0) -> Err
         let r4 =
             validate_literal_or_reference::<i32>(Some("variable"), None, Some(0), "X coordinate");
         assert!(r4.is_err());
@@ -3260,15 +3199,12 @@ mod tests {
         let r5 = validate_literal_or_reference::<i32>(Some("variable"), None, None, "X coordinate");
         assert!(r5.is_err());
 
-        // 5. Unspecified mode with only literal -> Ok((Some(val), None))
         let r6 = validate_literal_or_reference(None, Some(100), None, "X coordinate");
         assert_eq!(r6, Ok((Some(100), None)));
 
-        // 6. Unspecified mode with only variable ID -> Ok((None, Some(var_id)))
         let r7 = validate_literal_or_reference::<i32>(None, None, Some(15), "X coordinate");
         assert_eq!(r7, Ok((None, Some(15))));
 
-        // 7. Unspecified mode with both literal and variable ID -> Err
         let r8 = validate_literal_or_reference(None, Some(100), Some(15), "X coordinate");
         assert!(r8.is_err());
         assert!(
@@ -3276,7 +3212,6 @@ mod tests {
                 .contains("Cannot specify both a fixed value and a variable for X coordinate.")
         );
 
-        // 8. Unspecified mode with neither literal nor variable ID -> Err
         let r9 = validate_literal_or_reference::<i32>(None, None, None, "X coordinate");
         assert!(r9.is_err());
         assert!(
@@ -3287,12 +3222,10 @@ mod tests {
 
     #[test]
     fn test_generate_mouse_click_summary() {
-        // Fixed coordinates
         let s1 =
             generate_mouse_click_summary(Some(824), Some(391), None, None, None, "left", "single");
         assert_eq!(s1, "Click (824, 391) [left, single]");
 
-        // Variable X, Fixed Y
         let s2 = generate_mouse_click_summary(
             None,
             Some(391),
@@ -3304,7 +3237,6 @@ mod tests {
         );
         assert_eq!(s2, "Click («target_x», 391) [right, double]");
 
-        // Variable X and Y
         let s3 = generate_mouse_click_summary(
             None,
             None,
@@ -3316,47 +3248,39 @@ mod tests {
         );
         assert_eq!(s3, "Click («target_x», «target_y») [middle, single]");
 
-        // Variable X with no name fallback
         let s4 = generate_mouse_click_summary(None, Some(100), None, None, None, "left", "single");
         assert_eq!(s4, "Click (variable, 100) [left, single]");
     }
 
     #[test]
     fn test_generate_find_pixel_rgb_summary() {
-        // Without output variable
         let s1 = generate_find_pixel_rgb_summary(100, 200, None);
         assert_eq!(s1, "Read pixel at (100, 200)");
 
-        // With output variable
         let s2 = generate_find_pixel_rgb_summary(100, 200, Some("bg_color"));
         assert_eq!(s2, "Read pixel at (100, 200) → store as «bg_color»");
 
-        // With empty output variable string
         let s3 = generate_find_pixel_rgb_summary(150, 250, Some("   "));
         assert_eq!(s3, "Read pixel at (150, 250)");
     }
 
     #[test]
     fn test_generate_find_bitmap_summary() {
-        // Without output variable
         let s1 = generate_find_bitmap_summary("login_button", None);
         assert_eq!(s1, "Search for «login_button» on screen");
 
-        // With output variable
         let s2 = generate_find_bitmap_summary("login_button", Some("found_login"));
         assert_eq!(
             s2,
             "Search for «login_button» on screen → store as «found_login»"
         );
 
-        // With whitespace output variable name
         let s3 = generate_find_bitmap_summary("login_button", Some("   "));
         assert_eq!(s3, "Search for «login_button» on screen");
     }
 
     #[test]
     fn test_generate_branch_summary() {
-        // Pixel RGB branch condition
         let s1 = generate_branch_summary(
             "pixel_rgb",
             Some(824),
@@ -3374,7 +3298,6 @@ mod tests {
             "BRANCH: if pixel at (824, 391) ≈ RGB(40,180,60) ±10 → go to Step 12 (Success), else → go to Step 10 (Retry)"
         );
 
-        // Bitmap branch condition
         let s2 = generate_branch_summary(
             "bitmap",
             None,
@@ -3392,7 +3315,6 @@ mod tests {
             "BRANCH: if bitmap «submit_btn» found → go to Step 5 (Click), else → go to Next Step"
         );
 
-        // Fallback targets and values when None
         let s3 = generate_branch_summary(
             "pixel_rgb",
             None,
@@ -3467,7 +3389,6 @@ mod tests {
             },
         ];
 
-        // 1. Fixed mode (Literal values)
         let tmpl_fixed = StepMouseClickTemplate {
             user: dummy_user.clone(),
             csrf_token: "test_csrf".to_string(),
@@ -3495,7 +3416,6 @@ mod tests {
         assert!(rendered_fixed.contains("<option value=\"fixed\" selected>Fixed Value</option>"));
         assert!(rendered_fixed.contains("value=\"824\""));
 
-        // 2. Variable mode (Reference values)
         let tmpl_var = StepMouseClickTemplate {
             user: dummy_user,
             csrf_token: "test_csrf".to_string(),
@@ -3670,7 +3590,6 @@ mod tests {
 
     #[test]
     fn test_step_description_variable_formatting() {
-        // Variable-bound X and Y coordinates
         let summary1 = generate_mouse_click_summary(
             None,
             None,
@@ -3682,7 +3601,6 @@ mod tests {
         );
         assert_eq!(summary1, "Click («button_x», «button_y») [left, single]");
 
-        // Variable-bound X coordinate and fixed Y coordinate
         let summary2 = generate_mouse_click_summary(
             None,
             Some(250),
@@ -3694,7 +3612,6 @@ mod tests {
         );
         assert_eq!(summary2, "Click («target_x», 250) [right, double]");
 
-        // Fixed X coordinate and variable-bound Y coordinate
         let summary3 = generate_mouse_click_summary(
             Some(500),
             None,

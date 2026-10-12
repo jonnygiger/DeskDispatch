@@ -9,6 +9,15 @@ use std::time::Duration;
 
 type HmacSha256 = Hmac<Sha256>;
 
+pub fn encode_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        use std::fmt::Write;
+        let _ = write!(s, "{:02x}", b);
+    }
+    s
+}
+
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key length valid");
     mac.update(data);
@@ -328,11 +337,7 @@ pub fn generate_presigned_post_policy(
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
 
     let signature_bytes = hmac_sha256(&k_signing, policy_base64.as_bytes());
-    let mut signature_hex = String::with_capacity(64);
-    for b in signature_bytes {
-        use std::fmt::Write;
-        let _ = write!(signature_hex, "{:02x}", b);
-    }
+    let signature_hex = encode_hex(&signature_bytes);
 
     let mut ordered_fields = vec![
         ("key".to_string(), object_key.to_string()),
