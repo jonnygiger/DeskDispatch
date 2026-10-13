@@ -287,6 +287,106 @@ pub struct BitmapsListTemplate {
     pub automation_name: Option<String>,
 }
 
+fn parse_bitmap_rows(rows: Vec<sqlx::postgres::PgRow>) -> Vec<BitmapListItem> {
+    let mut bitmaps = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id: i64 = row.get("id");
+        let width: i32 = row.get("width");
+        let height: i32 = row.get("height");
+
+        let magnifier = ImageMagnifier::new(
+            format!("/media/bitmaps/{}", id),
+            width.max(1) as u32,
+            height.max(1) as u32,
+            None,
+            None,
+        );
+
+        bitmaps.push(BitmapListItem {
+            id,
+            automation_id: row.get("automation_id"),
+            automation_name: row.get("automation_name"),
+            name: row.get("name"),
+            object_storage_key: row.get("object_storage_key"),
+            width,
+            height,
+            created_by: row.get("created_by"),
+            created_by_name: row.get("created_by_name"),
+            created_at: row.get("created_at"),
+            magnifier,
+        });
+    }
+    bitmaps
+}
+
+pub async fn fetch_bitmaps_list_template(
+    db: &sqlx::PgPool,
+    user: AuthUser,
+    automation_id: Option<i64>,
+) -> Result<BitmapsListTemplate, Redirect> {
+    let csrf_token = user.csrf_token.clone();
+
+    let (automation_name, rows) = if let Some(aid) = automation_id {
+        let (auto_res, rows_res) = tokio::join!(
+            sqlx::query("SELECT name FROM automations WHERE id = $1")
+                .bind(aid)
+                .fetch_optional(db),
+            sqlx::query(
+                r#"
+                SELECT
+                    b.id, b.automation_id, a.name AS automation_name, b.name,
+                    b.object_storage_key, b.width, b.height, b.created_by,
+                    COALESCE(u.display_name, u.username, 'Unknown') AS created_by_name,
+                    b.created_at
+                FROM bitmaps b
+                LEFT JOIN automations a ON b.automation_id = a.id
+                LEFT JOIN users u ON b.created_by = u.id
+                WHERE b.automation_id = $1 OR b.automation_id IS NULL
+                ORDER BY b.created_at DESC, b.id DESC
+                "#,
+            )
+            .bind(aid)
+            .fetch_all(db)
+        );
+
+        let auto_row = match auto_res {
+            Ok(Some(r)) => r,
+            _ => return Err(Redirect::to("/automations")),
+        };
+        let name: String = auto_row.get("name");
+        let rows = rows_res.unwrap_or_default();
+        (Some(name), rows)
+    } else {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                b.id, b.automation_id, a.name AS automation_name, b.name,
+                b.object_storage_key, b.width, b.height, b.created_by,
+                COALESCE(u.display_name, u.username, 'Unknown') AS created_by_name,
+                b.created_at
+            FROM bitmaps b
+            LEFT JOIN automations a ON b.automation_id = a.id
+            LEFT JOIN users u ON b.created_by = u.id
+            ORDER BY b.created_at DESC, b.id DESC
+            "#,
+        )
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
+        (None, rows)
+    };
+
+    let bitmaps = parse_bitmap_rows(rows);
+
+    Ok(BitmapsListTemplate {
+        user,
+        csrf_token,
+        bitmaps,
+        automation_id,
+        automation_name,
+    })
+}
+
 /// GET /bitmaps
 /// Renders the list page for all reference bitmaps in the system.
 #[tracing::instrument(skip(state, user))]
@@ -294,75 +394,10 @@ pub async fn get_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-
-    let rows = match sqlx::query(
-        r#"
-        SELECT
-            b.id,
-            b.automation_id,
-            a.name AS automation_name,
-            b.name,
-            b.object_storage_key,
-            b.width,
-            b.height,
-            b.created_by,
-            COALESCE(u.display_name, u.username, 'Unknown') AS created_by_name,
-            b.created_at
-        FROM bitmaps b
-        LEFT JOIN automations a ON b.automation_id = a.id
-        LEFT JOIN users u ON b.created_by = u.id
-        ORDER BY b.created_at DESC, b.id DESC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            tracing::error!("Error fetching bitmaps: {}", e);
-            Vec::new()
-        }
-    };
-
-    let bitmaps = rows
-        .into_iter()
-        .map(|row| {
-            let id: i64 = row.get("id");
-            let width: i32 = row.get("width");
-            let height: i32 = row.get("height");
-
-            let magnifier = ImageMagnifier::new(
-                format!("/media/bitmaps/{}", id),
-                width.max(1) as u32,
-                height.max(1) as u32,
-                None,
-                None,
-            );
-
-            BitmapListItem {
-                id,
-                automation_id: row.get("automation_id"),
-                automation_name: row.get("automation_name"),
-                name: row.get("name"),
-                object_storage_key: row.get("object_storage_key"),
-                width,
-                height,
-                created_by: row.get("created_by"),
-                created_by_name: row.get("created_by_name"),
-                created_at: row.get("created_at"),
-                magnifier,
-            }
-        })
-        .collect();
-
-    HtmlTemplate(BitmapsListTemplate {
-        user,
-        csrf_token,
-        bitmaps,
-        automation_id: None,
-        automation_name: None,
-    })
+    match fetch_bitmaps_list_template(&state.db, user, None).await {
+        Ok(tmpl) => HtmlTemplate(tmpl).into_response(),
+        Err(redirect) => redirect.into_response(),
+    }
 }
 
 /// GET /automations/{id}/bitmaps
@@ -373,89 +408,73 @@ pub async fn get_automation_bitmaps_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
+    match fetch_bitmaps_list_template(&state.db, user, Some(id)).await {
+        Ok(tmpl) => HtmlTemplate(tmpl).into_response(),
+        Err(redirect) => redirect.into_response(),
+    }
+}
 
-    // Bolt Optimization: Run automation record query and bitmap items query concurrently
-    // using `tokio::join!`. This reduces DB query latency by half compared to sequential calls.
-    let (auto_res, rows_res) = tokio::join!(
-        sqlx::query("SELECT name FROM automations WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db),
-        sqlx::query(
-            r#"
-            SELECT
-                b.id,
-                b.automation_id,
-                a.name AS automation_name,
-                b.name,
-                b.object_storage_key,
-                b.width,
-                b.height,
-                b.created_by,
-                COALESCE(u.display_name, u.username, 'Unknown') AS created_by_name,
-                b.created_at
-            FROM bitmaps b
-            LEFT JOIN automations a ON b.automation_id = a.id
-            LEFT JOIN users u ON b.created_by = u.id
-            WHERE b.automation_id = $1 OR b.automation_id IS NULL
-            ORDER BY b.created_at DESC, b.id DESC
-            "#,
-        )
-        .bind(id)
-        .fetch_all(&state.db)
-    );
+async fn generate_bitmap_upload_policy(
+    state: &AppState,
+    user: AuthUser,
+    csrf_token: String,
+    raw_name: &str,
+    automation_id: Option<i64>,
+) -> Response {
+    let bitmap_name = raw_name.trim().to_string();
+    if bitmap_name.is_empty() {
+        let redirect_path = match automation_id {
+            Some(aid) => format!("/automations/{}/bitmaps", aid),
+            None => "/bitmaps".to_string(),
+        };
+        return Redirect::to(&redirect_path).into_response();
+    }
 
-    let auto_row = match auto_res {
-        Ok(Some(r)) => r,
-        _ => return Redirect::to("/automations").into_response(),
+    let object_key = match automation_id {
+        Some(_) => format!("bitmaps/{}.png", uuid::Uuid::new_v4()),
+        None => format!("bitmaps/user_{}_{}.png", user.id, uuid::Uuid::new_v4()),
     };
-    let automation_name: String = auto_row.get("name");
 
-    let rows = match rows_res {
-        Ok(rows) => rows,
+    let base_url = state.config.public_base_url.trim_end_matches('/');
+    let encoded_name = crate::auth::flash::url_encode(&bitmap_name);
+    let redirect_url = match automation_id {
+        Some(aid) => format!(
+            "{}/bitmaps/commit?name={}&automation_id={}",
+            base_url, encoded_name, aid
+        ),
+        None => format!("{}/bitmaps/commit?name={}", base_url, encoded_name),
+    };
+
+    let storage = state.storage_service();
+    let presigned_post = match storage
+        .generate_presigned_post(
+            &object_key,
+            Duration::from_secs(900),
+            10_485_760,
+            Some(&redirect_url),
+        )
+        .await
+    {
+        Ok(post) => post,
         Err(e) => {
-            tracing::error!("Error fetching automation bitmaps: {}", e);
-            Vec::new()
+            tracing::error!("Failed to generate presigned POST policy: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to generate upload policy",
+            )
+                .into_response();
         }
     };
 
-    let bitmaps = rows
-        .into_iter()
-        .map(|row| {
-            let bitmap_id: i64 = row.get("id");
-            let width: i32 = row.get("width");
-            let height: i32 = row.get("height");
-
-            let magnifier = ImageMagnifier::new(
-                format!("/media/bitmaps/{}", bitmap_id),
-                width.max(1) as u32,
-                height.max(1) as u32,
-                None,
-                None,
-            );
-
-            BitmapListItem {
-                id: bitmap_id,
-                automation_id: row.get("automation_id"),
-                automation_name: row.get("automation_name"),
-                name: row.get("name"),
-                object_storage_key: row.get("object_storage_key"),
-                width,
-                height,
-                created_by: row.get("created_by"),
-                created_by_name: row.get("created_by_name"),
-                created_at: row.get("created_at"),
-                magnifier,
-            }
-        })
-        .collect();
-
-    HtmlTemplate(BitmapsListTemplate {
+    HtmlTemplate(BitmapsUploadTemplate {
         user,
         csrf_token,
-        bitmaps,
-        automation_id: Some(id),
-        automation_name: Some(automation_name),
+        bitmap_name,
+        object_storage_key: object_key,
+        automation_id,
+        presigned_post_url: presigned_post.url,
+        presigned_fields: presigned_post.ordered_fields,
+        redirect_url,
     })
     .into_response()
 }
@@ -471,54 +490,7 @@ pub async fn post_bitmaps_handler(
     if form.csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
-
-    let bitmap_name = form.name.trim().to_string();
-    if bitmap_name.is_empty() {
-        return Redirect::to("/bitmaps").into_response();
-    }
-
-    let object_key = format!("bitmaps/user_{}_{}.png", user.id, uuid::Uuid::new_v4());
-
-    let base_url = state.config.public_base_url.trim_end_matches('/');
-
-    let redirect_url = format!(
-        "{}/bitmaps/commit?name={}",
-        base_url,
-        crate::auth::flash::url_encode(&bitmap_name)
-    );
-
-    let storage = state.storage_service();
-    let presigned_post = match storage
-        .generate_presigned_post(
-            &object_key,
-            Duration::from_secs(900),
-            10_485_760,
-            Some(&redirect_url),
-        )
-        .await
-    {
-        Ok(post) => post,
-        Err(e) => {
-            tracing::error!("Failed to generate presigned POST policy: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to generate upload policy",
-            )
-                .into_response();
-        }
-    };
-
-    HtmlTemplate(BitmapsUploadTemplate {
-        user,
-        csrf_token: form.csrf_token,
-        bitmap_name,
-        object_storage_key: object_key,
-        automation_id: None,
-        presigned_post_url: presigned_post.url,
-        presigned_fields: presigned_post.ordered_fields,
-        redirect_url,
-    })
-    .into_response()
+    generate_bitmap_upload_policy(&state, user, form.csrf_token, &form.name, None).await
 }
 
 /// POST /automations/{id}/bitmaps
@@ -533,64 +505,23 @@ pub async fn post_automation_bitmaps_handler(
     if form.csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
-
-    let bitmap_name = form.name.trim().to_string();
-    if bitmap_name.is_empty() {
-        return Redirect::to(&format!("/automations/{}/bitmaps", id)).into_response();
-    }
-
-    let object_key = format!("bitmaps/{}.png", uuid::Uuid::new_v4());
-
-    let base_url = state.config.public_base_url.trim_end_matches('/');
-
-    let redirect_url = format!(
-        "{}/bitmaps/commit?name={}&automation_id={}",
-        base_url,
-        crate::auth::flash::url_encode(&bitmap_name),
-        id
-    );
-
-    let storage = state.storage_service();
-    let presigned_post = match storage
-        .generate_presigned_post(
-            &object_key,
-            Duration::from_secs(900),
-            10_485_760,
-            Some(&redirect_url),
-        )
-        .await
-    {
-        Ok(post) => post,
-        Err(e) => {
-            tracing::error!("Failed to generate presigned POST policy: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to generate upload policy",
-            )
-                .into_response();
-        }
-    };
-
-    HtmlTemplate(BitmapsUploadTemplate {
-        user,
-        csrf_token: form.csrf_token,
-        bitmap_name,
-        object_storage_key: object_key,
-        automation_id: Some(id),
-        presigned_post_url: presigned_post.url,
-        presigned_fields: presigned_post.ordered_fields,
-        redirect_url,
-    })
-    .into_response()
+    generate_bitmap_upload_policy(&state, user, form.csrf_token, &form.name, Some(id)).await
 }
 
-/// Validates bitmap key prefix, extension, path safety, and user binding.
+/// Validates bitmap key prefix, extension, path safety, and user binding without heap allocations.
 pub fn validate_bitmap_key(key: &str, user_id: i64) -> bool {
     if !key.starts_with("bitmaps/") || !key.ends_with(".png") || key.contains("..") {
         return false;
     }
-    if key.starts_with("bitmaps/user_") && !key.starts_with(&format!("bitmaps/user_{}_", user_id)) {
-        return false;
+    if let Some(user_part) = key.strip_prefix("bitmaps/user_") {
+        let mut parts = user_part.splitn(2, '_');
+        if let Some(uid_str) = parts.next() {
+            if uid_str.parse::<i64>() != Ok(user_id) {
+                return false;
+            }
+        } else {
+            return false;
+        }
     }
     true
 }
@@ -888,24 +819,16 @@ pub async fn post_automation_delete_bitmap_handler(
 
 /// Sanitizes and validates image URLs used in region pick handlers to prevent CSS injection and open redirects.
 pub fn sanitize_image_url(raw_url: Option<String>) -> String {
-    let default_url = "/static/sample_screenshot.png".to_string();
-    let url = match raw_url {
-        Some(u) if !u.trim().is_empty() => u.trim().to_string(),
-        _ => return default_url,
+    const DEFAULT_URL: &str = "/static/sample_screenshot.png";
+    let url = match raw_url.as_deref().map(str::trim) {
+        Some(u) if !u.is_empty() => u,
+        _ => return DEFAULT_URL.to_string(),
     };
 
-    if url.chars().any(|c| {
-        c.is_control()
-            || c == '\''
-            || c == '"'
-            || c == '\\'
-            || c == '<'
-            || c == '>'
-            || c == ';'
-            || c == '{'
-            || c == '}'
+    if url.bytes().any(|b| {
+        b.is_ascii_control() || matches!(b, b'\'' | b'"' | b'\\' | b'<' | b'>' | b';' | b'{' | b'}')
     }) {
-        return default_url;
+        return DEFAULT_URL.to_string();
     }
 
     if url.starts_with("/static/")
@@ -913,9 +836,9 @@ pub fn sanitize_image_url(raw_url: Option<String>) -> String {
         || url.starts_with("http://")
         || url.starts_with("https://")
     {
-        url
+        url.to_string()
     } else {
-        default_url
+        DEFAULT_URL.to_string()
     }
 }
 
@@ -962,36 +885,10 @@ pub async fn get_pick_region_handler(
 pub async fn get_automation_pick_region_handler(
     user: AuthUser,
     Path(id): Path<i64>,
-    Query(query): Query<PickRegionQuery>,
+    Query(mut query): Query<PickRegionQuery>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    let image_url = sanitize_image_url(query.image_url);
-    let width = query.width.unwrap_or(1920);
-    let height = query.height.unwrap_or(1080);
-
-    let magnifier = ImageMagnifier::new(&image_url, width, height, None, None);
-
-    HtmlTemplate(RegionPickerTopLeftTemplate {
-        user,
-        csrf_token,
-        automation_id: Some(id),
-        image_url,
-        width,
-        height,
-        step_stage: 1,
-        top_left_x: None,
-        top_left_y: None,
-        bottom_right_x: None,
-        bottom_right_y: None,
-        click_x: None,
-        click_y: None,
-        magnifier,
-        return_to: query.return_to,
-        mode: query.mode,
-        step_id: query.step_id,
-        reference_bitmap_id: query.reference_bitmap_id,
-        error_msg: None,
-    })
+    query.automation_id = Some(id);
+    get_pick_region_handler(user, Query(query)).await
 }
 
 /// POST /bitmaps/pick-region
@@ -1234,6 +1131,77 @@ pub async fn post_automation_pick_region_bottom_right_handler(
     post_pick_region_bottom_right_handler(user, CsrfForm(form)).await
 }
 
+async fn fetch_s3_object_by_id(
+    state: &AppState,
+    query_str: &'static str,
+    id: i64,
+) -> Option<Vec<u8>> {
+    let row = sqlx::query(query_str)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()??;
+
+    let key: String = row.get("object_storage_key");
+    let res = state
+        .s3_client
+        .get_object()
+        .bucket(&state.config.s3_bucket)
+        .key(&key)
+        .send()
+        .await
+        .ok()?;
+
+    let data = res.body.collect().await.ok()?;
+    Some(data.into_bytes().to_vec())
+}
+
+async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<Vec<u8>> {
+    let path = if let Ok(parsed) = reqwest::Url::parse(image_url) {
+        parsed.path().to_string()
+    } else {
+        image_url.to_string()
+    };
+
+    if let Some(static_path) = path.strip_prefix("/static/") {
+        if let Some(asset) = crate::routes::static_assets::Assets::get(static_path) {
+            return Some(asset.data.to_vec());
+        }
+    }
+
+    if let Some(id_str) = path.strip_prefix("/media/screenshots/") {
+        if let Ok(id) = id_str.parse::<i64>() {
+            return fetch_s3_object_by_id(
+                state,
+                "SELECT object_storage_key FROM step_screenshots WHERE step_id = $1",
+                id,
+            )
+            .await;
+        }
+    }
+
+    if let Some(id_str) = path.strip_prefix("/media/bitmaps/") {
+        if let Ok(id) = id_str.parse::<i64>() {
+            return fetch_s3_object_by_id(
+                state,
+                "SELECT object_storage_key FROM bitmaps WHERE id = $1",
+                id,
+            )
+            .await;
+        }
+    }
+
+    if image_url.starts_with("http://") || image_url.starts_with("https://") {
+        if let Ok(res) = reqwest::get(image_url).await {
+            if let Ok(data) = res.bytes().await {
+                return Some(data.to_vec());
+            }
+        }
+    }
+
+    None
+}
+
 /// Helper to load source image bytes, crop to (tl_x, tl_y, crop_w, crop_h), and return PNG bytes.
 async fn crop_image_region(
     state: &AppState,
@@ -1246,94 +1214,30 @@ async fn crop_image_region(
     let crop_w = crop_w.max(1);
     let crop_h = crop_h.max(1);
 
-    let path_str = if let Ok(parsed) = reqwest::Url::parse(image_url) {
-        parsed.path().to_string()
-    } else {
-        image_url.to_string()
-    };
-
-    // Attempt 1: If path_str starts with /static/, try loading from StaticAssets
-    let mut image_bytes: Option<Vec<u8>> = None;
-    if let Some(static_path) = path_str.strip_prefix("/static/")
-        && let Some(asset) = crate::routes::static_assets::Assets::get(static_path)
-    {
-        image_bytes = Some(asset.data.to_vec());
-    }
-
-    // Attempt 2: If path_str matches /media/screenshots/{id} or /media/bitmaps/{id}
-    if image_bytes.is_none() {
-        if let Some(id_str) = path_str.strip_prefix("/media/screenshots/")
-            && let Ok(id) = id_str.parse::<i64>()
-            && let Ok(Some(row)) =
-                sqlx::query("SELECT object_storage_key FROM step_screenshots WHERE step_id = $1")
-                    .bind(id)
-                    .fetch_optional(&state.db)
-                    .await
-        {
-            let key: String = row.get("object_storage_key");
-            if let Ok(res) = state
-                .s3_client
-                .get_object()
-                .bucket(&state.config.s3_bucket)
-                .key(&key)
-                .send()
-                .await
-                && let Ok(data) = res.body.collect().await
+    if let Some(bytes) = fetch_source_image_bytes(state, image_url).await {
+        if let Ok(img) = image::load_from_memory(&bytes) {
+            let cropped = img.crop_imm(tl_x, tl_y, crop_w, crop_h);
+            let mut out_bytes = Vec::with_capacity((crop_w * crop_h * 4) as usize);
+            let mut cursor = std::io::Cursor::new(&mut out_bytes);
+            if cropped
+                .write_to(&mut cursor, image::ImageFormat::Png)
+                .is_ok()
             {
-                image_bytes = Some(data.into_bytes().to_vec());
+                return out_bytes;
             }
-        } else if let Some(id_str) = path_str.strip_prefix("/media/bitmaps/")
-            && let Ok(id) = id_str.parse::<i64>()
-            && let Ok(Some(row)) =
-                sqlx::query("SELECT object_storage_key FROM bitmaps WHERE id = $1")
-                    .bind(id)
-                    .fetch_optional(&state.db)
-                    .await
-        {
-            let key: String = row.get("object_storage_key");
-            if let Ok(res) = state
-                .s3_client
-                .get_object()
-                .bucket(&state.config.s3_bucket)
-                .key(&key)
-                .send()
-                .await
-                && let Ok(data) = res.body.collect().await
-            {
-                image_bytes = Some(data.into_bytes().to_vec());
-            }
-        }
-    }
-
-    // Attempt 3: If image_url is an HTTP/HTTPS URL, fetch via reqwest
-    if image_bytes.is_none()
-        && (image_url.starts_with("http://") || image_url.starts_with("https://"))
-        && let Ok(res) = reqwest::get(image_url).await
-        && let Ok(data) = res.bytes().await
-    {
-        image_bytes = Some(data.to_vec());
-    }
-
-    // Try decoding and cropping loaded image_bytes
-    if let Some(bytes) = image_bytes
-        && let Ok(img) = image::load_from_memory(&bytes)
-    {
-        let cropped = img.crop_imm(tl_x, tl_y, crop_w, crop_h);
-        let mut buf = std::io::Cursor::new(Vec::new());
-        if cropped.write_to(&mut buf, image::ImageFormat::Png).is_ok() {
-            return buf.into_inner();
         }
     }
 
     // Fallback: Generate a placeholder PNG of size crop_w x crop_h
     let img_buf = image::RgbImage::from_fn(crop_w, crop_h, |x, y| {
-        let r = ((x * 255) / crop_w.max(1)) as u8;
-        let g = ((y * 255) / crop_h.max(1)) as u8;
+        let r = ((x * 255) / crop_w) as u8;
+        let g = ((y * 255) / crop_h) as u8;
         image::Rgb([r, g, 180])
     });
-    let mut buf = std::io::Cursor::new(Vec::new());
-    let _ = image::DynamicImage::ImageRgb8(img_buf).write_to(&mut buf, image::ImageFormat::Png);
-    buf.into_inner()
+    let mut out_bytes = Vec::with_capacity((crop_w * crop_h * 3) as usize);
+    let mut cursor = std::io::Cursor::new(&mut out_bytes);
+    let _ = image::DynamicImage::ImageRgb8(img_buf).write_to(&mut cursor, image::ImageFormat::Png);
+    out_bytes
 }
 
 #[tracing::instrument(skip(state, user, form))]
