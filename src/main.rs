@@ -142,17 +142,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
-    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let mut tasks = tokio::task::JoinSet::new();
 
     // Spawn PgListener task for LISTEN/NOTIFY task_queue_changed
     let listener_db_url = config.database_url.clone();
     let listener_tx = tx_notify.clone();
-    let listener_cancel = cancel_token.clone();
+    let mut listener_cancel = shutdown_rx.clone();
     tasks.spawn(async move {
         loop {
+            if *listener_cancel.borrow() {
+                info!("PgListener background task stopping...");
+                break;
+            }
             tokio::select! {
-                _ = listener_cancel.cancelled() => {
+                _ = listener_cancel.changed() => {
                     info!("PgListener background task stopping...");
                     break;
                 }
@@ -166,8 +170,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             info!("PgListener connected and listening on 'task_queue_changed'");
                             loop {
+                                if *listener_cancel.borrow() {
+                                    break;
+                                }
                                 tokio::select! {
-                                    _ = listener_cancel.cancelled() => break,
+                                    _ = listener_cancel.changed() => break,
                                     recv_res = listener.recv() => {
                                         match recv_res {
                                             Ok(_notification) => {
@@ -195,14 +202,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = state.db.clone();
     let retention_s3_client = state.s3_client.clone();
     let retention_config = config.clone();
-    let periodic_cancel = cancel_token.clone();
+    let mut periodic_cancel = shutdown_rx.clone();
     tasks.spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut retention_counter: u32 = 0;
         loop {
             tokio::select! {
-                _ = periodic_cancel.cancelled() => {
+                _ = periodic_cancel.changed() => {
                     info!("Periodic background sweeper/scheduler task stopping...");
                     break;
                 }
@@ -250,13 +257,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let metrics_app =
             axum::Router::new().route("/metrics", axum::routing::get(metrics_handler));
-        let metrics_cancel = cancel_token.clone();
+        let mut metrics_cancel = shutdown_rx.clone();
         tasks.spawn(async move {
             if let Ok(metrics_listener) = tokio::net::TcpListener::bind(metrics_addr).await {
                 info!("Metrics server listening on {}", metrics_addr);
                 let _ = axum::serve(metrics_listener, metrics_app)
                     .with_graceful_shutdown(async move {
-                        metrics_cancel.cancelled().await;
+                        let _ = metrics_cancel.changed().await;
                     })
                     .await;
             }
@@ -269,7 +276,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    let shutdown_token = cancel_token.clone();
 
     axum::serve(
         listener,
@@ -277,7 +283,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .with_graceful_shutdown(async move {
         shutdown_signal().await;
-        shutdown_token.cancel();
+        let _ = shutdown_tx.send(true);
     })
     .await?;
 

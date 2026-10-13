@@ -71,6 +71,92 @@ pub async fn fetch_full_automation_json(
     fetch_full_automation_json_with_overrides(db, automation_id, None).await
 }
 
+#[derive(sqlx::FromRow)]
+struct ParameterRow {
+    name: String,
+    param_type: String,
+    default_value: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct VariableRow {
+    id: i64,
+    name: String,
+    var_type: String,
+    description: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct StepRow {
+    id: i64,
+    step_type: String,
+    label: Option<String>,
+    post_delay_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct MouseClickRow {
+    step_id: i64,
+    x: Option<i32>,
+    y: Option<i32>,
+    x_variable_id: Option<i64>,
+    y_variable_id: Option<i64>,
+    region_variable_id: Option<i64>,
+    button: String,
+    click_type: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct KeyPressRow {
+    step_id: i64,
+    key_combo: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct FindPixelRow {
+    step_id: i64,
+    x: i32,
+    y: i32,
+    output_variable_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct FindBitmapRow {
+    step_id: i64,
+    reference_bitmap_id: i64,
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    match_threshold: f32,
+    output_found_variable_id: Option<i64>,
+    output_x_variable_id: Option<i64>,
+    output_y_variable_id: Option<i64>,
+    output_region_variable_id: Option<i64>,
+    reference_bitmap_key: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct BranchRow {
+    step_id: i64,
+    condition_type: String,
+    x: Option<i32>,
+    y: Option<i32>,
+    expected_r: Option<i16>,
+    expected_g: Option<i16>,
+    expected_b: Option<i16>,
+    tolerance: Option<i16>,
+    reference_bitmap_id: Option<i64>,
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    match_threshold: Option<f32>,
+    on_match_step_id: Option<i64>,
+    on_no_match_step_id: Option<i64>,
+    reference_bitmap_key: Option<String>,
+}
+
 #[tracing::instrument(skip(db))]
 pub async fn fetch_full_automation_json_with_overrides(
     db: &PgPool,
@@ -97,25 +183,25 @@ pub async fn fetch_full_automation_json_with_overrides(
         }
     };
 
-    let params_fut = sqlx::query(
+    let params_fut = sqlx::query_as::<_, ParameterRow>(
         "SELECT name, param_type, default_value FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC",
     )
     .bind(automation_id)
     .fetch_all(db);
 
-    let vars_fut = sqlx::query(
+    let vars_fut = sqlx::query_as::<_, VariableRow>(
         "SELECT id, name, var_type, description FROM automation_variables WHERE automation_id = $1 ORDER BY id ASC",
     )
     .bind(automation_id)
     .fetch_all(db);
 
-    let steps_fut = sqlx::query(
+    let steps_fut = sqlx::query_as::<_, StepRow>(
         "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(db);
 
-    let mc_fut = sqlx::query(
+    let mc_fut = sqlx::query_as::<_, MouseClickRow>(
         r#"
         SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id, smc.region_variable_id, smc.button, smc.click_type
         FROM step_mouse_clicks smc
@@ -126,7 +212,7 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(db);
 
-    let kp_fut = sqlx::query(
+    let kp_fut = sqlx::query_as::<_, KeyPressRow>(
         r#"
         SELECT skp.step_id, skp.key_combo
         FROM step_key_presses skp
@@ -137,7 +223,7 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(db);
 
-    let fp_fut = sqlx::query(
+    let fp_fut = sqlx::query_as::<_, FindPixelRow>(
         r#"
         SELECT sfp.step_id, sfp.x, sfp.y, sfp.output_variable_id
         FROM step_find_pixel_rgb sfp
@@ -148,7 +234,7 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(db);
 
-    let fb_fut = sqlx::query(
+    let fb_fut = sqlx::query_as::<_, FindBitmapRow>(
         r#"
         SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.search_x, sfb.search_y, sfb.search_width, sfb.search_height,
                sfb.match_threshold, sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id, sfb.output_region_variable_id,
@@ -162,7 +248,7 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(db);
 
-    let branch_fut = sqlx::query(
+    let branch_fut = sqlx::query_as::<_, BranchRow>(
         r#"
         SELECT sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
                sb.reference_bitmap_id, sb.search_x, sb.search_y, sb.search_width, sb.search_height, sb.match_threshold,
@@ -192,16 +278,12 @@ pub async fn fetch_full_automation_json_with_overrides(
 
     let mut parameters_map = HashMap::with_capacity(param_rows.len());
     for p in param_rows {
-        let pname: String = p.get("name");
-        let ptype: String = p.get("param_type");
-        let default_val_str: String = p.get("default_value");
-
         let pval_str = overrides
-            .and_then(|o| o.get(&pname))
+            .and_then(|o| o.get(&p.name))
             .cloned()
-            .unwrap_or(default_val_str);
+            .unwrap_or(p.default_value);
 
-        let val = match ptype.as_str() {
+        let val = match p.param_type.as_str() {
             "int" => pval_str
                 .parse::<i64>()
                 .map(serde_json::Value::from)
@@ -212,71 +294,64 @@ pub async fn fetch_full_automation_json_with_overrides(
             }
             _ => serde_json::Value::String(pval_str),
         };
-        parameters_map.insert(pname, val);
+        parameters_map.insert(p.name, val);
     }
 
     let mut variables_list = Vec::with_capacity(var_rows.len());
     for v in var_rows {
         variables_list.push(AutomationVariablePayload {
-            id: v.get("id"),
-            name: v.get("name"),
-            var_type: v.get("var_type"),
-            description: v.get("description"),
+            id: v.id,
+            name: v.name,
+            var_type: v.var_type,
+            description: v.description,
         });
     }
 
     let mut mouse_clicks_map = HashMap::with_capacity(mouse_clicks_rows.len());
     for r in mouse_clicks_rows {
-        let step_id: i64 = r.get("step_id");
-        mouse_clicks_map.insert(step_id, r);
+        mouse_clicks_map.insert(r.step_id, r);
     }
 
     let mut key_presses_map = HashMap::with_capacity(key_presses_rows.len());
     for r in key_presses_rows {
-        let step_id: i64 = r.get("step_id");
-        let key_combo: String = r.get("key_combo");
-        key_presses_map.insert(step_id, key_combo);
+        key_presses_map.insert(r.step_id, r.key_combo);
     }
 
     let mut find_pixel_map = HashMap::with_capacity(find_pixel_rows.len());
     for r in find_pixel_rows {
-        let step_id: i64 = r.get("step_id");
-        find_pixel_map.insert(step_id, r);
+        find_pixel_map.insert(r.step_id, r);
     }
 
     let mut find_bitmap_map = HashMap::with_capacity(find_bitmap_rows.len());
     for r in find_bitmap_rows {
-        let step_id: i64 = r.get("step_id");
-        find_bitmap_map.insert(step_id, r);
+        find_bitmap_map.insert(r.step_id, r);
     }
 
     let mut branch_map = HashMap::with_capacity(branch_rows.len());
     for r in branch_rows {
-        let step_id: i64 = r.get("step_id");
-        branch_map.insert(step_id, r);
+        branch_map.insert(r.step_id, r);
     }
 
     let mut steps_list = Vec::with_capacity(step_rows.len());
     for step in step_rows {
-        let step_id: i64 = step.get("id");
-        let step_type: String = step.get("step_type");
-        let label: Option<String> = step.get("label");
-        let post_delay_ms: i32 = step.get("post_delay_ms");
+        let step_id = step.id;
+        let label = step.label;
+        let post_delay_ms = step.post_delay_ms;
 
-        match step_type.as_str() {
+        match step.step_type.as_str() {
             "mouse_click" => {
-                if let Some(r) = mouse_clicks_map.get(&step_id) {
+                if let Some(r) = mouse_clicks_map.remove(&step_id) {
                     steps_list.push(StepPayload::MouseClick {
                         id: step_id,
                         label,
                         post_delay_ms,
-                        x: r.get("x"),
-                        y: r.get("y"),
-                        x_variable_id: r.get("x_variable_id"),
-                        y_variable_id: r.get("y_variable_id"),
-                        region_variable_id: r.get("region_variable_id"),
-                        button: r.get("button"),
-                        click_type: r.get("click_type"),
+                        x: r.x,
+                        y: r.y,
+                        x_variable_id: r.x_variable_id,
+                        y_variable_id: r.y_variable_id,
+                        region_variable_id: r.region_variable_id,
+                        button: r.button,
+                        click_type: r.click_type,
                     });
                 }
             }
@@ -291,68 +366,67 @@ pub async fn fetch_full_automation_json_with_overrides(
                 }
             }
             "find_pixel_rgb" => {
-                if let Some(r) = find_pixel_map.get(&step_id) {
+                if let Some(r) = find_pixel_map.remove(&step_id) {
                     steps_list.push(StepPayload::FindPixelRgb {
                         id: step_id,
                         label,
                         post_delay_ms,
-                        x: r.get("x"),
-                        y: r.get("y"),
-                        output_variable_id: r.get("output_variable_id"),
+                        x: r.x,
+                        y: r.y,
+                        output_variable_id: r.output_variable_id,
                         timeout_ms: 5000,
                         retry_interval_ms: 250,
                     });
                 }
             }
             "find_bitmap" => {
-                if let Some(r) = find_bitmap_map.get(&step_id) {
+                if let Some(r) = find_bitmap_map.remove(&step_id) {
                     steps_list.push(StepPayload::FindBitmap {
                         id: step_id,
                         label,
                         post_delay_ms,
-                        reference_bitmap_id: r.get("reference_bitmap_id"),
-                        reference_bitmap_key: r.get("reference_bitmap_key"),
-                        search_x: r.get("search_x"),
-                        search_y: r.get("search_y"),
-                        search_width: r.get("search_width"),
-                        search_height: r.get("search_height"),
-                        match_threshold: r.get("match_threshold"),
-                        output_found_variable_id: r.get("output_found_variable_id"),
-                        output_x_variable_id: r.get("output_x_variable_id"),
-                        output_y_variable_id: r.get("output_y_variable_id"),
-                        output_region_variable_id: r.get("output_region_variable_id"),
+                        reference_bitmap_id: r.reference_bitmap_id,
+                        reference_bitmap_key: r.reference_bitmap_key,
+                        search_x: r.search_x,
+                        search_y: r.search_y,
+                        search_width: r.search_width,
+                        search_height: r.search_height,
+                        match_threshold: r.match_threshold,
+                        output_found_variable_id: r.output_found_variable_id,
+                        output_x_variable_id: r.output_x_variable_id,
+                        output_y_variable_id: r.output_y_variable_id,
+                        output_region_variable_id: r.output_region_variable_id,
                         timeout_ms: 5000,
                         retry_interval_ms: 250,
                     });
                 }
             }
             "branch" => {
-                if let Some(r) = branch_map.get(&step_id) {
-                    let cond_type: String = r.get("condition_type");
-                    let condition = if cond_type == "pixel_rgb" {
-                        let exp_r: i16 = r.get::<Option<i16>, _>("expected_r").unwrap_or(0);
-                        let exp_g: i16 = r.get::<Option<i16>, _>("expected_g").unwrap_or(0);
-                        let exp_b: i16 = r.get::<Option<i16>, _>("expected_b").unwrap_or(0);
+                if let Some(r) = branch_map.remove(&step_id) {
+                    let condition = if r.condition_type == "pixel_rgb" {
+                        let exp_r = r.expected_r.unwrap_or(0);
+                        let exp_g = r.expected_g.unwrap_or(0);
+                        let exp_b = r.expected_b.unwrap_or(0);
                         BranchConditionPayload::PixelRgb {
-                            x: r.get("x"),
-                            y: r.get("y"),
+                            x: r.x,
+                            y: r.y,
                             expected_r: exp_r,
                             expected_g: exp_g,
                             expected_b: exp_b,
                             expected_rgb: [exp_r, exp_g, exp_b],
-                            tolerance: r.get::<Option<i16>, _>("tolerance").unwrap_or(0),
+                            tolerance: r.tolerance.unwrap_or(0),
                             timeout_ms: 5000,
                             retry_interval_ms: 250,
                         }
                     } else {
                         BranchConditionPayload::Bitmap {
-                            reference_bitmap_id: r.get("reference_bitmap_id"),
-                            reference_bitmap_key: r.get("reference_bitmap_key"),
-                            search_x: r.get("search_x"),
-                            search_y: r.get("search_y"),
-                            search_width: r.get("search_width"),
-                            search_height: r.get("search_height"),
-                            match_threshold: r.get("match_threshold"),
+                            reference_bitmap_id: r.reference_bitmap_id,
+                            reference_bitmap_key: r.reference_bitmap_key,
+                            search_x: r.search_x,
+                            search_y: r.search_y,
+                            search_width: r.search_width,
+                            search_height: r.search_height,
+                            match_threshold: r.match_threshold,
                             timeout_ms: 5000,
                             retry_interval_ms: 250,
                         }
@@ -363,8 +437,8 @@ pub async fn fetch_full_automation_json_with_overrides(
                         label,
                         post_delay_ms,
                         condition,
-                        on_match_step_id: r.get("on_match_step_id"),
-                        on_no_match_step_id: r.get("on_no_match_step_id"),
+                        on_match_step_id: r.on_match_step_id,
+                        on_no_match_step_id: r.on_no_match_step_id,
                         timeout_ms: 5000,
                         retry_interval_ms: 250,
                     });
@@ -1301,11 +1375,10 @@ pub fn is_agent_version_outdated(agent_version: Option<&str>, min_version: Optio
     let parse_version = |v: &str| -> Vec<u64> {
         v.split('.')
             .map(|part| {
-                part.chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect::<String>()
+                part.bytes()
+                    .take_while(|b| b.is_ascii_digit())
+                    .fold(0u64, |acc, b| acc * 10 + (b - b'0') as u64)
             })
-            .map(|s| s.parse::<u64>().unwrap_or(0))
             .collect()
     };
 
