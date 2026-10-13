@@ -1,5 +1,6 @@
 use askama::Template;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// ImageMagnifier struct representing the three-panel image magnifier component settings and calculations.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -12,8 +13,16 @@ pub struct ImageMagnifier {
 }
 
 /// Helper to escape characters in URLs used inside CSS `url('...')` values.
-pub fn escape_css_url(url: &str) -> String {
-    let mut escaped = String::with_capacity(url.len());
+pub fn escape_css_url<'a>(url: &'a str) -> Cow<'a, str> {
+    if !url.bytes().any(|b| {
+        matches!(
+            b,
+            b'\\' | b'\'' | b'"' | b'\n' | b'\r' | 0x0C | b'(' | b')' | b'<' | b'>'
+        )
+    }) {
+        return Cow::Borrowed(url);
+    }
+    let mut escaped = String::with_capacity(url.len() + 16);
     for c in url.chars() {
         match c {
             '\\' => escaped.push_str("\\\\"),
@@ -27,7 +36,7 @@ pub fn escape_css_url(url: &str) -> String {
             c => escaped.push(c),
         }
     }
-    escaped
+    Cow::Owned(escaped)
 }
 
 impl ImageMagnifier {
@@ -60,14 +69,14 @@ impl ImageMagnifier {
     }
 
     /// Marker style for normal panel
-    pub fn normal_marker_style(&self) -> String {
+    pub fn normal_marker_style(&self) -> Cow<'static, str> {
         let (tx, ty) = match (self.target_x, self.target_y) {
             (Some(x), Some(y)) => (x as f64, y as f64),
-            _ => return String::new(),
+            _ => return Cow::Borrowed(""),
         };
 
         if self.native_w == 0 || self.native_h == 0 {
-            return String::new();
+            return Cow::Borrowed("");
         }
 
         let scale_w = 600.0 / self.native_w as f64;
@@ -83,7 +92,10 @@ impl ImageMagnifier {
         let marker_left = offset_x + (tx * scale);
         let marker_top = offset_y + (ty * scale);
 
-        format!("left: {:.2}px; top: {:.2}px;", marker_left, marker_top)
+        Cow::Owned(format!(
+            "left: {:.2}px; top: {:.2}px;",
+            marker_left, marker_top
+        ))
     }
 
     /// Background style for 400% (4x) zoom panel (viewport 320x320)
@@ -115,11 +127,11 @@ impl ImageMagnifier {
     }
 
     /// Marker style for 400% (4x) zoom panel (viewport 320x320)
-    pub fn zoom400_marker_style(&self) -> String {
+    pub fn zoom400_marker_style(&self) -> &'static str {
         if self.show_marker() {
-            "left: 160px; top: 160px;".to_string()
+            "left: 160px; top: 160px;"
         } else {
-            String::new()
+            ""
         }
     }
 
@@ -152,11 +164,11 @@ impl ImageMagnifier {
     }
 
     /// Marker style for 20x pixel grid panel (viewport 320x320)
-    pub fn grid_marker_style(&self) -> String {
+    pub fn grid_marker_style(&self) -> &'static str {
         if self.show_marker() {
-            "left: 160px; top: 160px;".to_string()
+            "left: 160px; top: 160px;"
         } else {
-            String::new()
+            ""
         }
     }
 }
