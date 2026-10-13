@@ -21,6 +21,72 @@ pub fn seconds_to_post_delay_ms(post_delay_seconds: Option<f64>) -> i32 {
 }
 
 #[inline]
+fn sanitize_mouse_button(b: Option<&str>) -> &'static str {
+    match b {
+        Some("right") => "right",
+        Some("middle") => "middle",
+        _ => "left",
+    }
+}
+
+#[inline]
+fn sanitize_click_type(ct: Option<&str>) -> &'static str {
+    match ct {
+        Some("double") => "double",
+        _ => "single",
+    }
+}
+
+fn validate_branch_form(form: &MouseClickStepForm, condition_type: &str) -> Option<String> {
+    if form.on_match_step_id.filter(|&sid| sid > 0).is_none()
+        || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none()
+    {
+        Some("Both match and no-match target steps are required for branch conditions.".to_string())
+    } else if condition_type == "pixel_rgb" && (form.x.is_none() || form.y.is_none()) {
+        Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string())
+    } else if condition_type == "bitmap"
+        && (form.reference_bitmap_id.is_none() || form.reference_bitmap_id == Some(0))
+    {
+        Some("Please select a reference bitmap for bitmap condition.".to_string())
+    } else {
+        None
+    }
+}
+
+fn validate_find_bitmap_output_vars(
+    form: &MouseClickStepForm,
+    variables: &[VariableOption],
+) -> Result<i64, &'static str> {
+    let ref_bitmap_id = match form.reference_bitmap_id {
+        Some(id) if id > 0 => id,
+        _ => return Err("Please select a reference bitmap."),
+    };
+
+    if let Some(var_id) = form.output_found_variable_id
+        && !variables.iter().any(|v| v.id == var_id)
+    {
+        return Err("Selected 'Is Found' output variable is invalid for this automation.");
+    }
+    if let Some(var_id) = form.output_x_variable_id
+        && !variables.iter().any(|v| v.id == var_id)
+    {
+        return Err("Selected 'Found X' output variable is invalid for this automation.");
+    }
+    if let Some(var_id) = form.output_y_variable_id
+        && !variables.iter().any(|v| v.id == var_id)
+    {
+        return Err("Selected 'Found Y' output variable is invalid for this automation.");
+    }
+    if let Some(var_id) = form.output_region_variable_id
+        && !variables.iter().any(|v| v.id == var_id)
+    {
+        return Err("Selected 'Found Region' output variable is invalid for this automation.");
+    }
+
+    Ok(ref_bitmap_id)
+}
+
+#[inline]
 pub fn sanitize_label(label: Option<&str>) -> Option<String> {
     label
         .map(str::trim)
@@ -231,13 +297,17 @@ pub fn generate_mouse_click_summary(
     button: &str,
     click_type: &str,
 ) -> String {
+    use std::fmt::Write;
+    let mut summary = String::with_capacity(64);
     if let Some(rname) = region_var_name.map(str::trim).filter(|n| !n.is_empty()) {
-        return format!(
+        let _ = write!(
+            summary,
             "Click center of region «{}» [{}, {}]",
             rname, button, click_type
         );
+        return summary;
     }
-    let mut summary = String::with_capacity(64);
+
     summary.push_str("Click (");
 
     fn fmt_coord(coord: Option<i32>, var_name: Option<&str>, buf: &mut String) {
@@ -256,33 +326,39 @@ pub fn generate_mouse_click_summary(
     fmt_coord(x, x_var_name, &mut summary);
     summary.push_str(", ");
     fmt_coord(y, y_var_name, &mut summary);
-    use std::fmt::Write;
     let _ = write!(summary, ") [{}, {}]", button, click_type);
 
     summary
 }
 
 pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&str>) -> String {
-    match output_var_name.map(str::trim).filter(|n| !n.is_empty()) {
-        Some(name) => format!("Read pixel at ({}, {}) → store as «{}»", x, y, name),
-        None => format!("Read pixel at ({}, {})", x, y),
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(64);
+    let _ = write!(buf, "Read pixel at ({}, {})", x, y);
+    if let Some(name) = output_var_name.map(str::trim).filter(|n| !n.is_empty()) {
+        buf.push_str(" → store as «");
+        buf.push_str(name);
+        buf.push('»');
     }
+    buf
 }
 
 pub fn generate_find_bitmap_summary(
     bitmap_name: &str,
     output_found_var_name: Option<&str>,
 ) -> String {
-    match output_found_var_name
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(64);
+    let _ = write!(buf, "Search for «{}» on screen", bitmap_name);
+    if let Some(name) = output_found_var_name
         .map(str::trim)
         .filter(|n| !n.is_empty())
     {
-        Some(name) => format!(
-            "Search for «{}» on screen → store as «{}»",
-            bitmap_name, name
-        ),
-        None => format!("Search for «{}» on screen", bitmap_name),
+        buf.push_str(" → store as «");
+        buf.push_str(name);
+        buf.push('»');
     }
+    buf
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -298,11 +374,14 @@ pub fn generate_branch_summary(
     match_target: Option<&str>,
     no_match_target: Option<&str>,
 ) -> String {
+    use std::fmt::Write;
     let match_str = match_target.unwrap_or("Next Step");
     let no_match_str = no_match_target.unwrap_or("Next Step");
+    let mut buf = String::with_capacity(128);
 
     if condition_type == "pixel_rgb" {
-        format!(
+        let _ = write!(
+            buf,
             "BRANCH: if pixel at ({}, {}) ≈ RGB({},{},{}) ±{} → go to {}, else → go to {}",
             x.unwrap_or(0),
             y.unwrap_or(0),
@@ -312,15 +391,17 @@ pub fn generate_branch_summary(
             tolerance.unwrap_or(0),
             match_str,
             no_match_str
-        )
+        );
     } else {
-        format!(
+        let _ = write!(
+            buf,
             "BRANCH: if bitmap «{}» found → go to {}, else → go to {}",
             bitmap_name.unwrap_or("bitmap"),
             match_str,
             no_match_str
-        )
+        );
     }
+    buf
 }
 
 /// Bulk fetch and format all step view items for an automation.
@@ -820,25 +901,7 @@ pub async fn post_create_step_handler(
             .unwrap_or("pixel_rgb")
             .to_string();
 
-        let mut error_msg = None;
-        if form.on_match_step_id.filter(|&sid| sid > 0).is_none()
-            || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none()
-        {
-            error_msg = Some(
-                "Both match and no-match target steps are required for branch conditions."
-                    .to_string(),
-            );
-        } else if condition_type == "pixel_rgb" && (form.x.is_none() || form.y.is_none()) {
-            error_msg = Some(
-                "Please provide valid X and Y coordinates for pixel RGB condition.".to_string(),
-            );
-        } else if condition_type == "bitmap"
-            && (form.reference_bitmap_id.is_none() || form.reference_bitmap_id == Some(0))
-        {
-            error_msg = Some("Please select a reference bitmap for bitmap condition.".to_string());
-        }
-
-        if let Some(err) = error_msg {
+        if let Some(err) = validate_branch_form(&form, &condition_type) {
             let (steps, bitmaps) = tokio::join!(
                 fetch_automation_step_options(&state.db, id, None),
                 fetch_available_bitmaps(&state.db, id)
@@ -1096,9 +1159,9 @@ pub async fn post_create_step_handler(
             fetch_automation_variables(&state.db, id)
         );
 
-        let ref_bitmap_id = match form.reference_bitmap_id {
-            Some(id) if id > 0 => id,
-            _ => {
+        let ref_bitmap_id = match validate_find_bitmap_output_vars(&form, &variables) {
+            Ok(ref_id) => ref_id,
+            Err(err_msg) => {
                 return (
                     StatusCode::BAD_REQUEST,
                     HtmlTemplate(StepFindBitmapTemplate {
@@ -1120,149 +1183,13 @@ pub async fn post_create_step_handler(
                         output_region_variable_id: form.output_region_variable_id,
                         bitmaps,
                         variables,
-                        error: Some("Please select a reference bitmap.".to_string()),
+                        error: Some(err_msg.to_string()),
                         is_edit: false,
                     }),
                 )
                     .into_response();
             }
         };
-
-        if let Some(var_id) = form.output_found_variable_id
-            && !variables.iter().any(|v| v.id == var_id)
-        {
-            return (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepFindBitmapTemplate {
-                    user,
-                    csrf_token,
-                    automation_id: id,
-                    step_id: None,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    reference_bitmap_id: form.reference_bitmap_id,
-                    search_x: form.search_x,
-                    search_y: form.search_y,
-                    search_width: form.search_width,
-                    search_height: form.search_height,
-                    match_threshold: form.match_threshold.unwrap_or(0.95),
-                    output_found_variable_id: form.output_found_variable_id,
-                    output_x_variable_id: form.output_x_variable_id,
-                    output_y_variable_id: form.output_y_variable_id,
-                    output_region_variable_id: form.output_region_variable_id,
-                    bitmaps,
-                    variables,
-                    error: Some(
-                        "Selected 'Is Found' output variable is invalid for this automation."
-                            .to_string(),
-                    ),
-                    is_edit: false,
-                }),
-            )
-                .into_response();
-        }
-
-        if let Some(var_id) = form.output_x_variable_id
-            && !variables.iter().any(|v| v.id == var_id)
-        {
-            return (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepFindBitmapTemplate {
-                    user,
-                    csrf_token,
-                    automation_id: id,
-                    step_id: None,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    reference_bitmap_id: form.reference_bitmap_id,
-                    search_x: form.search_x,
-                    search_y: form.search_y,
-                    search_width: form.search_width,
-                    search_height: form.search_height,
-                    match_threshold: form.match_threshold.unwrap_or(0.95),
-                    output_found_variable_id: form.output_found_variable_id,
-                    output_x_variable_id: form.output_x_variable_id,
-                    output_y_variable_id: form.output_y_variable_id,
-                    output_region_variable_id: form.output_region_variable_id,
-                    bitmaps,
-                    variables,
-                    error: Some(
-                        "Selected 'Found X' output variable is invalid for this automation."
-                            .to_string(),
-                    ),
-                    is_edit: false,
-                }),
-            )
-                .into_response();
-        }
-
-        if let Some(var_id) = form.output_y_variable_id
-            && !variables.iter().any(|v| v.id == var_id)
-        {
-            return (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepFindBitmapTemplate {
-                    user,
-                    csrf_token,
-                    automation_id: id,
-                    step_id: None,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    reference_bitmap_id: form.reference_bitmap_id,
-                    search_x: form.search_x,
-                    search_y: form.search_y,
-                    search_width: form.search_width,
-                    search_height: form.search_height,
-                    match_threshold: form.match_threshold.unwrap_or(0.95),
-                    output_found_variable_id: form.output_found_variable_id,
-                    output_x_variable_id: form.output_x_variable_id,
-                    output_y_variable_id: form.output_y_variable_id,
-                    output_region_variable_id: form.output_region_variable_id,
-                    bitmaps,
-                    variables,
-                    error: Some(
-                        "Selected 'Found Y' output variable is invalid for this automation."
-                            .to_string(),
-                    ),
-                    is_edit: false,
-                }),
-            )
-                .into_response();
-        }
-
-        if let Some(var_id) = form.output_region_variable_id
-            && !variables.iter().any(|v| v.id == var_id)
-        {
-            return (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepFindBitmapTemplate {
-                    user,
-                    csrf_token,
-                    automation_id: id,
-                    step_id: None,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    reference_bitmap_id: form.reference_bitmap_id,
-                    search_x: form.search_x,
-                    search_y: form.search_y,
-                    search_width: form.search_width,
-                    search_height: form.search_height,
-                    match_threshold: form.match_threshold.unwrap_or(0.95),
-                    output_found_variable_id: form.output_found_variable_id,
-                    output_x_variable_id: form.output_x_variable_id,
-                    output_y_variable_id: form.output_y_variable_id,
-                    output_region_variable_id: form.output_region_variable_id,
-                    bitmaps,
-                    variables,
-                    error: Some(
-                        "Selected 'Found Region' output variable is invalid for this automation."
-                            .to_string(),
-                    ),
-                    is_edit: false,
-                }),
-            )
-                .into_response();
-        }
 
         let match_threshold = form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0);
 
@@ -1454,18 +1381,8 @@ pub async fn post_create_step_handler(
             }
         };
 
-        let button = match form.button.as_deref() {
-            Some("right") => "right",
-            Some("middle") => "middle",
-            _ => "left",
-        }
-        .to_string();
-
-        let click_type = match form.click_type.as_deref() {
-            Some("double") => "double",
-            _ => "single",
-        }
-        .to_string();
+        let button = sanitize_mouse_button(form.button.as_deref()).to_string();
+        let click_type = sanitize_click_type(form.click_type.as_deref()).to_string();
 
         let mut tx = match state.db.begin().await {
             Ok(tx) => tx,
