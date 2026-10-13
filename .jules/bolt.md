@@ -21,3 +21,7 @@
 ## 2025-03-10 - [Concurrent automation sub-view queries with tokio::join!]
 **Learning:** `get_automation_bitmaps_handler`, `get_automation_variables_handler`, and `get_automation_parameters_handler` sequentially executed independent queries for the target automation record and its associated sub-items (bitmaps, variables, or parameters), incurring 2 consecutive database round-trips per request.
 **Action:** Use `tokio::join!` to execute the automation metadata query and associated items list query concurrently over the PgPool, halving database wait latency for automation sub-views (~50% reduction).
+
+## 2025-03-10 - [Concurrent step edit detail and dropdown option queries with tokio::join!]
+**Learning:** `get_edit_step_handler` in `src/routes/automations/steps.rs` sequentially queried step subtype details (`step_find_bitmap`, `step_branches`, `step_find_pixel_rgb`, `step_mouse_clicks`) and then fetched dropdown option lists (`fetch_available_bitmaps`, `fetch_automation_variables`, `fetch_automation_step_options`), taking 2 sequential DB round-trips per step edit form load.
+**Action:** Use `tokio::join!` to execute step subtype detail queries concurrently with form dropdown option queries across PgPool connections, halving database wait latency (~50% reduction) on step editing UI endpoints.
