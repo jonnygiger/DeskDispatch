@@ -158,3 +158,111 @@ pub struct CommitScreenshotResponse {
     pub status: String,
     pub object_key: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct AutomationVariablePayload {
+    pub id: i64,
+    pub name: String,
+    pub var_type: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BranchConditionPayload {
+    PixelRgb {
+        x: Option<i32>,
+        y: Option<i32>,
+        expected_r: i16,
+        expected_g: i16,
+        expected_b: i16,
+        expected_rgb: [i16; 3],
+        tolerance: i16,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
+    Bitmap {
+        reference_bitmap_id: Option<i64>,
+        reference_bitmap_key: Option<String>,
+        search_x: Option<i32>,
+        search_y: Option<i32>,
+        search_width: Option<i32>,
+        search_height: Option<i32>,
+        match_threshold: Option<f32>,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StepPayload {
+    MouseClick {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        x: Option<i32>,
+        y: Option<i32>,
+        x_variable_id: Option<i64>,
+        y_variable_id: Option<i64>,
+        region_variable_id: Option<i64>,
+        button: String,
+        click_type: String,
+    },
+    KeyPress {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        key_combo: String,
+    },
+    FindPixelRgb {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        x: i32,
+        y: i32,
+        output_variable_id: Option<i64>,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
+    FindBitmap {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        reference_bitmap_id: i64,
+        reference_bitmap_key: Option<String>,
+        search_x: Option<i32>,
+        search_y: Option<i32>,
+        search_width: Option<i32>,
+        search_height: Option<i32>,
+        match_threshold: f32,
+        output_found_variable_id: Option<i64>,
+        output_x_variable_id: Option<i64>,
+        output_y_variable_id: Option<i64>,
+        output_region_variable_id: Option<i64>,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
+    Branch {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        condition: BranchConditionPayload,
+        on_match_step_id: Option<i64>,
+        on_no_match_step_id: Option<i64>,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct FullAutomationPayload {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub status: String,
+    #[schema(value_type = Object)]
+    pub parameters: std::collections::HashMap<String, serde_json::Value>,
+    pub variables: Vec<AutomationVariablePayload>,
+    pub steps: Vec<StepPayload>,
+}

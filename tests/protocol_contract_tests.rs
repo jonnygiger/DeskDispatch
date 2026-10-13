@@ -26,6 +26,10 @@ use utoipa::OpenApi;
             WorkerStopRecordingResponse,
             CommitScreenshotRequest,
             CommitScreenshotResponse,
+            AutomationVariablePayload,
+            BranchConditionPayload,
+            StepPayload,
+            FullAutomationPayload,
         )
     ),
     tags(
@@ -60,6 +64,8 @@ fn test_openapi_schema_generation_and_components() {
     assert!(schemas.get("StepResultRequest").is_some());
     assert!(schemas.get("CompleteTaskRunRequest").is_some());
     assert!(schemas.get("PostRecordingEventsRequest").is_some());
+    assert!(schemas.get("FullAutomationPayload").is_some());
+    assert!(schemas.get("StepPayload").is_some());
 }
 
 #[test]
