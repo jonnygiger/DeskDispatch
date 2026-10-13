@@ -89,4 +89,55 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_deserialize_option_number_invalid_and_boundary_inputs() {
+        // Arrange & Act: Test whitespace-padded numeric strings in urlencoded & JSON
+        let urlencoded_whitespace = "val_i64=%20123%20&val_f32=%0A3.5%0A&val_i16=%20-99%20";
+        let parsed_ws: TestStruct = serde_urlencoded::from_str(urlencoded_whitespace).unwrap();
+
+        // Assert: Trimmed whitespace parses successfully
+        assert_eq!(
+            parsed_ws,
+            TestStruct {
+                val_i64: Some(123),
+                val_f32: Some(3.5),
+                val_i16: Some(-99),
+            }
+        );
+
+        let json_whitespace = r#"{"val_i64": "  500  ", "val_f32": " -0.5 ", "val_i16": "\t42\n"}"#;
+        let parsed_json_ws: TestStruct = serde_json::from_str(json_whitespace).unwrap();
+        assert_eq!(
+            parsed_json_ws,
+            TestStruct {
+                val_i64: Some(500),
+                val_f32: Some(-0.5),
+                val_i16: Some(42),
+            }
+        );
+
+        // Arrange & Act: Test invalid non-numeric strings produce deserialization errors
+        let urlencoded_invalid = "val_i16=not_a_number";
+        let err_urlencoded = serde_urlencoded::from_str::<TestStruct>(urlencoded_invalid);
+        assert!(
+            err_urlencoded.is_err(),
+            "Expected non-numeric urlencoded string to fail deserialization"
+        );
+
+        let json_invalid = r#"{"val_i64": "12.34"}"#; // Float string into integer field
+        let err_json = serde_json::from_str::<TestStruct>(json_invalid);
+        assert!(
+            err_json.is_err(),
+            "Expected float string in i64 field to fail deserialization"
+        );
+
+        // Arrange & Act: Test integer overflow/underflow strings produce deserialization errors
+        let json_overflow = r#"{"val_i16": "99999999999"}"#; // Exceeds i16::MAX (32767)
+        let err_overflow = serde_json::from_str::<TestStruct>(json_overflow);
+        assert!(
+            err_overflow.is_err(),
+            "Expected overflowing string in i16 field to fail deserialization"
+        );
+    }
 }

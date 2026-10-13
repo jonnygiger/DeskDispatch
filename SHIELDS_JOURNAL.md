@@ -19,3 +19,7 @@ Action: Test error handling response transformations directly via `into_response
 ## 2025-03-14 Worker Agent Version Comparison Edge Cases Coverage
 Learning: Worker agent version checking (`is_agent_version_outdated`) parses dot-separated numeric version components using digit extraction. Key edge cases include double-digit components (e.g., `1.10.0` vs `1.9.0`), whitespace padding (`" 1.2.0 "`), pre-release suffixes (`-rc1`, `-beta`), and whitespace-only string representations for agent vs minimum required versions.
 Action: Write pure unit tests asserting exact boolean outputs across double-digit semver components, pre-release suffixes, and whitespace variations to prevent version validation regressions.
+
+## 2025-03-15 Deserialization Option Number Boundary and Error Edge Cases Coverage
+Learning: `deserialize_option_number` converts empty or whitespace-only strings to `None` for optional form fields, but handles string trimming before numeric parsing. Key edge cases include whitespace-padded numeric strings in urlencoded forms or JSON (e.g. `" 123 "`, `"\t42\n"`), invalid non-numeric or float-to-integer string payloads (`"not_a_number"`, `"12.34"` into `i64`), and numeric overflow strings (e.g. `"99999999999"` into `i16`).
+Action: Test both successful whitespace trimming and deserialization error failures (non-numeric, type mismatch, overflow) directly across `serde_urlencoded` and `serde_json` in `src/de.rs`.
