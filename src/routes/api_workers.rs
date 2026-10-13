@@ -6,7 +6,7 @@ use axum::{
     response::IntoResponse,
 };
 pub use deskdispatch_protocol::*;
-use sqlx::Row;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use axum::Router;
@@ -63,24 +63,24 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[tracing::instrument(skip(conn))]
+#[tracing::instrument(skip(db))]
 pub async fn fetch_full_automation_json(
-    conn: &mut sqlx::PgConnection,
+    db: &PgPool,
     automation_id: i64,
 ) -> Result<serde_json::Value, sqlx::Error> {
-    fetch_full_automation_json_with_overrides(conn, automation_id, None).await
+    fetch_full_automation_json_with_overrides(db, automation_id, None).await
 }
 
-#[tracing::instrument(skip(conn))]
+#[tracing::instrument(skip(db))]
 pub async fn fetch_full_automation_json_with_overrides(
-    conn: &mut sqlx::PgConnection,
+    db: &PgPool,
     automation_id: i64,
     overrides: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<serde_json::Value, sqlx::Error> {
     let auto_row =
         sqlx::query("SELECT id, name, description, status FROM automations WHERE id = $1")
             .bind(automation_id)
-            .fetch_optional(&mut *conn)
+            .fetch_optional(db)
             .await?;
 
     let (id, name, description, status) = match auto_row {
@@ -97,14 +97,100 @@ pub async fn fetch_full_automation_json_with_overrides(
         }
     };
 
-    let param_rows = sqlx::query(
+    let params_fut = sqlx::query(
         "SELECT name, param_type, default_value FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC",
     )
     .bind(automation_id)
-    .fetch_all(&mut *conn)
-    .await?;
+    .fetch_all(db);
 
-    let mut parameters_map = serde_json::Map::new();
+    let vars_fut = sqlx::query(
+        "SELECT id, name, var_type, description FROM automation_variables WHERE automation_id = $1 ORDER BY id ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let steps_fut = sqlx::query(
+        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let mc_fut = sqlx::query(
+        r#"
+        SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id, smc.region_variable_id, smc.button, smc.click_type
+        FROM step_mouse_clicks smc
+        JOIN automation_steps s ON smc.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let kp_fut = sqlx::query(
+        r#"
+        SELECT skp.step_id, skp.key_combo
+        FROM step_key_presses skp
+        JOIN automation_steps s ON skp.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let fp_fut = sqlx::query(
+        r#"
+        SELECT sfp.step_id, sfp.x, sfp.y, sfp.output_variable_id
+        FROM step_find_pixel_rgb sfp
+        JOIN automation_steps s ON sfp.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let fb_fut = sqlx::query(
+        r#"
+        SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.search_x, sfb.search_y, sfb.search_width, sfb.search_height,
+               sfb.match_threshold, sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id, sfb.output_region_variable_id,
+               b.object_storage_key AS reference_bitmap_key
+        FROM step_find_bitmap sfb
+        JOIN automation_steps s ON sfb.step_id = s.id
+        LEFT JOIN bitmaps b ON sfb.reference_bitmap_id = b.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let branch_fut = sqlx::query(
+        r#"
+        SELECT sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
+               sb.reference_bitmap_id, sb.search_x, sb.search_y, sb.search_width, sb.search_height, sb.match_threshold,
+               sb.on_match_step_id, sb.on_no_match_step_id,
+               b.object_storage_key AS reference_bitmap_key
+        FROM step_branches sb
+        JOIN automation_steps s ON sb.step_id = s.id
+        LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let (
+        param_rows,
+        var_rows,
+        step_rows,
+        mouse_clicks_rows,
+        key_presses_rows,
+        find_pixel_rows,
+        find_bitmap_rows,
+        branch_rows,
+    ) = tokio::try_join!(
+        params_fut, vars_fut, steps_fut, mc_fut, kp_fut, fp_fut, fb_fut, branch_fut
+    )?;
+
+    let mut parameters_map = serde_json::Map::with_capacity(param_rows.len());
     for p in param_rows {
         let pname: String = p.get("name");
         let ptype: String = p.get("param_type");
@@ -129,14 +215,7 @@ pub async fn fetch_full_automation_json_with_overrides(
         parameters_map.insert(pname, val);
     }
 
-    let var_rows = sqlx::query(
-        "SELECT id, name, var_type, description FROM automation_variables WHERE automation_id = $1 ORDER BY id ASC",
-    )
-    .bind(automation_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let mut variables_list = Vec::new();
+    let mut variables_list = Vec::with_capacity(var_rows.len());
     for v in var_rows {
         variables_list.push(serde_json::json!({
             "id": v.get::<i64, _>("id"),
@@ -146,105 +225,31 @@ pub async fn fetch_full_automation_json_with_overrides(
         }));
     }
 
-    let step_rows = sqlx::query(
-        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
-    )
-    .bind(automation_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let mouse_clicks_rows = sqlx::query(
-        r#"
-        SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id, smc.button, smc.click_type
-        FROM step_mouse_clicks smc
-        JOIN automation_steps s ON smc.step_id = s.id
-        WHERE s.automation_id = $1
-        "#,
-    )
-    .bind(automation_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let mut mouse_clicks_map = HashMap::new();
+    let mut mouse_clicks_map = HashMap::with_capacity(mouse_clicks_rows.len());
     for r in mouse_clicks_rows {
         let step_id: i64 = r.get("step_id");
         mouse_clicks_map.insert(step_id, r);
     }
 
-    let key_presses_rows = sqlx::query(
-        r#"
-        SELECT skp.step_id, skp.key_combo
-        FROM step_key_presses skp
-        JOIN automation_steps s ON skp.step_id = s.id
-        WHERE s.automation_id = $1
-        "#,
-    )
-    .bind(automation_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let mut key_presses_map = HashMap::new();
+    let mut key_presses_map = HashMap::with_capacity(key_presses_rows.len());
     for r in key_presses_rows {
         let step_id: i64 = r.get("step_id");
         key_presses_map.insert(step_id, r);
     }
 
-    let find_pixel_rows = sqlx::query(
-        r#"
-        SELECT sfp.step_id, sfp.x, sfp.y, sfp.output_variable_id
-        FROM step_find_pixel_rgb sfp
-        JOIN automation_steps s ON sfp.step_id = s.id
-        WHERE s.automation_id = $1
-        "#,
-    )
-    .bind(automation_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let mut find_pixel_map = HashMap::new();
+    let mut find_pixel_map = HashMap::with_capacity(find_pixel_rows.len());
     for r in find_pixel_rows {
         let step_id: i64 = r.get("step_id");
         find_pixel_map.insert(step_id, r);
     }
 
-    let find_bitmap_rows = sqlx::query(
-        r#"
-        SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.search_x, sfb.search_y, sfb.search_width, sfb.search_height,
-               sfb.match_threshold, sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id,
-               b.object_storage_key AS reference_bitmap_key
-        FROM step_find_bitmap sfb
-        JOIN automation_steps s ON sfb.step_id = s.id
-        LEFT JOIN bitmaps b ON sfb.reference_bitmap_id = b.id
-        WHERE s.automation_id = $1
-        "#,
-    )
-    .bind(automation_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let mut find_bitmap_map = HashMap::new();
+    let mut find_bitmap_map = HashMap::with_capacity(find_bitmap_rows.len());
     for r in find_bitmap_rows {
         let step_id: i64 = r.get("step_id");
         find_bitmap_map.insert(step_id, r);
     }
 
-    let branch_rows = sqlx::query(
-        r#"
-        SELECT sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
-               sb.reference_bitmap_id, sb.search_x, sb.search_y, sb.search_width, sb.search_height, sb.match_threshold,
-               sb.on_match_step_id, sb.on_no_match_step_id,
-               b.object_storage_key AS reference_bitmap_key
-        FROM step_branches sb
-        JOIN automation_steps s ON sb.step_id = s.id
-        LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
-        WHERE s.automation_id = $1
-        "#,
-    )
-    .bind(automation_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let mut branch_map = HashMap::new();
+    let mut branch_map = HashMap::with_capacity(branch_rows.len());
     for r in branch_rows {
         let step_id: i64 = r.get("step_id");
         branch_map.insert(step_id, r);
@@ -478,8 +483,12 @@ pub async fn get_next_assignment_handler(
                     } else {
                         Some(&overrides_map)
                     };
-                    fetch_full_automation_json_with_overrides(&mut tx, automation_id, overrides_ref)
-                        .await?
+                    fetch_full_automation_json_with_overrides(
+                        &state.db,
+                        automation_id,
+                        overrides_ref,
+                    )
+                    .await?
                 }
             };
 
@@ -1254,7 +1263,7 @@ pub async fn get_task_run_handler(
 
             let automation_json = match dispatched_json {
                 Some(json) => json,
-                None => fetch_full_automation_json(&mut conn, automation_id).await?,
+                None => fetch_full_automation_json(&state.db, automation_id).await?,
             };
 
             Ok(Json(TaskRunResponse {
