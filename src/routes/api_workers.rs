@@ -190,7 +190,7 @@ pub async fn fetch_full_automation_json_with_overrides(
         params_fut, vars_fut, steps_fut, mc_fut, kp_fut, fp_fut, fb_fut, branch_fut
     )?;
 
-    let mut parameters_map = serde_json::Map::with_capacity(param_rows.len());
+    let mut parameters_map = HashMap::with_capacity(param_rows.len());
     for p in param_rows {
         let pname: String = p.get("name");
         let ptype: String = p.get("param_type");
@@ -217,12 +217,12 @@ pub async fn fetch_full_automation_json_with_overrides(
 
     let mut variables_list = Vec::with_capacity(var_rows.len());
     for v in var_rows {
-        variables_list.push(serde_json::json!({
-            "id": v.get::<i64, _>("id"),
-            "name": v.get::<String, _>("name"),
-            "var_type": v.get::<String, _>("var_type"),
-            "description": v.get::<String, _>("description"),
-        }));
+        variables_list.push(AutomationVariablePayload {
+            id: v.get("id"),
+            name: v.get("name"),
+            var_type: v.get("var_type"),
+            description: v.get("description"),
+        });
     }
 
     let mut mouse_clicks_map = HashMap::with_capacity(mouse_clicks_rows.len());
@@ -234,7 +234,8 @@ pub async fn fetch_full_automation_json_with_overrides(
     let mut key_presses_map = HashMap::with_capacity(key_presses_rows.len());
     for r in key_presses_rows {
         let step_id: i64 = r.get("step_id");
-        key_presses_map.insert(step_id, r);
+        let key_combo: String = r.get("key_combo");
+        key_presses_map.insert(step_id, key_combo);
     }
 
     let mut find_pixel_map = HashMap::with_capacity(find_pixel_rows.len());
@@ -255,134 +256,137 @@ pub async fn fetch_full_automation_json_with_overrides(
         branch_map.insert(step_id, r);
     }
 
-    let mut steps_list = Vec::new();
+    let mut steps_list = Vec::with_capacity(step_rows.len());
     for step in step_rows {
         let step_id: i64 = step.get("id");
         let step_type: String = step.get("step_type");
         let label: Option<String> = step.get("label");
         let post_delay_ms: i32 = step.get("post_delay_ms");
 
-        let mut step_json = serde_json::json!({
-            "id": step_id,
-            "type": step_type,
-            "label": label,
-            "post_delay_ms": post_delay_ms,
-        });
-
         match step_type.as_str() {
             "mouse_click" => {
                 if let Some(r) = mouse_clicks_map.get(&step_id) {
-                    step_json["x"] = serde_json::json!(r.get::<Option<i32>, _>("x"));
-                    step_json["y"] = serde_json::json!(r.get::<Option<i32>, _>("y"));
-                    step_json["x_variable_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("x_variable_id"));
-                    step_json["y_variable_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("y_variable_id"));
-                    step_json["region_variable_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("region_variable_id"));
-                    step_json["button"] = serde_json::json!(r.get::<String, _>("button"));
-                    step_json["click_type"] = serde_json::json!(r.get::<String, _>("click_type"));
+                    steps_list.push(StepPayload::MouseClick {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        x: r.get("x"),
+                        y: r.get("y"),
+                        x_variable_id: r.get("x_variable_id"),
+                        y_variable_id: r.get("y_variable_id"),
+                        region_variable_id: r.get("region_variable_id"),
+                        button: r.get("button"),
+                        click_type: r.get("click_type"),
+                    });
                 }
             }
             "key_press" => {
-                if let Some(r) = key_presses_map.get(&step_id) {
-                    step_json["key_combo"] = serde_json::json!(r.get::<String, _>("key_combo"));
+                if let Some(key_combo) = key_presses_map.remove(&step_id) {
+                    steps_list.push(StepPayload::KeyPress {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        key_combo,
+                    });
                 }
             }
             "find_pixel_rgb" => {
                 if let Some(r) = find_pixel_map.get(&step_id) {
-                    step_json["x"] = serde_json::json!(r.get::<i32, _>("x"));
-                    step_json["y"] = serde_json::json!(r.get::<i32, _>("y"));
-                    step_json["output_variable_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("output_variable_id"));
-                    step_json["timeout_ms"] = serde_json::json!(5000);
-                    step_json["retry_interval_ms"] = serde_json::json!(250);
+                    steps_list.push(StepPayload::FindPixelRgb {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        x: r.get("x"),
+                        y: r.get("y"),
+                        output_variable_id: r.get("output_variable_id"),
+                        timeout_ms: 5000,
+                        retry_interval_ms: 250,
+                    });
                 }
             }
             "find_bitmap" => {
                 if let Some(r) = find_bitmap_map.get(&step_id) {
-                    step_json["reference_bitmap_id"] =
-                        serde_json::json!(r.get::<i64, _>("reference_bitmap_id"));
-                    step_json["reference_bitmap_key"] =
-                        serde_json::json!(r.get::<Option<String>, _>("reference_bitmap_key"));
-                    step_json["search_x"] = serde_json::json!(r.get::<Option<i32>, _>("search_x"));
-                    step_json["search_y"] = serde_json::json!(r.get::<Option<i32>, _>("search_y"));
-                    step_json["search_width"] =
-                        serde_json::json!(r.get::<Option<i32>, _>("search_width"));
-                    step_json["search_height"] =
-                        serde_json::json!(r.get::<Option<i32>, _>("search_height"));
-                    step_json["match_threshold"] =
-                        serde_json::json!(r.get::<f32, _>("match_threshold"));
-                    step_json["output_found_variable_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("output_found_variable_id"));
-                    step_json["output_x_variable_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("output_x_variable_id"));
-                    step_json["output_y_variable_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("output_y_variable_id"));
-                    step_json["output_region_variable_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("output_region_variable_id"));
-                    step_json["timeout_ms"] = serde_json::json!(5000);
-                    step_json["retry_interval_ms"] = serde_json::json!(250);
+                    steps_list.push(StepPayload::FindBitmap {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        reference_bitmap_id: r.get("reference_bitmap_id"),
+                        reference_bitmap_key: r.get("reference_bitmap_key"),
+                        search_x: r.get("search_x"),
+                        search_y: r.get("search_y"),
+                        search_width: r.get("search_width"),
+                        search_height: r.get("search_height"),
+                        match_threshold: r.get("match_threshold"),
+                        output_found_variable_id: r.get("output_found_variable_id"),
+                        output_x_variable_id: r.get("output_x_variable_id"),
+                        output_y_variable_id: r.get("output_y_variable_id"),
+                        output_region_variable_id: r.get("output_region_variable_id"),
+                        timeout_ms: 5000,
+                        retry_interval_ms: 250,
+                    });
                 }
             }
             "branch" => {
                 if let Some(r) = branch_map.get(&step_id) {
                     let cond_type: String = r.get("condition_type");
-                    let condition_obj = if cond_type == "pixel_rgb" {
+                    let condition = if cond_type == "pixel_rgb" {
                         let exp_r: i16 = r.get::<Option<i16>, _>("expected_r").unwrap_or(0);
                         let exp_g: i16 = r.get::<Option<i16>, _>("expected_g").unwrap_or(0);
                         let exp_b: i16 = r.get::<Option<i16>, _>("expected_b").unwrap_or(0);
-                        serde_json::json!({
-                            "type": "pixel_rgb",
-                            "x": r.get::<Option<i32>, _>("x"),
-                            "y": r.get::<Option<i32>, _>("y"),
-                            "expected_r": exp_r,
-                            "expected_g": exp_g,
-                            "expected_b": exp_b,
-                            "expected_rgb": [exp_r, exp_g, exp_b],
-                            "tolerance": r.get::<Option<i16>, _>("tolerance").unwrap_or(0),
-                            "timeout_ms": 5000,
-                            "retry_interval_ms": 250
-                        })
+                        BranchConditionPayload::PixelRgb {
+                            x: r.get("x"),
+                            y: r.get("y"),
+                            expected_r: exp_r,
+                            expected_g: exp_g,
+                            expected_b: exp_b,
+                            expected_rgb: [exp_r, exp_g, exp_b],
+                            tolerance: r.get::<Option<i16>, _>("tolerance").unwrap_or(0),
+                            timeout_ms: 5000,
+                            retry_interval_ms: 250,
+                        }
                     } else {
-                        serde_json::json!({
-                            "type": "bitmap",
-                            "reference_bitmap_id": r.get::<Option<i64>, _>("reference_bitmap_id"),
-                            "reference_bitmap_key": r.get::<Option<String>, _>("reference_bitmap_key"),
-                            "search_x": r.get::<Option<i32>, _>("search_x"),
-                            "search_y": r.get::<Option<i32>, _>("search_y"),
-                            "search_width": r.get::<Option<i32>, _>("search_width"),
-                            "search_height": r.get::<Option<i32>, _>("search_height"),
-                            "match_threshold": r.get::<Option<f32>, _>("match_threshold"),
-                            "timeout_ms": 5000,
-                            "retry_interval_ms": 250
-                        })
+                        BranchConditionPayload::Bitmap {
+                            reference_bitmap_id: r.get("reference_bitmap_id"),
+                            reference_bitmap_key: r.get("reference_bitmap_key"),
+                            search_x: r.get("search_x"),
+                            search_y: r.get("search_y"),
+                            search_width: r.get("search_width"),
+                            search_height: r.get("search_height"),
+                            match_threshold: r.get("match_threshold"),
+                            timeout_ms: 5000,
+                            retry_interval_ms: 250,
+                        }
                     };
 
-                    step_json["condition"] = condition_obj;
-                    step_json["on_match_step_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("on_match_step_id"));
-                    step_json["on_no_match_step_id"] =
-                        serde_json::json!(r.get::<Option<i64>, _>("on_no_match_step_id"));
-                    step_json["timeout_ms"] = serde_json::json!(5000);
-                    step_json["retry_interval_ms"] = serde_json::json!(250);
+                    steps_list.push(StepPayload::Branch {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        condition,
+                        on_match_step_id: r.get("on_match_step_id"),
+                        on_no_match_step_id: r.get("on_no_match_step_id"),
+                        timeout_ms: 5000,
+                        retry_interval_ms: 250,
+                    });
                 }
             }
             _ => {}
         }
-
-        steps_list.push(step_json);
     }
 
-    Ok(serde_json::json!({
-        "id": id,
-        "name": name,
-        "description": description,
-        "status": status,
-        "parameters": parameters_map,
-        "variables": variables_list,
-        "steps": steps_list,
-    }))
+    let payload = FullAutomationPayload {
+        id,
+        name,
+        description,
+        status,
+        parameters: parameters_map,
+        variables: variables_list,
+        steps: steps_list,
+    };
+
+    serde_json::to_value(payload).map_err(|e| {
+        sqlx::Error::Protocol(format!("Failed to serialize automation payload: {}", e))
+    })
 }
 
 #[tracing::instrument(skip(worker, state))]
