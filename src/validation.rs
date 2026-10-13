@@ -21,6 +21,7 @@ impl std::fmt::Display for AutomationLintError {
 
 #[derive(Debug, Clone)]
 struct VarMeta {
+    index: usize,
     name: String,
     var_type: String,
 }
@@ -95,18 +96,27 @@ impl VarBitSet {
     }
 
     fn all(num_vars: usize) -> Self {
-        let num_words = num_vars.div_ceil(64).max(1);
+        let mut bs = Self::empty(num_vars);
+        bs.fill_all(num_vars);
+        bs
+    }
+
+    fn fill_all(&mut self, num_vars: usize) {
         if num_vars == 0 {
-            return Self::empty(0);
+            self.words.fill(0);
+            return;
         }
-        let mut words = vec![u64::MAX; num_words];
+        self.words.fill(u64::MAX);
         let rem = num_vars % 64;
         if rem != 0 {
-            if let Some(last) = words.last_mut() {
+            if let Some(last) = self.words.last_mut() {
                 *last = (1u64 << rem) - 1;
             }
         }
-        Self { words }
+    }
+
+    fn copy_from(&mut self, other: &Self) {
+        self.words.copy_from_slice(&other.words);
     }
 
     fn set(&mut self, idx: usize) {
@@ -139,7 +149,7 @@ impl VarBitSet {
 
 /// Lints and validates an automation to ensure it is safe and ready for execution.
 ///
-/// Performance-tuned: Uses index-mapped step nodes, fixed-size adjacency vectors,
+/// Performance-tuned: Uses index-mapped step nodes, direct subtype mapping into vectors,
 /// boolean reachability sets, and zero-allocation bitmask operations for variable dataflow analysis.
 pub async fn validate_automation_for_activation(
     db: &PgPool,
@@ -244,38 +254,37 @@ pub async fn validate_automation_for_activation(
         step_id_to_idx.insert(sid, idx);
     }
 
-    // Build subtype lookup maps temporarily to initialize contiguous StepNode array
-    let mut mc_map: HashMap<i64, MouseClickMeta> = HashMap::with_capacity(mc_rows.len());
+    // Direct subtype mapping into contiguous vector by step index
+    let mut subtypes = vec![StepSubtype::Other; n];
+
     for r in mc_rows {
-        mc_map.insert(
-            r.get("step_id"),
-            MouseClickMeta {
+        let sid: i64 = r.get("step_id");
+        if let Some(&idx) = step_id_to_idx.get(&sid) {
+            subtypes[idx] = StepSubtype::MouseClick(MouseClickMeta {
                 x: r.get("x"),
                 y: r.get("y"),
                 x_var_id: r.get("x_variable_id"),
                 y_var_id: r.get("y_variable_id"),
                 region_var_id: r.get("region_variable_id"),
-            },
-        );
+            });
+        }
     }
 
-    let mut fp_map: HashMap<i64, FindPixelMeta> = HashMap::with_capacity(fp_rows.len());
     for r in fp_rows {
-        fp_map.insert(
-            r.get("step_id"),
-            FindPixelMeta {
+        let sid: i64 = r.get("step_id");
+        if let Some(&idx) = step_id_to_idx.get(&sid) {
+            subtypes[idx] = StepSubtype::FindPixel(FindPixelMeta {
                 x: r.get("x"),
                 y: r.get("y"),
                 output_var_id: r.get("output_variable_id"),
-            },
-        );
+            });
+        }
     }
 
-    let mut fb_map: HashMap<i64, FindBitmapMeta> = HashMap::with_capacity(fb_rows.len());
     for r in fb_rows {
-        fb_map.insert(
-            r.get("step_id"),
-            FindBitmapMeta {
+        let sid: i64 = r.get("step_id");
+        if let Some(&idx) = step_id_to_idx.get(&sid) {
+            subtypes[idx] = StepSubtype::FindBitmap(FindBitmapMeta {
                 reference_bitmap_id: r.get("reference_bitmap_id"),
                 output_found_var_id: r.get("output_found_variable_id"),
                 output_x_var_id: r.get("output_x_variable_id"),
@@ -283,78 +292,56 @@ pub async fn validate_automation_for_activation(
                 output_region_var_id: r.get("output_region_variable_id"),
                 search_x: r.get("search_x"),
                 search_y: r.get("search_y"),
-            },
-        );
+            });
+        }
     }
 
-    let mut branch_map: HashMap<i64, BranchMeta> = HashMap::with_capacity(branch_rows.len());
     for r in branch_rows {
-        branch_map.insert(
-            r.get("step_id"),
-            BranchMeta {
+        let sid: i64 = r.get("step_id");
+        if let Some(&idx) = step_id_to_idx.get(&sid) {
+            subtypes[idx] = StepSubtype::Branch(BranchMeta {
                 condition_type: r.get("condition_type"),
                 on_match_step_id: r.get("on_match_step_id"),
                 on_no_match_step_id: r.get("on_no_match_step_id"),
                 reference_bitmap_id: r.get("reference_bitmap_id"),
                 x: r.get("x"),
                 y: r.get("y"),
-            },
-        );
+            });
+        }
     }
 
     let existing_bitmaps: HashSet<i64> = bitmap_rows.into_iter().map(|r| r.get("id")).collect();
 
     // Construct contiguous steps vector
-    let mut steps: Vec<StepNode> = Vec::with_capacity(n);
-    for (idx, row) in raw_steps.into_iter().enumerate() {
-        let sid: i64 = row.get("id");
-        let stype: String = row.get("step_type");
-
-        let subtype = match stype.as_str() {
-            "mouse_click" => mc_map
-                .remove(&sid)
-                .map(StepSubtype::MouseClick)
-                .unwrap_or(StepSubtype::Other),
-            "find_pixel_rgb" => fp_map
-                .remove(&sid)
-                .map(StepSubtype::FindPixel)
-                .unwrap_or(StepSubtype::Other),
-            "find_bitmap" => fb_map
-                .remove(&sid)
-                .map(StepSubtype::FindBitmap)
-                .unwrap_or(StepSubtype::Other),
-            "branch" => branch_map
-                .remove(&sid)
-                .map(StepSubtype::Branch)
-                .unwrap_or(StepSubtype::Other),
-            _ => StepSubtype::Other,
-        };
-
-        steps.push(StepNode {
-            id: sid,
+    let steps: Vec<StepNode> = raw_steps
+        .into_iter()
+        .zip(subtypes)
+        .enumerate()
+        .map(|(idx, (row, subtype))| StepNode {
+            id: row.get("id"),
             step_number: idx + 1,
-            step_type: stype,
+            step_type: row.get("step_type"),
             subtype,
-        });
-    }
+        })
+        .collect();
 
     // Map variable ID -> index & metadata
     let num_vars = var_rows.len();
-    let mut vars_map: HashMap<i64, (usize, VarMeta)> = HashMap::with_capacity(num_vars);
+    let mut vars_map: HashMap<i64, VarMeta> = HashMap::with_capacity(num_vars);
     for (idx, vr) in var_rows.into_iter().enumerate() {
         let vid: i64 = vr.get("id");
-        let meta = VarMeta {
-            name: vr.get("name"),
-            var_type: vr.get("var_type"),
-        };
-        vars_map.insert(vid, (idx, meta));
+        vars_map.insert(
+            vid,
+            VarMeta {
+                index: idx,
+                name: vr.get("name"),
+                var_type: vr.get("var_type"),
+            },
+        );
     }
 
-    let mut available_params: HashSet<String> = HashSet::with_capacity(param_rows.len());
-    for pr in param_rows {
-        let pname: String = pr.get("name");
-        available_params.insert(pname);
-    }
+    let available_params: HashSet<String> =
+        param_rows.into_iter().map(|pr| pr.get("name")).collect();
 
     // 2. Validate individual steps for bounds, types, referenced IDs
     for step in &steps {
@@ -481,40 +468,31 @@ pub async fn validate_automation_for_activation(
     // 4. Precompute written variables per step ONCE as compact bitsets
     let mut step_writes: Vec<VarBitSet> = vec![VarBitSet::empty(num_vars); n];
     for (i, step) in steps.iter().enumerate() {
-        let mut writes = VarBitSet::empty(num_vars);
         match &step.subtype {
             StepSubtype::FindPixel(fp) => {
                 if let Some(vid) = fp.output_var_id
-                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
+                    && let Some(v) = vars_map.get(&vid)
                 {
-                    writes.set(v_idx);
+                    step_writes[i].set(v.index);
                 }
             }
             StepSubtype::FindBitmap(fb) => {
-                if let Some(vid) = fb.output_found_var_id
-                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
+                for vid in [
+                    fb.output_found_var_id,
+                    fb.output_x_var_id,
+                    fb.output_y_var_id,
+                    fb.output_region_var_id,
+                ]
+                .into_iter()
+                .flatten()
                 {
-                    writes.set(v_idx);
-                }
-                if let Some(vid) = fb.output_x_var_id
-                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
-                {
-                    writes.set(v_idx);
-                }
-                if let Some(vid) = fb.output_y_var_id
-                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
-                {
-                    writes.set(v_idx);
-                }
-                if let Some(vid) = fb.output_region_var_id
-                    && let Some(&(v_idx, _)) = vars_map.get(&vid)
-                {
-                    writes.set(v_idx);
+                    if let Some(v) = vars_map.get(&vid) {
+                        step_writes[i].set(v.index);
+                    }
                 }
             }
             _ => {}
         }
-        step_writes[i] = writes;
     }
 
     // 5. Zero-allocation fixed-point variable read-before-write analysis
@@ -523,6 +501,7 @@ pub async fn validate_automation_for_activation(
         step_inits[0] = VarBitSet::empty(num_vars); // Start node has 0 variables initialized
     }
 
+    let mut scratch_inits = VarBitSet::empty(num_vars);
     let mut changed = true;
     let mut iterations = 0;
     while changed && iterations < 100 {
@@ -535,14 +514,14 @@ pub async fn validate_automation_for_activation(
                 continue;
             }
 
-            // New inits for step `i` is the INTERSECTION of (inits[p] | writes[p]) across all predecessors `p`
-            let mut new_inits = VarBitSet::all(num_vars);
+            // Re-use `scratch_inits` without heap allocations
+            scratch_inits.fill_all(num_vars);
             for &p in preds {
-                new_inits.intersect_with_pred_output(&step_inits[p], &step_writes[p]);
+                scratch_inits.intersect_with_pred_output(&step_inits[p], &step_writes[p]);
             }
 
-            if new_inits != step_inits[i] {
-                step_inits[i] = new_inits;
+            if scratch_inits != step_inits[i] {
+                step_inits[i].copy_from(&scratch_inits);
                 changed = true;
             }
         }
@@ -559,38 +538,25 @@ pub async fn validate_automation_for_activation(
         if step.step_type == "mouse_click"
             && let StepSubtype::MouseClick(mc) = &step.subtype
         {
-            if let Some(x_vid) = mc.x_var_id
-                && let Some(&(v_idx, ref v)) = vars_map.get(&x_vid)
-                && !inits.contains(v_idx)
-                && !available_params.contains(&v.name)
-            {
-                errors.push(AutomationLintError {
-                    step_id: Some(step.id),
-                    step_number: Some(step.step_number),
-                    message: format!("Variable '{}' read for X coordinate before being written along all execution paths.", v.name),
-                });
-            }
-            if let Some(y_vid) = mc.y_var_id
-                && let Some(&(v_idx, ref v)) = vars_map.get(&y_vid)
-                && !inits.contains(v_idx)
-                && !available_params.contains(&v.name)
-            {
-                errors.push(AutomationLintError {
-                    step_id: Some(step.id),
-                    step_number: Some(step.step_number),
-                    message: format!("Variable '{}' read for Y coordinate before being written along all execution paths.", v.name),
-                });
-            }
-            if let Some(r_vid) = mc.region_var_id
-                && let Some(&(v_idx, ref v)) = vars_map.get(&r_vid)
-                && !inits.contains(v_idx)
-                && !available_params.contains(&v.name)
-            {
-                errors.push(AutomationLintError {
-                    step_id: Some(step.id),
-                    step_number: Some(step.step_number),
-                    message: format!("Variable '{}' read for region click before being written along all execution paths.", v.name),
-                });
+            for (vid_opt, field_label) in [
+                (mc.x_var_id, "X coordinate"),
+                (mc.y_var_id, "Y coordinate"),
+                (mc.region_var_id, "region click"),
+            ] {
+                if let Some(vid) = vid_opt
+                    && let Some(v) = vars_map.get(&vid)
+                    && !inits.contains(v.index)
+                    && !available_params.contains(&v.name)
+                {
+                    errors.push(AutomationLintError {
+                        step_id: Some(step.id),
+                        step_number: Some(step.step_number),
+                        message: format!(
+                            "Variable '{}' read for {} before being written along all execution paths.",
+                            v.name, field_label
+                        ),
+                    });
+                }
             }
         }
     }
@@ -602,11 +568,29 @@ pub async fn validate_automation_for_activation(
     }
 }
 
+fn check_coord_bounds(
+    val: Option<i32>,
+    prefix: &str,
+    sid: i64,
+    step_num: usize,
+    errors: &mut Vec<AutomationLintError>,
+) {
+    if let Some(v) = val
+        && !(0..=10000).contains(&v)
+    {
+        errors.push(AutomationLintError {
+            step_id: Some(sid),
+            step_number: Some(step_num),
+            message: format!("{} is outside valid bounds.", prefix),
+        });
+    }
+}
+
 fn validate_mouse_click(
     sid: i64,
     step_num: usize,
     mc: &MouseClickMeta,
-    vars_map: &HashMap<i64, (usize, VarMeta)>,
+    vars_map: &HashMap<i64, VarMeta>,
     errors: &mut Vec<AutomationLintError>,
 ) {
     if let Some(x) = mc.x
@@ -645,7 +629,6 @@ fn validate_mouse_click(
             errors,
         );
     }
-
     if let Some(y_vid) = mc.y_var_id {
         validate_var_ref(
             sid,
@@ -657,7 +640,6 @@ fn validate_mouse_click(
             errors,
         );
     }
-
     if let Some(r_vid) = mc.region_var_id {
         validate_var_ref(
             sid,
@@ -677,10 +659,10 @@ fn validate_var_ref(
     var_id: i64,
     usage_label: &str,
     expected_type: &str,
-    vars_map: &HashMap<i64, (usize, VarMeta)>,
+    vars_map: &HashMap<i64, VarMeta>,
     errors: &mut Vec<AutomationLintError>,
 ) {
-    if let Some((_, v)) = vars_map.get(&var_id) {
+    if let Some(v) = vars_map.get(&var_id) {
         if v.var_type != expected_type {
             errors.push(AutomationLintError {
                 step_id: Some(sid),
@@ -707,7 +689,7 @@ fn validate_find_pixel(
     sid: i64,
     step_num: usize,
     fp: &FindPixelMeta,
-    vars_map: &HashMap<i64, (usize, VarMeta)>,
+    vars_map: &HashMap<i64, VarMeta>,
     errors: &mut Vec<AutomationLintError>,
 ) {
     if !(0..=10000).contains(&fp.x) || !(0..=10000).contains(&fp.y) {
@@ -722,7 +704,7 @@ fn validate_find_pixel(
     }
 
     if let Some(out_vid) = fp.output_var_id {
-        if let Some((_, v)) = vars_map.get(&out_vid) {
+        if let Some(v) = vars_map.get(&out_vid) {
             if !matches!(
                 v.var_type.as_str(),
                 "color" | "point" | "string" | "int" | "region"
@@ -750,7 +732,7 @@ fn validate_find_bitmap(
     sid: i64,
     step_num: usize,
     fb: &FindBitmapMeta,
-    vars_map: &HashMap<i64, (usize, VarMeta)>,
+    vars_map: &HashMap<i64, VarMeta>,
     existing_bitmaps: &HashSet<i64>,
     errors: &mut Vec<AutomationLintError>,
 ) {
@@ -765,24 +747,20 @@ fn validate_find_bitmap(
         });
     }
 
-    if let Some(x) = fb.search_x
-        && !(0..=10000).contains(&x)
-    {
-        errors.push(AutomationLintError {
-            step_id: Some(sid),
-            step_number: Some(step_num),
-            message: format!("Search X coordinate {} is outside valid bounds.", x),
-        });
-    }
-    if let Some(y) = fb.search_y
-        && !(0..=10000).contains(&y)
-    {
-        errors.push(AutomationLintError {
-            step_id: Some(sid),
-            step_number: Some(step_num),
-            message: format!("Search Y coordinate {} is outside valid bounds.", y),
-        });
-    }
+    check_coord_bounds(
+        fb.search_x,
+        &format!("Search X coordinate {}", fb.search_x.unwrap_or(0)),
+        sid,
+        step_num,
+        errors,
+    );
+    check_coord_bounds(
+        fb.search_y,
+        &format!("Search Y coordinate {}", fb.search_y.unwrap_or(0)),
+        sid,
+        step_num,
+        errors,
+    );
 
     if let Some(f_vid) = fb.output_found_var_id {
         validate_output_var(sid, step_num, f_vid, "'Found'", "bool", vars_map, errors);
@@ -812,10 +790,10 @@ fn validate_output_var(
     var_id: i64,
     output_name: &str,
     expected_type: &str,
-    vars_map: &HashMap<i64, (usize, VarMeta)>,
+    vars_map: &HashMap<i64, VarMeta>,
     errors: &mut Vec<AutomationLintError>,
 ) {
-    if let Some((_, v)) = vars_map.get(&var_id)
+    if let Some(v) = vars_map.get(&var_id)
         && v.var_type != expected_type
     {
         errors.push(AutomationLintError {
@@ -901,30 +879,20 @@ fn validate_branch(
             });
         }
     } else if b.condition_type == "pixel_rgb" {
-        if let Some(x) = b.x
-            && !(0..=10000).contains(&x)
-        {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: format!(
-                    "Pixel branch condition X coordinate {} is outside valid bounds.",
-                    x
-                ),
-            });
-        }
-        if let Some(y) = b.y
-            && !(0..=10000).contains(&y)
-        {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: format!(
-                    "Pixel branch condition Y coordinate {} is outside valid bounds.",
-                    y
-                ),
-            });
-        }
+        check_coord_bounds(
+            b.x,
+            &format!("Pixel branch condition X coordinate {}", b.x.unwrap_or(0)),
+            sid,
+            step_num,
+            errors,
+        );
+        check_coord_bounds(
+            b.y,
+            &format!("Pixel branch condition Y coordinate {}", b.y.unwrap_or(0)),
+            sid,
+            step_num,
+            errors,
+        );
     }
 }
 
@@ -1001,5 +969,23 @@ mod tests {
         assert!(!intersected.contains(0));
         assert!(intersected.contains(100));
         assert!(!intersected.contains(101));
+    }
+
+    #[test]
+    fn test_var_bitset_fill_all_and_copy_from() {
+        let num_vars = 100;
+        let mut bs = VarBitSet::empty(num_vars);
+        assert!(!bs.contains(0));
+        assert!(!bs.contains(99));
+
+        bs.fill_all(num_vars);
+        assert!(bs.contains(0));
+        assert!(bs.contains(99));
+        assert!(!bs.contains(100));
+
+        let mut target = VarBitSet::empty(num_vars);
+        target.copy_from(&bs);
+        assert!(target.contains(0));
+        assert!(target.contains(99));
     }
 }
