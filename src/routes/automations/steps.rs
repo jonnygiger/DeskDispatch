@@ -231,39 +231,41 @@ pub fn generate_mouse_click_summary(
     button: &str,
     click_type: &str,
 ) -> String {
-    if let Some(rname) = region_var_name.filter(|n| !n.trim().is_empty()) {
+    if let Some(rname) = region_var_name.map(str::trim).filter(|n| !n.is_empty()) {
         return format!(
             "Click center of region «{}» [{}, {}]",
-            rname.trim(),
-            button,
-            click_type
+            rname, button, click_type
         );
     }
-    let x_str = match x_var_name {
-        Some(name) if !name.trim().is_empty() => format!("«{}»", name.trim()),
-        _ => match x {
-            Some(val) => val.to_string(),
-            None => "variable".to_string(),
-        },
-    };
+    let mut summary = String::with_capacity(64);
+    summary.push_str("Click (");
 
-    let y_str = match y_var_name {
-        Some(name) if !name.trim().is_empty() => format!("«{}»", name.trim()),
-        _ => match y {
-            Some(val) => val.to_string(),
-            None => "variable".to_string(),
-        },
-    };
+    fn fmt_coord(coord: Option<i32>, var_name: Option<&str>, buf: &mut String) {
+        if let Some(name) = var_name.map(str::trim).filter(|s| !s.is_empty()) {
+            buf.push('«');
+            buf.push_str(name);
+            buf.push('»');
+        } else if let Some(val) = coord {
+            use std::fmt::Write;
+            let _ = write!(buf, "{}", val);
+        } else {
+            buf.push_str("variable");
+        }
+    }
 
-    format!("Click ({}, {}) [{}, {}]", x_str, y_str, button, click_type)
+    fmt_coord(x, x_var_name, &mut summary);
+    summary.push_str(", ");
+    fmt_coord(y, y_var_name, &mut summary);
+    use std::fmt::Write;
+    let _ = write!(summary, ") [{}, {}]", button, click_type);
+
+    summary
 }
 
 pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&str>) -> String {
-    match output_var_name {
-        Some(name) if !name.trim().is_empty() => {
-            format!("Read pixel at ({}, {}) → store as «{}»", x, y, name.trim())
-        }
-        _ => format!("Read pixel at ({}, {})", x, y),
+    match output_var_name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => format!("Read pixel at ({}, {}) → store as «{}»", x, y, name),
+        None => format!("Read pixel at ({}, {})", x, y),
     }
 }
 
@@ -271,15 +273,15 @@ pub fn generate_find_bitmap_summary(
     bitmap_name: &str,
     output_found_var_name: Option<&str>,
 ) -> String {
-    match output_found_var_name {
-        Some(name) if !name.trim().is_empty() => {
-            format!(
-                "Search for «{}» on screen → store as «{}»",
-                bitmap_name,
-                name.trim()
-            )
-        }
-        _ => format!("Search for «{}» on screen", bitmap_name),
+    match output_found_var_name
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
+        Some(name) => format!(
+            "Search for «{}» on screen → store as «{}»",
+            bitmap_name, name
+        ),
+        None => format!("Search for «{}» on screen", bitmap_name),
     }
 }
 
@@ -300,21 +302,23 @@ pub fn generate_branch_summary(
     let no_match_str = no_match_target.unwrap_or("Next Step");
 
     if condition_type == "pixel_rgb" {
-        let px = x.unwrap_or(0);
-        let py = y.unwrap_or(0);
-        let r = expected_r.unwrap_or(0);
-        let g = expected_g.unwrap_or(0);
-        let b = expected_b.unwrap_or(0);
-        let tol = tolerance.unwrap_or(0);
         format!(
             "BRANCH: if pixel at ({}, {}) ≈ RGB({},{},{}) ±{} → go to {}, else → go to {}",
-            px, py, r, g, b, tol, match_str, no_match_str
+            x.unwrap_or(0),
+            y.unwrap_or(0),
+            expected_r.unwrap_or(0),
+            expected_g.unwrap_or(0),
+            expected_b.unwrap_or(0),
+            tolerance.unwrap_or(0),
+            match_str,
+            no_match_str
         )
     } else {
-        let bname = bitmap_name.unwrap_or("bitmap");
         format!(
             "BRANCH: if bitmap «{}» found → go to {}, else → go to {}",
-            bname, match_str, no_match_str
+            bitmap_name.unwrap_or("bitmap"),
+            match_str,
+            no_match_str
         )
     }
 }
@@ -568,12 +572,12 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                         no_match_id,
                     )| {
                         let match_target_str = match_id
-                            .and_then(|m_id| step_target_map.get(&m_id).cloned())
-                            .unwrap_or_else(|| "Next Step".to_string());
+                            .and_then(|m_id| step_target_map.get(&m_id))
+                            .map(|s| s.as_str());
 
                         let no_match_target_str = no_match_id
-                            .and_then(|n_id| step_target_map.get(&n_id).cloned())
-                            .unwrap_or_else(|| "Next Step".to_string());
+                            .and_then(|n_id| step_target_map.get(&n_id))
+                            .map(|s| s.as_str());
 
                         generate_branch_summary(
                             condition_type,
@@ -584,8 +588,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                             *expected_b,
                             *tolerance,
                             bitmap_name.as_deref(),
-                            Some(&match_target_str),
-                            Some(&no_match_target_str),
+                            match_target_str,
+                            no_match_target_str,
                         )
                     },
                 )
@@ -605,207 +609,6 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     }
 
     steps
-}
-
-pub async fn fetch_step_description(db: &PgPool, step_id: i64, step_type: &str) -> String {
-    match step_type {
-        "key_press" => {
-            let row = sqlx::query("SELECT key_combo FROM step_key_presses WHERE step_id = $1")
-                .bind(step_id)
-                .fetch_optional(db)
-                .await;
-            if let Ok(Some(r)) = row {
-                let combo: String = r.get("key_combo");
-                format!("Press {}", combo)
-            } else {
-                "Press key".to_string()
-            }
-        }
-        "mouse_click" => {
-            let row = sqlx::query(
-                r#"
-                SELECT mc.x, mc.y, mc.button, mc.click_type, vx.name AS x_var_name, vy.name AS y_var_name
-                FROM step_mouse_clicks mc
-                LEFT JOIN automation_variables vx ON mc.x_variable_id = vx.id
-                LEFT JOIN automation_variables vy ON mc.y_variable_id = vy.id
-                WHERE mc.step_id = $1
-                "#,
-            )
-            .bind(step_id)
-            .fetch_optional(db)
-            .await;
-
-            if let Ok(Some(r)) = row {
-                let x: Option<i32> = r.get("x");
-                let y: Option<i32> = r.get("y");
-                let x_var_name: Option<String> = r.get("x_var_name");
-                let y_var_name: Option<String> = r.get("y_var_name");
-                let region_var_name: Option<String> = r.get("region_var_name");
-                let button: String = r.get("button");
-                let click_type: String = r.get("click_type");
-                generate_mouse_click_summary(
-                    x,
-                    y,
-                    x_var_name.as_deref(),
-                    y_var_name.as_deref(),
-                    region_var_name.as_deref(),
-                    &button,
-                    &click_type,
-                )
-            } else {
-                "Click mouse".to_string()
-            }
-        }
-        "find_pixel_rgb" => {
-            let row = sqlx::query(
-                r#"
-                SELECT fp.x, fp.y, v.name AS var_name
-                FROM step_find_pixel_rgb fp
-                LEFT JOIN automation_variables v ON fp.output_variable_id = v.id
-                WHERE fp.step_id = $1
-                "#,
-            )
-            .bind(step_id)
-            .fetch_optional(db)
-            .await;
-
-            if let Ok(Some(r)) = row {
-                let x: i32 = r.get("x");
-                let y: i32 = r.get("y");
-                let var_name: Option<String> = r.get("var_name");
-                generate_find_pixel_rgb_summary(x, y, var_name.as_deref())
-            } else {
-                "Read pixel at coordinate".to_string()
-            }
-        }
-        "find_bitmap" => {
-            let row = sqlx::query(
-                r#"
-                SELECT b.name AS bitmap_name, v.name AS var_name
-                FROM step_find_bitmap fb
-                JOIN bitmaps b ON fb.reference_bitmap_id = b.id
-                LEFT JOIN automation_variables v ON fb.output_found_variable_id = v.id
-                WHERE fb.step_id = $1
-                "#,
-            )
-            .bind(step_id)
-            .fetch_optional(db)
-            .await;
-
-            if let Ok(Some(r)) = row {
-                let bitmap_name: String = r.get("bitmap_name");
-                let var_name: Option<String> = r.get("var_name");
-                generate_find_bitmap_summary(&bitmap_name, var_name.as_deref())
-            } else {
-                "Search for bitmap on screen".to_string()
-            }
-        }
-        "branch" => {
-            let row = sqlx::query(
-                r#"
-                SELECT
-                    sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
-                    b.name AS bitmap_name,
-                    sm.id AS match_id, sm.step_type AS match_type, sm.label AS match_label, sm.position AS match_pos,
-                    sn.id AS no_match_id, sn.step_type AS no_match_type, sn.label AS no_match_label, sn.position AS no_match_pos,
-                    s.automation_id
-                FROM step_branches sb
-                JOIN automation_steps s ON sb.step_id = s.id
-                LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
-                LEFT JOIN automation_steps sm ON sb.on_match_step_id = sm.id
-                LEFT JOIN automation_steps sn ON sb.on_no_match_step_id = sn.id
-                WHERE sb.step_id = $1
-                "#,
-            )
-            .bind(step_id)
-            .fetch_optional(db)
-            .await;
-
-            if let Ok(Some(r)) = row {
-                let condition_type: String = r.get("condition_type");
-                let x: Option<i32> = r.get("x");
-                let y: Option<i32> = r.get("y");
-                let expected_r: Option<i16> = r.get("expected_r");
-                let expected_g: Option<i16> = r.get("expected_g");
-                let expected_b: Option<i16> = r.get("expected_b");
-                let tolerance: Option<i16> = r.get("tolerance");
-                let bitmap_name: Option<String> = r.get("bitmap_name");
-                let automation_id: i64 = r.get("automation_id");
-
-                let match_target_str = if let Some(m_id) = r.get::<Option<i64>, _>("match_id") {
-                    get_step_target_label(
-                        db,
-                        automation_id,
-                        m_id,
-                        r.get("match_label"),
-                        r.get("match_type"),
-                    )
-                    .await
-                } else {
-                    "Next Step".to_string()
-                };
-
-                let no_match_target_str = if let Some(n_id) = r.get::<Option<i64>, _>("no_match_id")
-                {
-                    get_step_target_label(
-                        db,
-                        automation_id,
-                        n_id,
-                        r.get("no_match_label"),
-                        r.get("no_match_type"),
-                    )
-                    .await
-                } else {
-                    "Next Step".to_string()
-                };
-
-                generate_branch_summary(
-                    &condition_type,
-                    x,
-                    y,
-                    expected_r,
-                    expected_g,
-                    expected_b,
-                    tolerance,
-                    bitmap_name.as_deref(),
-                    Some(&match_target_str),
-                    Some(&no_match_target_str),
-                )
-            } else {
-                "BRANCH evaluation".to_string()
-            }
-        }
-        _ => "Unknown step".to_string(),
-    }
-}
-
-async fn get_step_target_label(
-    db: &PgPool,
-    automation_id: i64,
-    step_id: i64,
-    label: Option<String>,
-    step_type: Option<String>,
-) -> String {
-    let step_num = sqlx::query(
-        "SELECT COUNT(*) AS num FROM automation_steps WHERE automation_id = $1 AND position <= (SELECT position FROM automation_steps WHERE id = $2)",
-    )
-    .bind(automation_id)
-    .bind(step_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .map(|r| r.get::<i64, _>("num"))
-    .unwrap_or(0);
-
-    match label {
-        Some(lbl) if !lbl.trim().is_empty() => format!("Step {} ({})", step_num, lbl.trim()),
-        _ => format!(
-            "Step {} ({})",
-            step_num,
-            step_type.as_deref().unwrap_or("step")
-        ),
-    }
 }
 
 // ============================================================================
