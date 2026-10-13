@@ -103,7 +103,7 @@
                     <td style="padding: 0.75rem 1rem; text-align: right;">
                         <div style="display: inline-flex; gap: 0.5rem; align-items: center;">
                             <details style="display: inline-block;">
-                                <summary class="btn btn-sm btn-outline" style="cursor: pointer; list-style: none;">Edit</summary>
+                                <summary class="btn btn-sm btn-outline" style="cursor: pointer; list-style: none;" aria-label="Edit parameter {{ param_item.name }}">Edit</summary>
                                 <div style="position: absolute; right: 2rem; background: var(--color-bg-card, #fff); border: 1px solid var(--color-border); padding: 1rem; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 10; text-align: left; min-width: 320px; margin-top: 0.5rem;">
                                     <form method="post" action="/automations/{{ automation.id }}/parameters/{{ param_item.id }}" style="display: flex; flex-direction: column; gap: 0.75rem;">
                                         {% call macros::csrf_field(csrf_token) %}{% endcall %}
@@ -137,7 +137,7 @@
 
                             <form method="post" action="/automations/{{ automation.id }}/parameters/{{ param_item.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete parameter «{{ param_item.name }}»?');">
                                 {% call macros::csrf_field(csrf_token) %}{% endcall %}
-                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                                <button type="submit" class="btn btn-sm btn-danger-outline" aria-label="Delete parameter {{ param_item.name }}">Delete</button>
                             </form>
                         </div>
                     </td>
