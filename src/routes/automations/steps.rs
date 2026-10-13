@@ -101,47 +101,35 @@ pub fn validate_literal_or_reference<T>(
     field_name: &str,
 ) -> Result<(Option<T>, Option<i64>), String> {
     let var_id = variable_id.filter(|&v| v > 0);
-    let effective_mode = match mode {
-        Some("variable") => "variable",
-        Some("fixed") => "fixed",
-        _ => {
-            if literal.is_some() && var_id.is_none() {
-                "fixed"
-            } else if literal.is_none() && var_id.is_some() {
-                "variable"
-            } else if literal.is_some() && var_id.is_some() {
+    let is_var = match mode {
+        Some("variable") => true,
+        Some("fixed") => false,
+        _ => match (literal.is_some(), var_id.is_some()) {
+            (true, false) => false,
+            (false, true) => true,
+            (true, true) => {
                 return Err(format!(
                     "Cannot specify both a fixed value and a variable for {}.",
                     field_name
                 ));
-            } else {
+            }
+            (false, false) => {
                 return Err(format!(
                     "Please specify either a fixed value or a variable for {}.",
                     field_name
                 ));
             }
-        }
+        },
     };
 
-    match effective_mode {
-        "variable" => {
-            if let Some(vid) = var_id {
-                Ok((None, Some(vid)))
-            } else {
-                Err(format!(
-                    "Please select a valid variable for {}.",
-                    field_name
-                ))
-            }
-        }
-        "fixed" => {
-            if let Some(val) = literal {
-                Ok((Some(val), None))
-            } else {
-                Err(format!("Please provide a fixed value for {}.", field_name))
-            }
-        }
-        _ => unreachable!(),
+    if is_var {
+        var_id
+            .map(|v| (None, Some(v)))
+            .ok_or_else(|| format!("Please select a valid variable for {}.", field_name))
+    } else {
+        literal
+            .map(|val| (Some(val), None))
+            .ok_or_else(|| format!("Please provide a fixed value for {}.", field_name))
     }
 }
 
@@ -264,14 +252,11 @@ pub async fn fetch_automation_step_options(
             if exclude_step_id == Some(id) {
                 return None;
             }
-            let step_type: String = row.get("step_type");
-            let label: Option<String> = row.get("label");
-            let position: f64 = row.get("position");
             Some(StepOption {
                 id,
-                step_type,
-                label,
-                position,
+                step_type: row.get("step_type"),
+                label: row.get("label"),
+                position: row.get("position"),
                 display_number: idx + 1,
             })
         })
@@ -312,11 +297,8 @@ pub fn generate_mouse_click_summary(
 
     fn fmt_coord(coord: Option<i32>, var_name: Option<&str>, buf: &mut String) {
         if let Some(name) = var_name.map(str::trim).filter(|s| !s.is_empty()) {
-            buf.push('«');
-            buf.push_str(name);
-            buf.push('»');
+            let _ = write!(buf, "«{}»", name);
         } else if let Some(val) = coord {
-            use std::fmt::Write;
             let _ = write!(buf, "{}", val);
         } else {
             buf.push_str("variable");
@@ -336,9 +318,7 @@ pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&
     let mut buf = String::with_capacity(64);
     let _ = write!(buf, "Read pixel at ({}, {})", x, y);
     if let Some(name) = output_var_name.map(str::trim).filter(|n| !n.is_empty()) {
-        buf.push_str(" → store as «");
-        buf.push_str(name);
-        buf.push('»');
+        let _ = write!(buf, " → store as «{}»", name);
     }
     buf
 }
@@ -354,9 +334,7 @@ pub fn generate_find_bitmap_summary(
         .map(str::trim)
         .filter(|n| !n.is_empty())
     {
-        buf.push_str(" → store as «");
-        buf.push_str(name);
-        buf.push('»');
+        let _ = write!(buf, " → store as «{}»", name);
     }
     buf
 }
@@ -1123,7 +1101,10 @@ async fn render_step_error(
     error: String,
 ) -> axum::response::Response {
     let is_edit = ctx.step_id.is_some();
-    match ctx.step_type {
+    let label = form.label.unwrap_or_default();
+    let post_delay_seconds = form.post_delay_seconds.unwrap_or(0.0);
+
+    let html_body = match ctx.step_type {
         "branch" => {
             let condition_type = form
                 .condition_type
@@ -1132,136 +1113,123 @@ async fn render_step_error(
                 fetch_automation_step_options(ctx.db, ctx.automation_id, ctx.step_id),
                 fetch_available_bitmaps(ctx.db, ctx.automation_id)
             );
-            (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepBranchTemplate {
-                    user: ctx.user,
-                    csrf_token: ctx.csrf_token,
-                    automation_id: ctx.automation_id,
-                    step_id: ctx.step_id,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    condition_type,
-                    x: form.x,
-                    y: form.y,
-                    expected_r: form.expected_r,
-                    expected_g: form.expected_g,
-                    expected_b: form.expected_b,
-                    tolerance: form.tolerance,
-                    reference_bitmap_id: form.reference_bitmap_id,
-                    search_x: form.search_x,
-                    search_y: form.search_y,
-                    search_width: form.search_width,
-                    search_height: form.search_height,
-                    match_threshold: form.match_threshold,
-                    on_match_step_id: form.on_match_step_id,
-                    on_no_match_step_id: form.on_no_match_step_id,
-                    steps,
-                    bitmaps,
-                    error: Some(error),
-                    is_edit,
-                }),
-            )
-                .into_response()
-        }
-        "key_press" => (
-            StatusCode::BAD_REQUEST,
-            HtmlTemplate(StepKeyPressTemplate {
+            HtmlTemplate(StepBranchTemplate {
                 user: ctx.user,
                 csrf_token: ctx.csrf_token,
                 automation_id: ctx.automation_id,
                 step_id: ctx.step_id,
-                label: form.label.unwrap_or_default(),
-                post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                key_combo: form.key_combo.unwrap_or_default(),
+                label,
+                post_delay_seconds,
+                condition_type,
+                x: form.x,
+                y: form.y,
+                expected_r: form.expected_r,
+                expected_g: form.expected_g,
+                expected_b: form.expected_b,
+                tolerance: form.tolerance,
+                reference_bitmap_id: form.reference_bitmap_id,
+                search_x: form.search_x,
+                search_y: form.search_y,
+                search_width: form.search_width,
+                search_height: form.search_height,
+                match_threshold: form.match_threshold,
+                on_match_step_id: form.on_match_step_id,
+                on_no_match_step_id: form.on_no_match_step_id,
+                steps,
+                bitmaps,
                 error: Some(error),
                 is_edit,
-            }),
-        )
-            .into_response(),
+            })
+            .into_response()
+        }
+        "key_press" => HtmlTemplate(StepKeyPressTemplate {
+            user: ctx.user,
+            csrf_token: ctx.csrf_token,
+            automation_id: ctx.automation_id,
+            step_id: ctx.step_id,
+            label,
+            post_delay_seconds,
+            key_combo: form.key_combo.unwrap_or_default(),
+            error: Some(error),
+            is_edit,
+        })
+        .into_response(),
         "mouse_click" => {
             let variables = fetch_automation_variables(ctx.db, ctx.automation_id).await;
-            (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepMouseClickTemplate {
-                    user: ctx.user,
-                    csrf_token: ctx.csrf_token,
-                    automation_id: ctx.automation_id,
-                    step_id: ctx.step_id,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
-                    x: form.x,
-                    x_variable_id: form.x_variable_id,
-                    y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
-                    y: form.y,
-                    y_variable_id: form.y_variable_id,
-                    click_mode: form.click_mode.unwrap_or_else(|| "coordinates".to_string()),
-                    region_variable_id: form.region_variable_id,
-                    button: form.button.unwrap_or_else(|| "left".to_string()),
-                    click_type: form.click_type.unwrap_or_else(|| "single".to_string()),
-                    variables,
-                    error: Some(error),
-                    is_edit,
-                }),
-            )
-                .into_response()
+            HtmlTemplate(StepMouseClickTemplate {
+                user: ctx.user,
+                csrf_token: ctx.csrf_token,
+                automation_id: ctx.automation_id,
+                step_id: ctx.step_id,
+                label,
+                post_delay_seconds,
+                x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
+                x: form.x,
+                x_variable_id: form.x_variable_id,
+                y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
+                y: form.y,
+                y_variable_id: form.y_variable_id,
+                click_mode: form.click_mode.unwrap_or_else(|| "coordinates".to_string()),
+                region_variable_id: form.region_variable_id,
+                button: form.button.unwrap_or_else(|| "left".to_string()),
+                click_type: form.click_type.unwrap_or_else(|| "single".to_string()),
+                variables,
+                error: Some(error),
+                is_edit,
+            })
+            .into_response()
         }
         "find_pixel_rgb" => {
             let variables = fetch_automation_variables(ctx.db, ctx.automation_id).await;
-            (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepFindPixelRgbTemplate {
-                    user: ctx.user,
-                    csrf_token: ctx.csrf_token,
-                    automation_id: ctx.automation_id,
-                    step_id: ctx.step_id,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    x: form.x,
-                    y: form.y,
-                    output_variable_id: form.output_variable_id,
-                    variables,
-                    error: Some(error),
-                    is_edit,
-                }),
-            )
-                .into_response()
+            HtmlTemplate(StepFindPixelRgbTemplate {
+                user: ctx.user,
+                csrf_token: ctx.csrf_token,
+                automation_id: ctx.automation_id,
+                step_id: ctx.step_id,
+                label,
+                post_delay_seconds,
+                x: form.x,
+                y: form.y,
+                output_variable_id: form.output_variable_id,
+                variables,
+                error: Some(error),
+                is_edit,
+            })
+            .into_response()
         }
         "find_bitmap" => {
             let (variables, bitmaps) = tokio::join!(
                 fetch_automation_variables(ctx.db, ctx.automation_id),
                 fetch_available_bitmaps(ctx.db, ctx.automation_id)
             );
-            (
-                StatusCode::BAD_REQUEST,
-                HtmlTemplate(StepFindBitmapTemplate {
-                    user: ctx.user,
-                    csrf_token: ctx.csrf_token,
-                    automation_id: ctx.automation_id,
-                    step_id: ctx.step_id,
-                    label: form.label.unwrap_or_default(),
-                    post_delay_seconds: form.post_delay_seconds.unwrap_or(0.0),
-                    reference_bitmap_id: form.reference_bitmap_id,
-                    search_x: form.search_x,
-                    search_y: form.search_y,
-                    search_width: form.search_width,
-                    search_height: form.search_height,
-                    match_threshold: form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0),
-                    output_found_variable_id: form.output_found_variable_id,
-                    output_x_variable_id: form.output_x_variable_id,
-                    output_y_variable_id: form.output_y_variable_id,
-                    output_region_variable_id: form.output_region_variable_id,
-                    bitmaps,
-                    variables,
-                    error: Some(error),
-                    is_edit,
-                }),
-            )
-                .into_response()
+            HtmlTemplate(StepFindBitmapTemplate {
+                user: ctx.user,
+                csrf_token: ctx.csrf_token,
+                automation_id: ctx.automation_id,
+                step_id: ctx.step_id,
+                label,
+                post_delay_seconds,
+                reference_bitmap_id: form.reference_bitmap_id,
+                search_x: form.search_x,
+                search_y: form.search_y,
+                search_width: form.search_width,
+                search_height: form.search_height,
+                match_threshold: form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0),
+                output_found_variable_id: form.output_found_variable_id,
+                output_x_variable_id: form.output_x_variable_id,
+                output_y_variable_id: form.output_y_variable_id,
+                output_region_variable_id: form.output_region_variable_id,
+                bitmaps,
+                variables,
+                error: Some(error),
+                is_edit,
+            })
+            .into_response()
         }
-        _ => Redirect::to(&format!("/automations/{}", ctx.automation_id)).into_response(),
-    }
+        _ => return Redirect::to(&format!("/automations/{}", ctx.automation_id)).into_response(),
+    };
+
+    (StatusCode::BAD_REQUEST, html_body).into_response()
 }
 
 async fn validate_step_form(
@@ -1428,332 +1396,293 @@ pub async fn get_edit_step_handler(
     };
 
     let step_type: String = step_row.get("step_type");
-    let label: Option<String> = step_row.get("label");
-    let post_delay_ms: i32 = step_row.get("post_delay_ms");
+    let label = step_row
+        .get::<Option<String>, _>("label")
+        .unwrap_or_default();
+    let post_delay_seconds = step_row.get::<i32, _>("post_delay_ms") as f64 / 1000.0;
 
-    if step_type == "key_press" {
-        let kp_row = sqlx::query("SELECT key_combo FROM step_key_presses WHERE step_id = $1")
+    match step_type.as_str() {
+        "key_press" => {
+            let key_combo = sqlx::query_scalar::<_, String>(
+                "SELECT key_combo FROM step_key_presses WHERE step_id = $1",
+            )
             .bind(sid)
             .fetch_optional(&state.db)
-            .await;
+            .await
+            .unwrap_or_default()
+            .unwrap_or_default();
 
-        let key_combo = match kp_row {
-            Ok(Some(r)) => r.get("key_combo"),
-            _ => String::new(),
-        };
+            HtmlTemplate(StepKeyPressTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                key_combo,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "find_bitmap" => {
+            let (fb_row, bitmaps, variables) = tokio::join!(
+                sqlx::query("SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1")
+                    .bind(sid).fetch_optional(&state.db),
+                fetch_available_bitmaps(&state.db, id),
+                fetch_automation_variables(&state.db, id),
+            );
 
-        HtmlTemplate(StepKeyPressTemplate {
-            user,
-            csrf_token,
-            automation_id: id,
-            step_id: Some(sid),
-            label: label.unwrap_or_default(),
-            post_delay_seconds: post_delay_ms as f64 / 1000.0,
-            key_combo,
-            error: None,
-            is_edit: true,
-        })
-        .into_response()
-    } else if step_type == "find_bitmap" {
-        // Bolt Optimization: Run step detail query and form dropdown queries (bitmaps and variables)
-        // concurrently using `tokio::join!`, reducing database round-trips from 2 to 1 (~50% latency reduction).
-        let (fb_row, bitmaps, variables) = tokio::join!(
-            sqlx::query(
-                "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1",
-            )
-            .bind(sid)
-            .fetch_optional(&state.db),
-            fetch_available_bitmaps(&state.db, id),
-            fetch_automation_variables(&state.db, id),
-        );
+            let r = fb_row.ok().flatten();
+            let (
+                db_ref_id,
+                db_sx,
+                db_sy,
+                db_sw,
+                db_sh,
+                match_threshold,
+                out_f,
+                out_x,
+                out_y,
+                out_r,
+            ) = match r {
+                Some(r) => (
+                    r.get("reference_bitmap_id"),
+                    r.get("search_x"),
+                    r.get("search_y"),
+                    r.get("search_width"),
+                    r.get("search_height"),
+                    r.get("match_threshold"),
+                    r.get("output_found_variable_id"),
+                    r.get("output_x_variable_id"),
+                    r.get("output_y_variable_id"),
+                    r.get("output_region_variable_id"),
+                ),
+                None => (None, None, None, None, None, 0.95, None, None, None, None),
+            };
 
-        let (
-            db_reference_bitmap_id,
-            db_search_x,
-            db_search_y,
-            db_search_width,
-            db_search_height,
-            match_threshold,
-            output_found_variable_id,
-            output_x_variable_id,
-            output_y_variable_id,
-            output_region_variable_id,
-        ) = match fb_row {
-            Ok(Some(r)) => (
-                r.get::<Option<i64>, _>("reference_bitmap_id"),
-                r.get::<Option<i32>, _>("search_x"),
-                r.get::<Option<i32>, _>("search_y"),
-                r.get::<Option<i32>, _>("search_width"),
-                r.get::<Option<i32>, _>("search_height"),
-                r.get::<f32, _>("match_threshold"),
-                r.get::<Option<i64>, _>("output_found_variable_id"),
-                r.get::<Option<i64>, _>("output_x_variable_id"),
-                r.get::<Option<i64>, _>("output_y_variable_id"),
-                r.get::<Option<i64>, _>("output_region_variable_id"),
-            ),
-            _ => (None, None, None, None, None, 0.95, None, None, None, None),
-        };
+            HtmlTemplate(StepFindBitmapTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                reference_bitmap_id: query.reference_bitmap_id.or(db_ref_id),
+                search_x: query.search_x.or(db_sx),
+                search_y: query.search_y.or(db_sy),
+                search_width: query.search_width.or(db_sw),
+                search_height: query.search_height.or(db_sh),
+                match_threshold,
+                output_found_variable_id: out_f,
+                output_x_variable_id: out_x,
+                output_y_variable_id: out_y,
+                output_region_variable_id: out_r,
+                bitmaps,
+                variables,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "branch" => {
+            let (branch_row, steps, bitmaps) = tokio::join!(
+                sqlx::query(r#"
+                    SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                           reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                           on_match_step_id, on_no_match_step_id
+                    FROM step_branches WHERE step_id = $1
+                "#).bind(sid).fetch_optional(&state.db),
+                fetch_automation_step_options(&state.db, id, Some(sid)),
+                fetch_available_bitmaps(&state.db, id),
+            );
 
-        let reference_bitmap_id = query.reference_bitmap_id.or(db_reference_bitmap_id);
-        let search_x = query.search_x.or(db_search_x);
-        let search_y = query.search_y.or(db_search_y);
-        let search_width = query.search_width.or(db_search_width);
-        let search_height = query.search_height.or(db_search_height);
+            let r = branch_row.ok().flatten();
+            let (
+                c_type,
+                db_x,
+                db_y,
+                db_r,
+                db_g,
+                db_b,
+                db_tol,
+                db_ref,
+                db_sx,
+                db_sy,
+                db_sw,
+                db_sh,
+                db_thresh,
+                on_m,
+                on_nm,
+            ) = match r {
+                Some(r) => (
+                    r.get("condition_type"),
+                    r.get("x"),
+                    r.get("y"),
+                    r.get("expected_r"),
+                    r.get("expected_g"),
+                    r.get("expected_b"),
+                    r.get("tolerance"),
+                    r.get("reference_bitmap_id"),
+                    r.get("search_x"),
+                    r.get("search_y"),
+                    r.get("search_width"),
+                    r.get("search_height"),
+                    r.get("match_threshold"),
+                    r.get("on_match_step_id"),
+                    r.get("on_no_match_step_id"),
+                ),
+                None => (
+                    "pixel_rgb".to_string(),
+                    None,
+                    None,
+                    Some(0),
+                    Some(0),
+                    Some(0),
+                    Some(10),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(0.95),
+                    None,
+                    None,
+                ),
+            };
 
-        HtmlTemplate(StepFindBitmapTemplate {
-            user,
-            csrf_token,
-            automation_id: id,
-            step_id: Some(sid),
-            label: label.unwrap_or_default(),
-            post_delay_seconds: post_delay_ms as f64 / 1000.0,
-            reference_bitmap_id,
-            search_x,
-            search_y,
-            search_width,
-            search_height,
-            match_threshold,
-            output_found_variable_id,
-            output_x_variable_id,
-            output_y_variable_id,
-            output_region_variable_id,
-            bitmaps,
-            variables,
-            error: None,
-            is_edit: true,
-        })
-        .into_response()
-    } else if step_type == "branch" {
-        // Bolt Optimization: Run branch step detail query and form dropdown queries (target steps and bitmaps)
-        // concurrently using `tokio::join!`, reducing database round-trips from 2 to 1 (~50% latency reduction).
-        let (branch_row, steps, bitmaps) = tokio::join!(
-            sqlx::query(
-                r#"
-                SELECT
-                    condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
-                    reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
-                    on_match_step_id, on_no_match_step_id
-                FROM step_branches
-                WHERE step_id = $1
-                "#,
-            )
-            .bind(sid)
-            .fetch_optional(&state.db),
-            fetch_automation_step_options(&state.db, id, Some(sid)),
-            fetch_available_bitmaps(&state.db, id),
-        );
-
-        let (
-            db_condition_type,
-            db_x,
-            db_y,
-            db_expected_r,
-            db_expected_g,
-            db_expected_b,
-            db_tolerance,
-            db_reference_bitmap_id,
-            db_search_x,
-            db_search_y,
-            db_search_width,
-            db_search_height,
-            db_match_threshold,
-            on_match_step_id,
-            on_no_match_step_id,
-        ) = match branch_row {
-            Ok(Some(r)) => (
-                r.get::<String, _>("condition_type"),
-                r.get::<Option<i32>, _>("x"),
-                r.get::<Option<i32>, _>("y"),
-                r.get::<Option<i16>, _>("expected_r"),
-                r.get::<Option<i16>, _>("expected_g"),
-                r.get::<Option<i16>, _>("expected_b"),
-                r.get::<Option<i16>, _>("tolerance"),
-                r.get::<Option<i64>, _>("reference_bitmap_id"),
-                r.get::<Option<i32>, _>("search_x"),
-                r.get::<Option<i32>, _>("search_y"),
-                r.get::<Option<i32>, _>("search_width"),
-                r.get::<Option<i32>, _>("search_height"),
-                r.get::<Option<f32>, _>("match_threshold"),
-                r.get::<Option<i64>, _>("on_match_step_id"),
-                r.get::<Option<i64>, _>("on_no_match_step_id"),
-            ),
-            _ => (
-                "pixel_rgb".to_string(),
-                None,
-                None,
-                Some(0),
-                Some(0),
-                Some(0),
-                Some(10),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(0.95),
-                None,
-                None,
-            ),
-        };
-
-        let branch_query = NewBranchQuery {
-            condition_type: None,
-            x: query.search_x,
-            y: query.search_y,
-            reference_bitmap_id: query.reference_bitmap_id,
-            search_x: query.search_x,
-            search_y: query.search_y,
-            search_width: query.search_width,
-            search_height: query.search_height,
-        };
-
-        let x = branch_query.x.or(db_x);
-        let y = branch_query.y.or(db_y);
-        let reference_bitmap_id = branch_query.reference_bitmap_id.or(db_reference_bitmap_id);
-        let search_x = branch_query.search_x.or(db_search_x);
-        let search_y = branch_query.search_y.or(db_search_y);
-        let search_width = branch_query.search_width.or(db_search_width);
-        let search_height = branch_query.search_height.or(db_search_height);
-
-        HtmlTemplate(StepBranchTemplate {
-            user,
-            csrf_token,
-            automation_id: id,
-            step_id: Some(sid),
-            label: label.unwrap_or_default(),
-            post_delay_seconds: post_delay_ms as f64 / 1000.0,
-            condition_type: db_condition_type,
-            x,
-            y,
-            expected_r: db_expected_r,
-            expected_g: db_expected_g,
-            expected_b: db_expected_b,
-            tolerance: db_tolerance,
-            reference_bitmap_id,
-            search_x,
-            search_y,
-            search_width,
-            search_height,
-            match_threshold: db_match_threshold,
-            on_match_step_id,
-            on_no_match_step_id,
-            steps,
-            bitmaps,
-            error: None,
-            is_edit: true,
-        })
-        .into_response()
-    } else if step_type == "find_pixel_rgb" {
-        // Bolt Optimization: Run pixel step detail query and variable options query
-        // concurrently using `tokio::join!`, reducing database round-trips from 2 to 1 (~50% latency reduction).
-        let (fp_row, variables) = tokio::join!(
-            sqlx::query(
-                "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
-            )
-            .bind(sid)
-            .fetch_optional(&state.db),
-            fetch_automation_variables(&state.db, id),
-        );
-
-        let (x, y, output_variable_id) = match fp_row {
-            Ok(Some(r)) => (
-                r.get::<Option<i32>, _>("x"),
-                r.get::<Option<i32>, _>("y"),
-                r.get::<Option<i64>, _>("output_variable_id"),
-            ),
-            _ => (None, None, None),
-        };
-
-        HtmlTemplate(StepFindPixelRgbTemplate {
-            user,
-            csrf_token,
-            automation_id: id,
-            step_id: Some(sid),
-            label: label.unwrap_or_default(),
-            post_delay_seconds: post_delay_ms as f64 / 1000.0,
-            x,
-            y,
-            output_variable_id,
-            variables,
-            error: None,
-            is_edit: true,
-        })
-        .into_response()
-    } else if step_type == "mouse_click" {
-        // Bolt Optimization: Run mouse click step detail query and variable options query
-        // concurrently using `tokio::join!`, reducing database round-trips from 2 to 1 (~50% latency reduction).
-        let (mc_row, variables) = tokio::join!(
-            sqlx::query("SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
+            HtmlTemplate(StepBranchTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                condition_type: c_type,
+                x: query.search_x.or(db_x),
+                y: query.search_y.or(db_y),
+                expected_r: db_r,
+                expected_g: db_g,
+                expected_b: db_b,
+                tolerance: db_tol,
+                reference_bitmap_id: query.reference_bitmap_id.or(db_ref),
+                search_x: query.search_x.or(db_sx),
+                search_y: query.search_y.or(db_sy),
+                search_width: query.search_width.or(db_sw),
+                search_height: query.search_height.or(db_sh),
+                match_threshold: db_thresh,
+                on_match_step_id: on_m,
+                on_no_match_step_id: on_nm,
+                steps,
+                bitmaps,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "find_pixel_rgb" => {
+            let (fp_row, variables) = tokio::join!(
+                sqlx::query(
+                    "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1"
+                )
                 .bind(sid)
                 .fetch_optional(&state.db),
-            fetch_automation_variables(&state.db, id),
-        );
+                fetch_automation_variables(&state.db, id),
+            );
 
-        let (x, y, x_var_id, y_var_id, region_var_id, button, click_type) = match mc_row {
-            Ok(Some(r)) => (
-                r.get::<Option<i32>, _>("x"),
-                r.get::<Option<i32>, _>("y"),
-                r.get::<Option<i64>, _>("x_variable_id"),
-                r.get::<Option<i64>, _>("y_variable_id"),
-                r.get::<Option<i64>, _>("region_variable_id"),
-                r.get::<String, _>("button"),
-                r.get::<String, _>("click_type"),
-            ),
-            _ => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                "left".to_string(),
-                "single".to_string(),
-            ),
-        };
+            let (x, y, output_variable_id) = match fp_row.ok().flatten() {
+                Some(r) => (r.get("x"), r.get("y"), r.get("output_variable_id")),
+                None => (None, None, None),
+            };
 
-        let x_mode = if x_var_id.is_some() {
-            "variable"
-        } else {
-            "fixed"
+            HtmlTemplate(StepFindPixelRgbTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                x,
+                y,
+                output_variable_id,
+                variables,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
         }
-        .to_string();
-        let y_mode = if y_var_id.is_some() {
-            "variable"
-        } else {
-            "fixed"
-        }
-        .to_string();
+        "mouse_click" => {
+            let (mc_row, variables) = tokio::join!(
+                sqlx::query("SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
+                    .bind(sid).fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id),
+            );
 
-        let click_mode = if region_var_id.is_some() {
-            "region"
-        } else {
-            "coordinates"
-        }
-        .to_string();
+            let (x, y, x_var_id, y_var_id, region_var_id, button, click_type) =
+                match mc_row.ok().flatten() {
+                    Some(r) => (
+                        r.get("x"),
+                        r.get("y"),
+                        r.get("x_variable_id"),
+                        r.get("y_variable_id"),
+                        r.get("region_variable_id"),
+                        r.get("button"),
+                        r.get("click_type"),
+                    ),
+                    None => (
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        "left".to_string(),
+                        "single".to_string(),
+                    ),
+                };
 
-        HtmlTemplate(StepMouseClickTemplate {
-            user,
-            csrf_token,
-            automation_id: id,
-            step_id: Some(sid),
-            label: label.unwrap_or_default(),
-            post_delay_seconds: post_delay_ms as f64 / 1000.0,
-            x_mode,
-            x,
-            x_variable_id: x_var_id,
-            y_mode,
-            y,
-            y_variable_id: y_var_id,
-            click_mode,
-            region_variable_id: region_var_id,
-            button,
-            click_type,
-            variables,
-            error: None,
-            is_edit: true,
-        })
-        .into_response()
-    } else {
-        Redirect::to(&format!("/automations/{}", id)).into_response()
+            let x_mode = if x_var_id.is_some() {
+                "variable"
+            } else {
+                "fixed"
+            }
+            .to_string();
+            let y_mode = if y_var_id.is_some() {
+                "variable"
+            } else {
+                "fixed"
+            }
+            .to_string();
+            let click_mode = if region_var_id.is_some() {
+                "region"
+            } else {
+                "coordinates"
+            }
+            .to_string();
+
+            HtmlTemplate(StepMouseClickTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                x_mode,
+                x,
+                x_variable_id: x_var_id,
+                y_mode,
+                y,
+                y_variable_id: y_var_id,
+                click_mode,
+                region_variable_id: region_var_id,
+                button,
+                click_type,
+                variables,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        _ => Redirect::to(&format!("/automations/{}", id)).into_response(),
     }
 }
 
