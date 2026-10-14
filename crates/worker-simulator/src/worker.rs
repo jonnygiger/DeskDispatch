@@ -495,20 +495,70 @@ impl SimulatedWorker {
                 }
             }
 
-            // Variable updates
-            let variable_updates =
-                step.get("output_variable_id")
-                    .and_then(|v| v.as_i64())
-                    .map(|var_id| {
-                        vec![VariableUpdateItem {
-                            variable_id: var_id,
-                            value: serde_json::json!({
-                                "x": captured_x.unwrap_or(100),
-                                "y": captured_y.unwrap_or(200),
-                                "status": result_str,
-                            }),
-                        }]
-                    });
+            // Periodically upload a reference bitmap for bitmap steps if needed
+            if (step_type == "find_bitmap" || step_type == "branch") && random_bool(0.2) {
+                let auto_id = automation.get("id").and_then(|i| i.as_i64());
+                let bitmap_name = format!("sim_ref_{}_step_{}", self.config.worker_index, step_id);
+                let _ = self.upload_reference_bitmap(auto_id, &bitmap_name, api_key).await;
+            }
+
+            // Rich variable updates covering region, color, coordinate, and status variable types
+            let mut var_updates = Vec::new();
+
+            if let Some(var_id) = step.get("output_variable_id").and_then(|v| v.as_i64()) {
+                let var_val = match step_type {
+                    "find_pixel_rgb" => serde_json::json!([
+                        captured_r.unwrap_or(200),
+                        captured_g.unwrap_or(150),
+                        captured_b.unwrap_or(100)
+                    ]),
+                    _ => serde_json::json!({
+                        "x": captured_x.unwrap_or(800),
+                        "y": captured_y.unwrap_or(600),
+                        "status": result_str
+                    }),
+                };
+                var_updates.push(VariableUpdateItem { variable_id: var_id, value: var_val });
+            }
+
+            if let Some(var_id) = step.get("output_found_variable_id").and_then(|v| v.as_i64()) {
+                var_updates.push(VariableUpdateItem {
+                    variable_id: var_id,
+                    value: serde_json::json!(found.unwrap_or(true)),
+                });
+            }
+
+            if let Some(var_id) = step.get("output_x_variable_id").and_then(|v| v.as_i64()) {
+                var_updates.push(VariableUpdateItem {
+                    variable_id: var_id,
+                    value: serde_json::json!(captured_x.unwrap_or(400)),
+                });
+            }
+
+            if let Some(var_id) = step.get("output_y_variable_id").and_then(|v| v.as_i64()) {
+                var_updates.push(VariableUpdateItem {
+                    variable_id: var_id,
+                    value: serde_json::json!(captured_y.unwrap_or(300)),
+                });
+            }
+
+            if let Some(var_id) = step.get("output_region_variable_id").and_then(|v| v.as_i64()) {
+                let x = captured_x.unwrap_or(400);
+                let y = captured_y.unwrap_or(300);
+                var_updates.push(VariableUpdateItem {
+                    variable_id: var_id,
+                    value: serde_json::json!({
+                        "top_left": [x, y],
+                        "bottom_right": [x + 120, y + 80]
+                    }),
+                });
+            }
+
+            let variable_updates = if var_updates.is_empty() {
+                None
+            } else {
+                Some(var_updates)
+            };
 
             let completed_at = Utc::now();
 
@@ -591,6 +641,117 @@ impl SimulatedWorker {
         Ok(())
     }
 
+    async fn put_image_with_failsafes(
+        &self,
+        upload_url: &str,
+        image_bytes: Vec<u8>,
+    ) -> Result<(), String> {
+        let res = self
+            .client
+            .put(upload_url)
+            .header("Content-Type", "image/png")
+            .body(image_bytes.clone())
+            .send()
+            .await;
+
+        match res {
+            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) if resp.status() == StatusCode::FORBIDDEN || resp.status() == StatusCode::BAD_REQUEST => {
+                let retry_res = self
+                    .client
+                    .put(upload_url)
+                    .body(image_bytes)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Failed PUT retry without Content-Type: {}", e))?;
+
+                if retry_res.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "PUT image upload returned status {} on retry",
+                        retry_res.status()
+                    ))
+                }
+            }
+            Ok(resp) => Err(format!("PUT image upload returned status {}", resp.status())),
+            Err(e) => Err(format!("Failed to PUT image: {}", e)),
+        }
+    }
+
+    pub async fn upload_reference_bitmap(
+        &self,
+        automation_id: Option<i64>,
+        bitmap_name: &str,
+        api_key: &str,
+    ) -> Result<(i64, String), String> {
+        let url = format!(
+            "{}/api/v1/workers/bitmaps/upload-url",
+            self.config.server_url
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to get bitmap upload URL: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Bitmap upload URL returned status {}",
+                resp.status()
+            ));
+        }
+
+        let upload_info = resp
+            .json::<ScreenshotUploadUrlResponse>()
+            .await
+            .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
+
+        let png_bytes = generate_random_screenshot();
+
+        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+            .await?;
+
+        let commit_url = format!(
+            "{}/api/v1/workers/bitmaps/commit",
+            self.config.server_url
+        );
+
+        let commit_req = CommitBitmapRequest {
+            automation_id,
+            name: bitmap_name.to_string(),
+            object_key: upload_info.object_key.clone(),
+            width: Some(100),
+            height: Some(100),
+        };
+
+        let commit_resp = self
+            .client
+            .post(&commit_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&commit_req)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to commit bitmap upload: {}", e))?;
+
+        if !commit_resp.status().is_success() {
+            return Err(format!(
+                "Commit bitmap returned status {}",
+                commit_resp.status()
+            ));
+        }
+
+        let commit_info = commit_resp
+            .json::<CommitBitmapResponse>()
+            .await
+            .map_err(|e| format!("Failed to parse commit bitmap response: {}", e))?;
+
+        Ok((commit_info.bitmap_id, commit_info.object_key))
+    }
+
     async fn upload_task_run_screenshot(
         &self,
         task_run_id: i64,
@@ -624,21 +785,8 @@ impl SimulatedWorker {
 
         let png_bytes = generate_random_screenshot();
 
-        let upload_res = self
-            .client
-            .put(&upload_info.upload_url)
-            .header("Content-Type", "image/png")
-            .body(png_bytes)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to PUT screenshot image: {}", e))?;
-
-        if !upload_res.status().is_success() {
-            return Err(format!(
-                "PUT screenshot returned status {}",
-                upload_res.status()
-            ));
-        }
+        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+            .await?;
 
         let commit_url = format!(
             "{}/api/v1/workers/task-runs/{}/screenshots/commit",
@@ -696,21 +844,8 @@ impl SimulatedWorker {
 
         let png_bytes = generate_random_screenshot();
 
-        let upload_res = self
-            .client
-            .put(&upload_info.upload_url)
-            .header("Content-Type", "image/png")
-            .body(png_bytes)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to PUT recording screenshot image: {}", e))?;
-
-        if !upload_res.status().is_success() {
-            return Err(format!(
-                "PUT recording screenshot returned status {}",
-                upload_res.status()
-            ));
-        }
+        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+            .await?;
 
         Ok(upload_info.object_key)
     }
@@ -720,7 +855,11 @@ impl SimulatedWorker {
         recording_session_id: i64,
         api_key: &str,
     ) -> Result<(), String> {
-        for sequence_number in 1..=5 {
+        let event_types = ["mouse_click", "key_press", "find_pixel_rgb", "find_bitmap"];
+        let key_combos = ["ctrl+c", "ctrl+v", "enter", "tab", "backspace", "escape"];
+        let buttons = ["left", "right", "double"];
+
+        for sequence_number in 1..=6 {
             let event_url = format!(
                 "{}/api/v1/workers/recordings/{}/events",
                 self.config.server_url, recording_session_id
@@ -744,13 +883,29 @@ impl SimulatedWorker {
                 }
             }
 
+            let ev_type = event_types[random_range(0..event_types.len())];
+            let (x_opt, y_opt, btn_opt, key_opt) = match ev_type {
+                "key_press" => (
+                    None,
+                    None,
+                    None,
+                    Some(key_combos[random_range(0..key_combos.len())].to_string()),
+                ),
+                _ => (
+                    Some(random_range(50..1800)),
+                    Some(random_range(50..1000)),
+                    Some(buttons[random_range(0..buttons.len())].to_string()),
+                    None,
+                ),
+            };
+
             let event_item = RecordingEventItem {
                 sequence_number,
-                event_type: "mouse_click".to_string(),
-                x: Some(random_range(50..1800)),
-                y: Some(random_range(50..1000)),
-                button: Some("left".to_string()),
-                key_combo: None,
+                event_type: ev_type.to_string(),
+                x: x_opt,
+                y: y_opt,
+                button: btn_opt,
+                key_combo: key_opt,
                 screenshot_object_key,
                 captured_at: Some(Utc::now()),
             };
@@ -775,7 +930,7 @@ impl SimulatedWorker {
                 break;
             }
 
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(400)).await;
         }
 
         let stop_url = format!(

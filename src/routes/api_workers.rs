@@ -61,6 +61,14 @@ pub fn router() -> Router<AppState> {
             "/api/v1/workers/recordings/{id}/stop",
             post(post_worker_stop_recording_handler),
         )
+        .route(
+            "/api/v1/workers/bitmaps/upload-url",
+            get(get_bitmap_upload_url_handler),
+        )
+        .route(
+            "/api/v1/workers/bitmaps/commit",
+            post(post_bitmap_commit_handler),
+        )
 }
 
 #[tracing::instrument(skip(db))]
@@ -1206,6 +1214,64 @@ pub async fn post_task_run_screenshot_commit_with_key_handler(
         Some(Json(req)),
     )
     .await
+}
+
+#[tracing::instrument(skip(_worker, state))]
+pub async fn get_bitmap_upload_url_handler(
+    _worker: AuthWorker,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, AppError> {
+    let object_key = format!("bitmaps/worker_{}.png", Uuid::new_v4());
+    let storage = state.storage_service();
+
+    let upload_url = storage
+        .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
+
+    Ok(Json(ScreenshotUploadUrlResponse {
+        upload_url,
+        object_key,
+    }))
+}
+
+#[tracing::instrument(skip(_worker, state, req))]
+pub async fn post_bitmap_commit_handler(
+    _worker: AuthWorker,
+    State(state): State<AppState>,
+    Json(req): Json<CommitBitmapRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let bitmap_name = req.name.trim();
+    if bitmap_name.is_empty() {
+        return Err(AppError::BadRequest("Bitmap name is required".to_string()));
+    }
+
+    let width = req.width.unwrap_or(100);
+    let height = req.height.unwrap_or(100);
+
+    let row = sqlx::query(
+        r#"
+        INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+        "#,
+    )
+    .bind(req.automation_id)
+    .bind(bitmap_name)
+    .bind(&req.object_key)
+    .bind(width)
+    .bind(height)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| AppError::Internal(format!("Failed to record bitmap: {}", e)))?;
+
+    let bitmap_id: i64 = row.get("id");
+
+    Ok(Json(CommitBitmapResponse {
+        status: "success".to_string(),
+        bitmap_id,
+        object_key: req.object_key,
+    }))
 }
 
 #[tracing::instrument(skip(worker, state, payload))]

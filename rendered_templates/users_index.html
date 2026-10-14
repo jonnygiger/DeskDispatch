@@ -95,18 +95,18 @@
 
                     </td>
                     <td style="padding: 0.75rem 1rem; font-size: 0.875rem; color: var(--color-text-muted);">
-                        2026-10-11 12:53:28 UTC
+                        2026-10-14 05:56:15 UTC
                     </td>
                     <td style="padding: 0.75rem 1rem; text-align: right;">
                         <div style="display: inline-flex; gap: 0.5rem;">
-                            <a href="/users/1/edit" class="btn btn-sm btn-outline">Edit</a>
-                            <a href="/users/1/reset-password" class="btn btn-sm btn-outline">Reset Password</a>
+                            <a href="/users/1/edit" class="btn btn-sm btn-outline" aria-label="Edit user admin">Edit</a>
+                            <a href="/users/1/reset-password" class="btn btn-sm btn-outline" aria-label="Reset password for admin">Reset Password</a>
 
                             <form method="post" action="/users/1/deactivate" style="display: inline;" onsubmit="return confirm('Are you sure you want to deactivate user admin? Their active sessions will be terminated.');">
 
 <input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
 
-                                <button type="submit" class="btn btn-sm btn-danger-outline">Deactivate</button>
+                                <button type="submit" class="btn btn-sm btn-danger-outline" aria-label="Deactivate user admin">Deactivate</button>
                             </form>
 
                         </div>

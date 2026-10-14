@@ -75,6 +75,7 @@
         <table class="table" style="width: 100%; border-collapse: collapse; text-align: left;">
             <thead>
                 <tr style="border-bottom: 1px solid var(--color-border);">
+                    <th style="padding: 0.75rem 1rem; width: 80px;">Preview</th>
                     <th style="padding: 0.75rem 1rem;">Display Name</th>
                     <th style="padding: 0.75rem 1rem;">Hostname</th>
                     <th style="padding: 0.75rem 1rem;">Status</th>
@@ -86,6 +87,11 @@
             <tbody>
 
                 <tr style="border-bottom: 1px solid var(--color-border);">
+                    <td style="padding: 0.75rem 1rem;">
+
+                            <div style="width: 60px; height: 40px; border-radius: 4px; background: var(--color-bg-secondary); border: 1px solid var(--color-border); display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: var(--color-text-muted);">No View</div>
+
+                    </td>
                     <td style="padding: 0.75rem 1rem; font-weight: 600;">
                         <a href="/workers/1">Warehouse Worker PC</a>
                     </td>
@@ -94,7 +100,7 @@
                         <span class="badge badge-success">online</span>
                     </td>
                     <td style="padding: 0.75rem 1rem; font-size: 0.875rem; color: var(--color-text-muted);">
-                        2026-10-11 12:53:28 UTC
+                        2026-10-14 05:56:15 UTC
                     </td>
                     <td style="padding: 0.75rem 1rem;">
 
@@ -105,14 +111,14 @@
                     </td>
                     <td style="padding: 0.75rem 1rem; text-align: right;">
                         <div style="display: inline-flex; gap: 0.5rem;">
-                            <a href="/workers/1" class="btn btn-sm btn-outline">View</a>
+                            <a href="/workers/1" class="btn btn-sm btn-outline" aria-label="View worker Warehouse Worker PC">View</a>
 
-                            <a href="/workers/1/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <a href="/workers/1/edit" class="btn btn-sm btn-outline" aria-label="Edit worker Warehouse Worker PC">Edit</a>
                             <form method="post" action="/workers/1/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker Warehouse Worker PC?');">
 
 <input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
 
-                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                                <button type="submit" class="btn btn-sm btn-danger-outline" aria-label="Delete worker Warehouse Worker PC">Delete</button>
                             </form>
 
                         </div>
@@ -165,12 +171,12 @@
 
                     <td style="padding: 0.75rem 1rem; text-align: right;">
                         <div style="display: inline-flex; gap: 0.5rem;">
-                            <a href="/worker-groups/1/edit" class="btn btn-sm btn-outline">Edit</a>
+                            <a href="/worker-groups/1/edit" class="btn btn-sm btn-outline" aria-label="Edit worker group Warehouse Fleet">Edit</a>
                             <form method="post" action="/worker-groups/1/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete worker group Warehouse Fleet?');">
 
 <input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
 
-                                <button type="submit" class="btn btn-sm btn-danger-outline">Delete</button>
+                                <button type="submit" class="btn btn-sm btn-danger-outline" aria-label="Delete worker group Warehouse Fleet">Delete</button>
                             </form>
                         </div>
                     </td>

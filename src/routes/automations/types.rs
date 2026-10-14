@@ -321,6 +321,9 @@ pub struct StepViewItem {
     pub post_delay_ms: i32,
     pub position: f64,
     pub description: String,
+    pub reference_bitmap_id: Option<i64>,
+    pub reference_bitmap_key: Option<String>,
+    pub screenshot_key: Option<String>,
 }
 
 impl StepViewItem {
@@ -483,6 +486,7 @@ impl VariableOption {
 pub struct BitmapOption {
     pub id: i64,
     pub name: String,
+    pub object_storage_key: String,
     pub width: i32,
     pub height: i32,
 }
@@ -907,6 +911,9 @@ mod tests {
             post_delay_ms: 1500,
             position: 10.0,
             description: "Click".to_string(),
+            reference_bitmap_id: None,
+            reference_bitmap_key: None,
+            screenshot_key: None,
         };
         assert_eq!(step1.formatted_post_delay(), " · then wait 1.5s");
 
@@ -918,6 +925,9 @@ mod tests {
             post_delay_ms: 0,
             position: 20.0,
             description: "Click".to_string(),
+            reference_bitmap_id: None,
+            reference_bitmap_key: None,
+            screenshot_key: None,
         };
         assert_eq!(step2.formatted_post_delay(), "");
 
@@ -929,6 +939,9 @@ mod tests {
             post_delay_ms: -500,
             position: 30.0,
             description: "Click".to_string(),
+            reference_bitmap_id: None,
+            reference_bitmap_key: None,
+            screenshot_key: None,
         };
         assert_eq!(step3.formatted_post_delay(), "");
     }
@@ -972,6 +985,7 @@ mod tests {
         let bitmap = BitmapOption {
             id: 7,
             name: "btn.png".to_string(),
+            object_storage_key: "bitmaps/btn.png".to_string(),
             width: 100,
             height: 50,
         };
