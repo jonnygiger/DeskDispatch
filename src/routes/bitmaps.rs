@@ -1157,11 +1157,8 @@ async fn fetch_s3_object_by_id(
 }
 
 async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<Vec<u8>> {
-    let path = if let Ok(parsed) = reqwest::Url::parse(image_url) {
-        parsed.path().to_string()
-    } else {
-        image_url.to_string()
-    };
+    let parsed_url = url::Url::parse(image_url).ok();
+    let path = parsed_url.as_ref().map(|u| u.path()).unwrap_or(image_url);
 
     if let Some(static_path) = path.strip_prefix("/static/") {
         if let Some(asset) = crate::routes::static_assets::Assets::get(static_path) {
