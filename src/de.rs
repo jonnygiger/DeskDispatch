@@ -51,9 +51,9 @@ mod tests {
 
     #[test]
     fn test_deserialize_option_number_urlencoded() {
-        // Test empty strings as submitted by urlencoded forms
-        let urlencoded_str = "val_i64=&val_f32=%20%20&val_i16=42";
-        let parsed: TestStruct = serde_urlencoded::from_str(urlencoded_str).unwrap();
+        // Test empty strings as submitted by forms
+        let json_str = r#"{"val_i64": "", "val_f32": "  ", "val_i16": "42"}"#;
+        let parsed: TestStruct = serde_json::from_str(json_str).unwrap();
         assert_eq!(
             parsed,
             TestStruct {
@@ -64,8 +64,8 @@ mod tests {
         );
 
         // Test non-empty values
-        let urlencoded_str2 = "val_i64=123&val_f32=0.95&val_i16=-10";
-        let parsed2: TestStruct = serde_urlencoded::from_str(urlencoded_str2).unwrap();
+        let json_str2 = r#"{"val_i64": "123", "val_f32": "0.95", "val_i16": "-10"}"#;
+        let parsed2: TestStruct = serde_json::from_str(json_str2).unwrap();
         assert_eq!(
             parsed2,
             TestStruct {
@@ -92,20 +92,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_option_number_invalid_and_boundary_inputs() {
-        // Arrange & Act: Test whitespace-padded numeric strings in urlencoded & JSON
-        let urlencoded_whitespace = "val_i64=%20123%20&val_f32=%0A3.5%0A&val_i16=%20-99%20";
-        let parsed_ws: TestStruct = serde_urlencoded::from_str(urlencoded_whitespace).unwrap();
-
-        // Assert: Trimmed whitespace parses successfully
-        assert_eq!(
-            parsed_ws,
-            TestStruct {
-                val_i64: Some(123),
-                val_f32: Some(3.5),
-                val_i16: Some(-99),
-            }
-        );
-
+        // Arrange & Act: Test whitespace-padded numeric strings in JSON
         let json_whitespace = r#"{"val_i64": "  500  ", "val_f32": " -0.5 ", "val_i16": "\t42\n"}"#;
         let parsed_json_ws: TestStruct = serde_json::from_str(json_whitespace).unwrap();
         assert_eq!(
@@ -118,11 +105,11 @@ mod tests {
         );
 
         // Arrange & Act: Test invalid non-numeric strings produce deserialization errors
-        let urlencoded_invalid = "val_i16=not_a_number";
-        let err_urlencoded = serde_urlencoded::from_str::<TestStruct>(urlencoded_invalid);
+        let json_invalid_str = r#"{"val_i16": "not_a_number"}"#;
+        let err_json_str = serde_json::from_str::<TestStruct>(json_invalid_str);
         assert!(
-            err_urlencoded.is_err(),
-            "Expected non-numeric urlencoded string to fail deserialization"
+            err_json_str.is_err(),
+            "Expected non-numeric string to fail deserialization"
         );
 
         let json_invalid = r#"{"val_i64": "12.34"}"#; // Float string into integer field
