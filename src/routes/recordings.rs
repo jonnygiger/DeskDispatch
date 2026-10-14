@@ -202,6 +202,7 @@ pub async fn get_worker_record_start_handler(
         created_at: row.created_at,
         groups: Vec::new(),
         registration_token: row.registration_token,
+        latest_screenshot_step_id: None,
     };
 
     HtmlTemplate(RecordingStartTemplate {
@@ -862,6 +863,7 @@ mod tests {
             created_at: Utc::now(),
             groups: vec![],
             registration_token: None,
+            latest_screenshot_step_id: None,
         };
 
         let start_tmpl = RecordingStartTemplate {

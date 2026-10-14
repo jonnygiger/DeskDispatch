@@ -159,6 +159,22 @@ pub struct CommitScreenshotResponse {
     pub object_key: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CommitBitmapRequest {
+    pub automation_id: Option<i64>,
+    pub name: String,
+    pub object_key: String,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct CommitBitmapResponse {
+    pub status: String,
+    pub bitmap_id: i64,
+    pub object_key: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct AutomationVariablePayload {
     pub id: i64,

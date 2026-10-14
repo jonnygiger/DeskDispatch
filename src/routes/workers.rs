@@ -65,6 +65,7 @@ pub struct WorkerPcItem {
     pub agent_version: Option<String>,
     pub created_at: DateTime<Utc>,
     pub groups: Vec<String>,
+    pub latest_screenshot_step_id: Option<i64>,
 }
 
 impl WorkerPcItem {
@@ -363,6 +364,7 @@ mod tests {
             created_at: Utc::now(),
             groups: vec![],
             registration_token: Some("sample-token-uuid".to_string()),
+            latest_screenshot_step_id: None,
         };
 
         let tmpl = WorkerDetailTemplate {
@@ -402,6 +404,7 @@ mod tests {
             agent_version: None,
             created_at: Utc::now(),
             groups: vec![],
+            latest_screenshot_step_id: None,
         };
         assert_eq!(worker_online.derived_status(), "online");
         assert_eq!(worker_online.status_badge_class(), "badge-success");
@@ -419,6 +422,7 @@ mod tests {
             agent_version: None,
             created_at: Utc::now(),
             groups: vec![],
+            latest_screenshot_step_id: None,
         };
         assert_eq!(worker_stale.derived_status(), "offline");
         assert_eq!(worker_stale.status_badge_class(), "badge-neutral");
@@ -436,6 +440,7 @@ mod tests {
             agent_version: None,
             created_at: Utc::now(),
             groups: vec![],
+            latest_screenshot_step_id: None,
         };
         assert_eq!(worker_no_hb.derived_status(), "offline");
 
@@ -452,6 +457,7 @@ mod tests {
             agent_version: None,
             created_at: Utc::now(),
             groups: vec![],
+            latest_screenshot_step_id: None,
         };
         assert_eq!(worker_offline_explicit.derived_status(), "offline");
 
@@ -469,6 +475,7 @@ mod tests {
             created_at: Utc::now(),
             groups: vec![],
             registration_token: None,
+            latest_screenshot_step_id: None,
         };
         assert_eq!(worker_busy.derived_status(), "busy");
         assert_eq!(worker_busy.status_badge_class(), "badge-warning");
@@ -536,6 +543,7 @@ pub struct WorkerDetail {
     pub created_at: DateTime<Utc>,
     pub groups: Vec<WorkerGroupSimple>,
     pub registration_token: Option<String>,
+    pub latest_screenshot_step_id: Option<i64>,
 }
 
 impl WorkerDetail {
@@ -777,7 +785,7 @@ pub async fn get_workers_handler(
     // Bolt Optimization: Run all 4 independent queries (worker PCs, worker group memberships,
     // worker groups, and group members) concurrently using `tokio::join!`. This roughly quarters
     // database wait latency for worker management views from 4 sequential round-trips down to 1.
-    let (workers_res, worker_groups_mappings_res, groups_res, member_mappings_res) = tokio::join!(
+    let (workers_res, worker_groups_mappings_res, groups_res, member_mappings_res, worker_screenshots_res) = tokio::join!(
         sqlx::query_as::<_, WorkerDetailRow>(
             r#"
             SELECT
@@ -828,6 +836,17 @@ pub async fn get_workers_handler(
             "#,
         )
         .fetch_all(&state.db),
+        sqlx::query(
+            r#"
+            SELECT DISTINCT ON (tr.worker_id) tr.worker_id, ss.step_id
+            FROM task_runs tr
+            JOIN step_screenshots ss ON ss.step_id IN (
+                SELECT id FROM task_run_steps WHERE task_run_id = tr.id
+            )
+            ORDER BY tr.worker_id, tr.id DESC
+            "#
+        )
+        .fetch_all(&state.db),
     );
 
     let workers_rows = match workers_res {
@@ -863,9 +882,19 @@ pub async fn get_workers_handler(
         }
     }
 
+    let mut worker_ss_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+    if let Ok(ss_rows) = worker_screenshots_res {
+        for r in ss_rows {
+            let wid: i64 = r.get("worker_id");
+            let sid: i64 = r.get("step_id");
+            worker_ss_map.insert(wid, sid);
+        }
+    }
+
     let mut workers = Vec::with_capacity(workers_rows.len());
     for row in workers_rows {
         let groups_rows = worker_groups_map.remove(&row.id).unwrap_or_default();
+        let latest_screenshot_step_id = worker_ss_map.get(&row.id).copied();
 
         workers.push(WorkerPcItem {
             id: row.id,
@@ -880,6 +909,7 @@ pub async fn get_workers_handler(
             agent_version: row.agent_version,
             created_at: row.created_at,
             groups: groups_rows,
+            latest_screenshot_step_id,
         });
     }
 
@@ -930,7 +960,7 @@ pub async fn get_worker_detail_handler(
 ) -> impl IntoResponse {
     // Bolt Optimization: Run worker PC detail query and group membership query concurrently using
     // `tokio::join!`. This reduces DB wait latency by ~50% compared to sequential queries.
-    let (row_res, groups_res) = tokio::join!(
+    let (row_res, groups_res, ss_res) = tokio::join!(
         sqlx::query_as::<_, WorkerDetailRow>(
             r#"
             SELECT
@@ -959,6 +989,20 @@ pub async fn get_worker_detail_handler(
         )
         .bind(id)
         .fetch_all(&state.db),
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT ss.step_id
+            FROM task_runs tr
+            JOIN step_screenshots ss ON ss.step_id IN (
+                SELECT id FROM task_run_steps WHERE task_run_id = tr.id
+            )
+            WHERE tr.worker_id = $1
+            ORDER BY tr.id DESC, ss.step_id DESC
+            LIMIT 1
+            "#
+        )
+        .bind(id)
+        .fetch_optional(&state.db),
     );
 
     let row = match row_res {
@@ -982,6 +1026,8 @@ pub async fn get_worker_detail_handler(
         None
     };
 
+    let latest_screenshot_step_id = ss_res.ok().flatten();
+
     let worker = WorkerDetail {
         id: row.id,
         hostname: row.hostname,
@@ -996,6 +1042,7 @@ pub async fn get_worker_detail_handler(
         created_at: row.created_at,
         groups,
         registration_token: display_token,
+        latest_screenshot_step_id,
     };
 
     HtmlTemplate(WorkerDetailTemplate {
@@ -1082,6 +1129,7 @@ pub async fn get_edit_worker_handler(
         created_at: row.created_at,
         groups: assigned_groups,
         registration_token: row.registration_token,
+        latest_screenshot_step_id: None,
     };
 
     HtmlTemplate(WorkerEditTemplate {

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use super::auth::HtmlTemplate;
 use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
+use crate::de::deserialize_option_number;
 use crate::magnifier::ImageMagnifier;
 use axum::Router;
 use axum::routing::{get, post};
@@ -29,10 +30,13 @@ pub fn router() -> Router<AppState> {
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct RunsFilterQuery {
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub automation_id: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub worker_id: Option<i64>,
     pub status: Option<String>,
     pub before_queued_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
     pub before_id: Option<i64>,
 }
 
@@ -61,6 +65,7 @@ pub struct TaskRunListItem {
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub error_message: Option<String>,
+    pub screenshot_step_id: Option<i64>,
 }
 
 impl TaskRunListItem {
@@ -300,12 +305,20 @@ pub async fn get_runs_handler(
                 tr.queued_at,
                 tr.started_at,
                 tr.completed_at,
-                tr.error_message
+                tr.error_message,
+                ss.step_id AS screenshot_step_id
             FROM task_runs tr
             JOIN automations a ON tr.automation_id = a.id
             LEFT JOIN schedules s ON tr.schedule_id = s.id
             LEFT JOIN task_worker_pcs w ON tr.worker_id = w.id
             LEFT JOIN users u ON tr.triggered_by_user_id = u.id
+            LEFT JOIN LATERAL (
+                SELECT trs.step_id
+                FROM task_run_steps trs
+                WHERE trs.task_run_id = tr.id AND trs.screenshot_object_key IS NOT NULL
+                ORDER BY trs.id DESC
+                LIMIT 1
+            ) ss ON true
             WHERE ($1::BIGINT IS NULL OR tr.automation_id = $1)
               AND ($2::BIGINT IS NULL OR tr.worker_id = $2)
               AND ($3::TEXT IS NULL OR tr.status = $3)
@@ -364,6 +377,7 @@ pub async fn get_runs_handler(
             started_at: r.get("started_at"),
             completed_at: r.get("completed_at"),
             error_message: r.get("error_message"),
+            screenshot_step_id: r.get("screenshot_step_id"),
         })
         .collect();
 
@@ -449,6 +463,7 @@ pub async fn get_run_status_frame_handler(
         started_at: run_row.get("started_at"),
         completed_at: run_row.get("completed_at"),
         error_message: run_row.get("error_message"),
+        screenshot_step_id: None,
     };
 
     let paused = query.paused.unwrap_or(false);
@@ -584,6 +599,7 @@ pub async fn get_run_detail_handler(
         started_at: run_row.get("started_at"),
         completed_at: run_row.get("completed_at"),
         error_message: run_row.get("error_message"),
+        screenshot_step_id: None,
     };
 
     let auto_refresh = run_item.status == "queued"
@@ -908,6 +924,7 @@ mod tests {
             started_at: Some(now),
             completed_at: Some(now + chrono::Duration::seconds(45)),
             error_message: None,
+            screenshot_step_id: None,
         };
 
         assert_eq!(item.status_badge_class(), "badge-success");
@@ -972,6 +989,7 @@ mod tests {
             started_at: Some(now),
             completed_at: Some(now + chrono::Duration::seconds(125)), // 2m 5s
             error_message: None,
+            screenshot_step_id: None,
         };
         assert_eq!(item.duration_display(), "2m 5s");
 
@@ -1092,5 +1110,24 @@ mod tests {
         assert!(worker_opt.is_selected(&Some(7)));
         assert!(!worker_opt.is_selected(&Some(1)));
         assert!(!worker_opt.is_selected(&None));
+    }
+
+    #[test]
+    fn test_runs_filter_query_empty_string_deserialization() {
+        let query_str = "automation_id=&worker_id=&status=&before_id=";
+        let filter: RunsFilterQuery = serde_urlencoded::from_str(query_str)
+            .expect("Failed to deserialize empty query params in RunsFilterQuery");
+        assert_eq!(filter.automation_id, None);
+        assert_eq!(filter.worker_id, None);
+        assert_eq!(filter.before_id, None);
+        assert_eq!(filter.status.as_deref(), Some(""));
+
+        let query_str_valid = "automation_id=10&worker_id=5&status=succeeded&before_id=100";
+        let filter_valid: RunsFilterQuery = serde_urlencoded::from_str(query_str_valid)
+            .expect("Failed to deserialize valid query params in RunsFilterQuery");
+        assert_eq!(filter_valid.automation_id, Some(10));
+        assert_eq!(filter_valid.worker_id, Some(5));
+        assert_eq!(filter_valid.before_id, Some(100));
+        assert_eq!(filter_valid.status.as_deref(), Some("succeeded"));
     }
 }

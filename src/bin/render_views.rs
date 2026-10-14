@@ -293,6 +293,7 @@ fn main() {
         agent_version: Some("v2.1.0".to_string()),
         created_at: Utc::now(),
         groups: vec!["Warehouse Fleet".to_string()],
+        latest_screenshot_step_id: None,
     };
     let group_item = WorkerGroupItem {
         id: 1,
@@ -331,6 +332,7 @@ fn main() {
             description: "PCs in warehouse".to_string(),
         }],
         registration_token: None,
+        latest_screenshot_step_id: None,
     };
     let worker_detail_tmpl = WorkerDetailTemplate {
         user: user.clone(),
@@ -407,6 +409,7 @@ fn main() {
         started_at: Some(Utc::now()),
         completed_at: Some(Utc::now()),
         error_message: None,
+        screenshot_step_id: None,
     };
 
     let runs_list_tmpl = RunsListTemplate {

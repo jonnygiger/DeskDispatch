@@ -442,7 +442,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         step_target_map.insert(step_id, target_str);
     }
 
-    let (kp_res, mc_res, fp_res, fb_res, br_res) = tokio::join!(
+    let (kp_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
         sqlx::query(
             r#"
             SELECT skp.step_id, skp.key_combo
@@ -481,7 +481,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
         sqlx::query(
             r#"
-            SELECT fb.step_id, b.name AS bitmap_name, v.name AS var_name
+            SELECT fb.step_id, fb.reference_bitmap_id, b.name AS bitmap_name, b.object_storage_key AS reference_bitmap_key, v.name AS var_name
             FROM step_find_bitmap fb
             JOIN automation_steps s ON fb.step_id = s.id
             JOIN bitmaps b ON fb.reference_bitmap_id = b.id
@@ -496,10 +496,21 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             r#"
             SELECT
                 sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
-                b.name AS bitmap_name, sb.on_match_step_id, sb.on_no_match_step_id
+                sb.reference_bitmap_id, b.name AS bitmap_name, b.object_storage_key AS reference_bitmap_key, sb.on_match_step_id, sb.on_no_match_step_id
             FROM step_branches sb
             JOIN automation_steps s ON sb.step_id = s.id
             LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query(
+            r#"
+            SELECT ss.step_id, ss.object_storage_key
+            FROM step_screenshots ss
+            JOIN automation_steps s ON ss.step_id = s.id
             WHERE s.automation_id = $1 AND s.deleted_at IS NULL
             "#,
         )
@@ -554,10 +565,13 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         })
         .collect();
 
-    let find_bitmap_map: std::collections::HashMap<i64, (String, Option<String>)> = fb_res
+    let find_bitmap_map: std::collections::HashMap<i64, (Option<i64>, Option<String>, String, Option<String>)> = fb_res
         .unwrap_or_default()
         .into_iter()
-        .map(|r| (r.get("step_id"), (r.get("bitmap_name"), r.get("var_name"))))
+        .map(|r| (
+            r.get("step_id"),
+            (r.get("reference_bitmap_id"), r.get("reference_bitmap_key"), r.get("bitmap_name"), r.get("var_name"))
+        ))
         .collect();
 
     let branch_map: std::collections::HashMap<
@@ -570,6 +584,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             Option<i16>,
             Option<i16>,
             Option<i16>,
+            Option<i64>,
+            Option<String>,
             Option<String>,
             Option<i64>,
             Option<i64>,
@@ -588,12 +604,20 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                     r.get("expected_g"),
                     r.get("expected_b"),
                     r.get("tolerance"),
+                    r.get("reference_bitmap_id"),
+                    r.get("reference_bitmap_key"),
                     r.get("bitmap_name"),
                     r.get("on_match_step_id"),
                     r.get("on_no_match_step_id"),
                 ),
             )
         })
+        .collect();
+
+    let step_screenshot_map: std::collections::HashMap<i64, String> = ss_res
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.get("step_id"), r.get("object_storage_key")))
         .collect();
 
     let mut steps = Vec::with_capacity(raw_steps.len());
@@ -633,7 +657,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                 .unwrap_or_else(|| "Read pixel at coordinate".to_string()),
             "find_bitmap" => find_bitmap_map
                 .get(&step_id)
-                .map(|(bitmap_name, var_name)| {
+                .map(|(_, _, bitmap_name, var_name)| {
                     generate_find_bitmap_summary(bitmap_name, var_name.as_deref())
                 })
                 .unwrap_or_else(|| "Search for bitmap on screen".to_string()),
@@ -648,6 +672,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                         expected_g,
                         expected_b,
                         tolerance,
+                        _ref_id,
+                        _ref_key,
                         bitmap_name,
                         match_id,
                         no_match_id,
@@ -678,6 +704,20 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             _ => "Unknown step".to_string(),
         };
 
+        let (ref_bitmap_id, ref_bitmap_key) = match step_type.as_str() {
+            "find_bitmap" => find_bitmap_map
+                .get(&step_id)
+                .map(|(id, key, _, _)| (*id, key.clone()))
+                .unwrap_or((None, None)),
+            "branch" => branch_map
+                .get(&step_id)
+                .map(|(_, _, _, _, _, _, _, id, key, _, _, _)| (*id, key.clone()))
+                .unwrap_or((None, None)),
+            _ => (None, None),
+        };
+
+        let screenshot_key = step_screenshot_map.get(&step_id).cloned();
+
         steps.push(StepViewItem {
             id: step_id,
             step_number: idx + 1,
@@ -686,6 +726,9 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             post_delay_ms,
             position,
             description,
+            reference_bitmap_id: ref_bitmap_id,
+            reference_bitmap_key: ref_bitmap_key,
+            screenshot_key,
         });
     }
 
@@ -2420,6 +2463,7 @@ mod tests {
         let bitmaps = vec![BitmapOption {
             id: 1,
             name: "login_button.png".to_string(),
+            object_storage_key: "bitmaps/test.png".to_string(),
             width: 100,
             height: 40,
         }];
