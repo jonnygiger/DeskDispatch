@@ -405,21 +405,6 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         return Vec::new();
     }
 
-    let mut step_target_map: std::collections::HashMap<i64, String> =
-        std::collections::HashMap::with_capacity(raw_steps.len());
-    for (idx, row) in raw_steps.iter().enumerate() {
-        let step_id: i64 = row.get("id");
-        let step_num = idx + 1;
-        let step_type: String = row.get("step_type");
-        let label: Option<String> = row.get("label");
-
-        let target_str = match label {
-            Some(lbl) if !lbl.trim().is_empty() => format!("Step {} ({})", step_num, lbl.trim()),
-            _ => format!("Step {} ({})", step_num, step_type),
-        };
-        step_target_map.insert(step_id, target_str);
-    }
-
     let (kp_res, mc_res, fp_res, fb_res, br_res) = tokio::join!(
         sqlx::query(
             r#"
@@ -573,6 +558,27 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             )
         })
         .collect();
+
+    let step_target_map: std::collections::HashMap<i64, String> = if !branch_map.is_empty() {
+        let mut map = std::collections::HashMap::with_capacity(raw_steps.len());
+        for (idx, row) in raw_steps.iter().enumerate() {
+            let step_id: i64 = row.get("id");
+            let step_num = idx + 1;
+            let step_type: String = row.get("step_type");
+            let label: Option<String> = row.get("label");
+
+            let target_str = match label {
+                Some(lbl) if !lbl.trim().is_empty() => {
+                    format!("Step {} ({})", step_num, lbl.trim())
+                }
+                _ => format!("Step {} ({})", step_num, step_type),
+            };
+            map.insert(step_id, target_str);
+        }
+        map
+    } else {
+        std::collections::HashMap::new()
+    };
 
     let mut steps = Vec::with_capacity(raw_steps.len());
     for (idx, row) in raw_steps.into_iter().enumerate() {

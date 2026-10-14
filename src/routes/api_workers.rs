@@ -280,21 +280,21 @@ pub async fn fetch_full_automation_json_with_overrides(
     for p in param_rows {
         let pval_str = overrides
             .and_then(|o| o.get(&p.name))
-            .cloned()
-            .unwrap_or(p.default_value);
+            .map(String::as_str)
+            .unwrap_or(&p.default_value);
 
         let val = match p.param_type.as_str() {
             "int" => pval_str
                 .parse::<i64>()
                 .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::String(pval_str)),
+                .unwrap_or_else(|_| serde_json::Value::String(pval_str.to_string())),
             "bool" => {
                 let is_true = pval_str.eq_ignore_ascii_case("true")
                     || pval_str == "1"
                     || pval_str.eq_ignore_ascii_case("yes");
                 serde_json::Value::Bool(is_true)
             }
-            _ => serde_json::Value::String(pval_str),
+            _ => serde_json::Value::String(pval_str.to_string()),
         };
         parameters_map.insert(p.name, val);
     }
