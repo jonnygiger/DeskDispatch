@@ -1150,4 +1150,77 @@ mod tests {
             "Expected false when worker_group_id is None"
         );
     }
+
+    #[test]
+    fn test_schedule_form_template_accessibility_associations() {
+        let user = AuthUser {
+            id: 1,
+            username: "editor".to_string(),
+            display_name: "Editor User".to_string(),
+            role: crate::auth::UserRole::Editor,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "csrf_token_test".to_string(),
+            must_change_password: false,
+        };
+
+        let template = ScheduleFormTemplate {
+            user,
+            is_edit: false,
+            schedule_id: None,
+            automation_id: None,
+            name: "Test Schedule".to_string(),
+            cron_expression: "0 9 * * *".to_string(),
+            timezone: "UTC".to_string(),
+            worker_group_id: None,
+            overlap_policy: "allow".to_string(),
+            max_queue_age_secs: Some(3600),
+            wol_enabled: true,
+            wol_warmup_secs: 300,
+            is_enabled: true,
+            automations: vec![],
+            worker_groups: vec![],
+            error: None,
+        };
+
+        let rendered = template
+            .render()
+            .expect("ScheduleFormTemplate should render successfully");
+
+        // Verify aria-describedby attributes and corresponding helper id elements
+        assert!(
+            rendered.contains("aria-describedby=\"cron-expression-help\""),
+            "Expected cron_expression input to have aria-describedby='cron-expression-help'"
+        );
+        assert!(
+            rendered.contains("id=\"cron-expression-help\""),
+            "Expected cron expression helper element to have id='cron-expression-help'"
+        );
+
+        assert!(
+            rendered.contains("aria-describedby=\"overlap-policy-help\""),
+            "Expected overlap_policy select to have aria-describedby='overlap-policy-help'"
+        );
+        assert!(
+            rendered.contains("id=\"overlap-policy-help\""),
+            "Expected overlap policy helper element to have id='overlap-policy-help'"
+        );
+
+        assert!(
+            rendered.contains("aria-describedby=\"max-queue-age-help\""),
+            "Expected max_queue_age_secs input to have aria-describedby='max-queue-age-help'"
+        );
+        assert!(
+            rendered.contains("id=\"max-queue-age-help\""),
+            "Expected max queue age helper element to have id='max-queue-age-help'"
+        );
+
+        assert!(
+            rendered.contains("aria-describedby=\"wol-warmup-help\""),
+            "Expected wol_warmup_secs input to have aria-describedby='wol-warmup-help'"
+        );
+        assert!(
+            rendered.contains("id=\"wol-warmup-help\""),
+            "Expected WOL warm-up helper element to have id='wol-warmup-help'"
+        );
+    }
 }
