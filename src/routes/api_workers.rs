@@ -97,7 +97,6 @@ struct VariableRow {
 #[derive(sqlx::FromRow)]
 struct StepRow {
     id: i64,
-    step_type: String,
     label: Option<String>,
     post_delay_ms: i32,
 }
@@ -204,7 +203,7 @@ pub async fn fetch_full_automation_json_with_overrides(
     .fetch_all(db);
 
     let steps_fut = sqlx::query_as::<_, StepRow>(
-        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+        "SELECT id, label, post_delay_ms FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(db);
@@ -317,29 +316,29 @@ pub async fn fetch_full_automation_json_with_overrides(
         });
     }
 
-    let mut mouse_clicks_map = HashMap::with_capacity(mouse_clicks_rows.len());
+    enum StepDetail {
+        MouseClick(MouseClickRow),
+        KeyPress(String),
+        FindPixel(FindPixelRow),
+        FindBitmap(FindBitmapRow),
+        Branch(BranchRow),
+    }
+
+    let mut details_map = HashMap::with_capacity(step_rows.len());
     for r in mouse_clicks_rows {
-        mouse_clicks_map.insert(r.step_id, r);
+        details_map.insert(r.step_id, StepDetail::MouseClick(r));
     }
-
-    let mut key_presses_map = HashMap::with_capacity(key_presses_rows.len());
     for r in key_presses_rows {
-        key_presses_map.insert(r.step_id, r.key_combo);
+        details_map.insert(r.step_id, StepDetail::KeyPress(r.key_combo));
     }
-
-    let mut find_pixel_map = HashMap::with_capacity(find_pixel_rows.len());
     for r in find_pixel_rows {
-        find_pixel_map.insert(r.step_id, r);
+        details_map.insert(r.step_id, StepDetail::FindPixel(r));
     }
-
-    let mut find_bitmap_map = HashMap::with_capacity(find_bitmap_rows.len());
     for r in find_bitmap_rows {
-        find_bitmap_map.insert(r.step_id, r);
+        details_map.insert(r.step_id, StepDetail::FindBitmap(r));
     }
-
-    let mut branch_map = HashMap::with_capacity(branch_rows.len());
     for r in branch_rows {
-        branch_map.insert(r.step_id, r);
+        details_map.insert(r.step_id, StepDetail::Branch(r));
     }
 
     let mut steps_list = Vec::with_capacity(step_rows.len());
@@ -348,9 +347,9 @@ pub async fn fetch_full_automation_json_with_overrides(
         let label = step.label;
         let post_delay_ms = step.post_delay_ms;
 
-        match step.step_type.as_str() {
-            "mouse_click" => {
-                if let Some(r) = mouse_clicks_map.remove(&step_id) {
+        if let Some(detail) = details_map.remove(&step_id) {
+            match detail {
+                StepDetail::MouseClick(r) => {
                     steps_list.push(StepPayload::MouseClick {
                         id: step_id,
                         label,
@@ -364,9 +363,7 @@ pub async fn fetch_full_automation_json_with_overrides(
                         click_type: r.click_type,
                     });
                 }
-            }
-            "key_press" => {
-                if let Some(key_combo) = key_presses_map.remove(&step_id) {
+                StepDetail::KeyPress(key_combo) => {
                     steps_list.push(StepPayload::KeyPress {
                         id: step_id,
                         label,
@@ -374,9 +371,7 @@ pub async fn fetch_full_automation_json_with_overrides(
                         key_combo,
                     });
                 }
-            }
-            "find_pixel_rgb" => {
-                if let Some(r) = find_pixel_map.remove(&step_id) {
+                StepDetail::FindPixel(r) => {
                     steps_list.push(StepPayload::FindPixelRgb {
                         id: step_id,
                         label,
@@ -388,9 +383,7 @@ pub async fn fetch_full_automation_json_with_overrides(
                         retry_interval_ms: 250,
                     });
                 }
-            }
-            "find_bitmap" => {
-                if let Some(r) = find_bitmap_map.remove(&step_id) {
+                StepDetail::FindBitmap(r) => {
                     steps_list.push(StepPayload::FindBitmap {
                         id: step_id,
                         label,
@@ -410,9 +403,7 @@ pub async fn fetch_full_automation_json_with_overrides(
                         retry_interval_ms: 250,
                     });
                 }
-            }
-            "branch" => {
-                if let Some(r) = branch_map.remove(&step_id) {
+                StepDetail::Branch(r) => {
                     let condition = if r.condition_type == "pixel_rgb" {
                         let exp_r = r.expected_r.unwrap_or(0);
                         let exp_g = r.expected_g.unwrap_or(0);
@@ -454,7 +445,6 @@ pub async fn fetch_full_automation_json_with_overrides(
                     });
                 }
             }
-            _ => {}
         }
     }
 
