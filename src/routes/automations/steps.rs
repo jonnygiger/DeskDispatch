@@ -382,12 +382,78 @@ pub fn generate_branch_summary(
     buf
 }
 
+#[derive(sqlx::FromRow)]
+struct RawStepRow {
+    id: i64,
+    step_type: String,
+    label: Option<String>,
+    post_delay_ms: i32,
+    position: f64,
+}
+
+#[derive(sqlx::FromRow)]
+struct KeyPressViewRow {
+    step_id: i64,
+    key_combo: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct MouseClickViewRow {
+    step_id: i64,
+    x: Option<i32>,
+    y: Option<i32>,
+    x_var_name: Option<String>,
+    y_var_name: Option<String>,
+    region_var_name: Option<String>,
+    button: String,
+    click_type: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct FindPixelViewRow {
+    step_id: i64,
+    x: i32,
+    y: i32,
+    var_name: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct FindBitmapViewRow {
+    step_id: i64,
+    reference_bitmap_id: Option<i64>,
+    reference_bitmap_key: Option<String>,
+    bitmap_name: String,
+    var_name: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct BranchViewRow {
+    step_id: i64,
+    condition_type: String,
+    x: Option<i32>,
+    y: Option<i32>,
+    expected_r: Option<i16>,
+    expected_g: Option<i16>,
+    expected_b: Option<i16>,
+    tolerance: Option<i16>,
+    reference_bitmap_id: Option<i64>,
+    reference_bitmap_key: Option<String>,
+    bitmap_name: Option<String>,
+    on_match_step_id: Option<i64>,
+    on_no_match_step_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct StepScreenshotViewRow {
+    step_id: i64,
+    object_storage_key: String,
+}
+
 /// Bulk fetch and format all step view items for an automation.
 /// Optimization: Bulk-loads steps and all step subtype tables concurrently in O(1) database
-/// queries using `tokio::join!`, avoiding N+1 database queries per step on automation views.
-#[allow(clippy::type_complexity)]
+/// queries using `tokio::join!` with strongly-typed `FromRow` structs, eliminating runtime column lookups.
 pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec<StepViewItem> {
-    let raw_steps = match sqlx::query(
+    let raw_steps = match sqlx::query_as::<_, RawStepRow>(
         "SELECT id, step_type, label, post_delay_ms, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
@@ -405,23 +471,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         return Vec::new();
     }
 
-    let mut step_target_map: std::collections::HashMap<i64, String> =
-        std::collections::HashMap::with_capacity(raw_steps.len());
-    for (idx, row) in raw_steps.iter().enumerate() {
-        let step_id: i64 = row.get("id");
-        let step_num = idx + 1;
-        let step_type: String = row.get("step_type");
-        let label: Option<String> = row.get("label");
-
-        let target_str = match label {
-            Some(lbl) if !lbl.trim().is_empty() => format!("Step {} ({})", step_num, lbl.trim()),
-            _ => format!("Step {} ({})", step_num, step_type),
-        };
-        step_target_map.insert(step_id, target_str);
-    }
-
     let (kp_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
-        sqlx::query(
+        sqlx::query_as::<_, KeyPressViewRow>(
             r#"
             SELECT skp.step_id, skp.key_combo
             FROM step_key_presses skp
@@ -432,20 +483,21 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .bind(automation_id)
         .fetch_all(db),
 
-        sqlx::query(
+        sqlx::query_as::<_, MouseClickViewRow>(
             r#"
-            SELECT mc.step_id, mc.x, mc.y, mc.button, mc.click_type, vx.name AS x_var_name, vy.name AS y_var_name
+            SELECT mc.step_id, mc.x, mc.y, mc.button, mc.click_type, vx.name AS x_var_name, vy.name AS y_var_name, vr.name AS region_var_name
             FROM step_mouse_clicks mc
             JOIN automation_steps s ON mc.step_id = s.id
             LEFT JOIN automation_variables vx ON mc.x_variable_id = vx.id
             LEFT JOIN automation_variables vy ON mc.y_variable_id = vy.id
+            LEFT JOIN automation_variables vr ON mc.region_variable_id = vr.id
             WHERE s.automation_id = $1 AND s.deleted_at IS NULL
             "#,
         )
         .bind(automation_id)
         .fetch_all(db),
 
-        sqlx::query(
+        sqlx::query_as::<_, FindPixelViewRow>(
             r#"
             SELECT fp.step_id, fp.x, fp.y, v.name AS var_name
             FROM step_find_pixel_rgb fp
@@ -457,7 +509,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .bind(automation_id)
         .fetch_all(db),
 
-        sqlx::query(
+        sqlx::query_as::<_, FindBitmapViewRow>(
             r#"
             SELECT fb.step_id, fb.reference_bitmap_id, b.name AS bitmap_name, b.object_storage_key AS reference_bitmap_key, v.name AS var_name
             FROM step_find_bitmap fb
@@ -470,7 +522,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .bind(automation_id)
         .fetch_all(db),
 
-        sqlx::query(
+        sqlx::query_as::<_, BranchViewRow>(
             r#"
             SELECT
                 sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
@@ -484,7 +536,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .bind(automation_id)
         .fetch_all(db),
 
-        sqlx::query(
+        sqlx::query_as::<_, StepScreenshotViewRow>(
             r#"
             SELECT ss.step_id, ss.object_storage_key
             FROM step_screenshots ss
@@ -501,184 +553,122 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     let fp_rows = fp_res.unwrap_or_default();
     let fb_rows = fb_res.unwrap_or_default();
     let br_rows = br_res.unwrap_or_default();
+    let ss_rows = ss_res.unwrap_or_default();
 
-    let mut key_presses_map: std::collections::HashMap<i64, String> =
+    let mut key_presses_map: std::collections::HashMap<i64, KeyPressViewRow> =
         std::collections::HashMap::with_capacity(kp_rows.len());
     for r in kp_rows {
-        key_presses_map.insert(r.get("step_id"), r.get("key_combo"));
+        key_presses_map.insert(r.step_id, r);
     }
 
-    let mut mouse_clicks_map: std::collections::HashMap<
-        i64,
-        (
-            Option<i32>,
-            Option<i32>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            String,
-            String,
-        ),
-    > = std::collections::HashMap::with_capacity(mc_rows.len());
+    let mut mouse_clicks_map: std::collections::HashMap<i64, MouseClickViewRow> =
+        std::collections::HashMap::with_capacity(mc_rows.len());
     for r in mc_rows {
-        mouse_clicks_map.insert(
-            r.get("step_id"),
-            (
-                r.get("x"),
-                r.get("y"),
-                r.get("x_var_name"),
-                r.get("y_var_name"),
-                r.get("region_var_name"),
-                r.get("button"),
-                r.get("click_type"),
-            ),
-        );
+        mouse_clicks_map.insert(r.step_id, r);
     }
 
-    let mut find_pixel_map: std::collections::HashMap<i64, (i32, i32, Option<String>)> =
+    let mut find_pixel_map: std::collections::HashMap<i64, FindPixelViewRow> =
         std::collections::HashMap::with_capacity(fp_rows.len());
     for r in fp_rows {
-        find_pixel_map.insert(
-            r.get("step_id"),
-            (r.get("x"), r.get("y"), r.get("var_name")),
-        );
+        find_pixel_map.insert(r.step_id, r);
     }
 
-    let find_bitmap_map: std::collections::HashMap<i64, (Option<i64>, Option<String>, String, Option<String>)> = fb_res
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| (
-            r.get("step_id"),
-            (r.get("reference_bitmap_id"), r.get("reference_bitmap_key"), r.get("bitmap_name"), r.get("var_name"))
-        ))
-        .collect();
+    let mut find_bitmap_map: std::collections::HashMap<i64, FindBitmapViewRow> =
+        std::collections::HashMap::with_capacity(fb_rows.len());
+    for r in fb_rows {
+        find_bitmap_map.insert(r.step_id, r);
+    }
 
-    let mut branch_map: std::collections::HashMap<
-        i64,
-        (
-            String,
-            Option<i32>,
-            Option<i32>,
-            Option<i16>,
-            Option<i16>,
-            Option<i16>,
-            Option<i16>,
-            Option<i64>,
-            Option<String>,
-            Option<String>,
-            Option<i64>,
-            Option<i64>,
-        ),
-    > = std::collections::HashMap::with_capacity(br_rows.len());
+    let mut branch_map: std::collections::HashMap<i64, BranchViewRow> =
+        std::collections::HashMap::with_capacity(br_rows.len());
     for r in br_rows {
-        branch_map.insert(
-            r.get("step_id"),
-            (
-                r.get("step_id"),
-                (
-                    r.get("condition_type"),
-                    r.get("x"),
-                    r.get("y"),
-                    r.get("expected_r"),
-                    r.get("expected_g"),
-                    r.get("expected_b"),
-                    r.get("tolerance"),
-                    r.get("reference_bitmap_id"),
-                    r.get("reference_bitmap_key"),
-                    r.get("bitmap_name"),
-                    r.get("on_match_step_id"),
-                    r.get("on_no_match_step_id"),
-                ),
-            )
-        })
-        .collect();
+        branch_map.insert(r.step_id, r);
+    }
 
-    let step_screenshot_map: std::collections::HashMap<i64, String> = ss_res
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| (r.get("step_id"), r.get("object_storage_key")))
-        .collect();
+    let mut step_screenshot_map: std::collections::HashMap<i64, String> =
+        std::collections::HashMap::with_capacity(ss_rows.len());
+    for r in ss_rows {
+        step_screenshot_map.insert(r.step_id, r.object_storage_key);
+    }
+
+    let step_target_map = if !branch_map.is_empty() {
+        let mut target_map = std::collections::HashMap::with_capacity(raw_steps.len());
+        for (idx, row) in raw_steps.iter().enumerate() {
+            let step_num = idx + 1;
+            let target_str = match &row.label {
+                Some(lbl) if !lbl.trim().is_empty() => {
+                    format!("Step {} ({})", step_num, lbl.trim())
+                }
+                _ => format!("Step {} ({})", step_num, row.step_type),
+            };
+            target_map.insert(row.id, target_str);
+        }
+        target_map
+    } else {
+        std::collections::HashMap::new()
+    };
 
     let mut steps = Vec::with_capacity(raw_steps.len());
     for (idx, row) in raw_steps.into_iter().enumerate() {
-        let step_id: i64 = row.get("id");
-        let step_type: String = row.get("step_type");
-        let label: Option<String> = row.get("label");
-        let post_delay_ms: i32 = row.get("post_delay_ms");
-        let position: f64 = row.get("position");
+        let step_id = row.id;
+        let step_type = row.step_type;
+        let label = row.label;
+        let post_delay_ms = row.post_delay_ms;
+        let position = row.position;
 
         let description = match step_type.as_str() {
             "key_press" => key_presses_map
                 .get(&step_id)
-                .map(|combo| format!("Press {}", combo))
+                .map(|r| format!("Press {}", r.key_combo))
                 .unwrap_or_else(|| "Press key".to_string()),
             "mouse_click" => mouse_clicks_map
                 .get(&step_id)
-                .map(
-                    |(x, y, x_var_name, y_var_name, region_var_name, button, click_type)| {
-                        generate_mouse_click_summary(
-                            *x,
-                            *y,
-                            x_var_name.as_deref(),
-                            y_var_name.as_deref(),
-                            region_var_name.as_deref(),
-                            button,
-                            click_type,
-                        )
-                    },
-                )
+                .map(|r| {
+                    generate_mouse_click_summary(
+                        r.x,
+                        r.y,
+                        r.x_var_name.as_deref(),
+                        r.y_var_name.as_deref(),
+                        r.region_var_name.as_deref(),
+                        &r.button,
+                        &r.click_type,
+                    )
+                })
                 .unwrap_or_else(|| "Click mouse".to_string()),
             "find_pixel_rgb" => find_pixel_map
                 .get(&step_id)
-                .map(|(x, y, var_name)| {
-                    generate_find_pixel_rgb_summary(*x, *y, var_name.as_deref())
-                })
+                .map(|r| generate_find_pixel_rgb_summary(r.x, r.y, r.var_name.as_deref()))
                 .unwrap_or_else(|| "Read pixel at coordinate".to_string()),
             "find_bitmap" => find_bitmap_map
                 .get(&step_id)
-                .map(|(_, _, bitmap_name, var_name)| {
-                    generate_find_bitmap_summary(bitmap_name, var_name.as_deref())
-                })
+                .map(|r| generate_find_bitmap_summary(&r.bitmap_name, r.var_name.as_deref()))
                 .unwrap_or_else(|| "Search for bitmap on screen".to_string()),
             "branch" => branch_map
                 .get(&step_id)
-                .map(
-                    |(
-                        condition_type,
-                        x,
-                        y,
-                        expected_r,
-                        expected_g,
-                        expected_b,
-                        tolerance,
-                        _ref_id,
-                        _ref_key,
-                        bitmap_name,
-                        match_id,
-                        no_match_id,
-                    )| {
-                        let match_target_str = match_id
-                            .and_then(|m_id| step_target_map.get(&m_id))
-                            .map(|s| s.as_str());
+                .map(|r| {
+                    let match_target_str = r
+                        .on_match_step_id
+                        .and_then(|m_id| step_target_map.get(&m_id))
+                        .map(|s| s.as_str());
 
-                        let no_match_target_str = no_match_id
-                            .and_then(|n_id| step_target_map.get(&n_id))
-                            .map(|s| s.as_str());
+                    let no_match_target_str = r
+                        .on_no_match_step_id
+                        .and_then(|n_id| step_target_map.get(&n_id))
+                        .map(|s| s.as_str());
 
-                        generate_branch_summary(
-                            condition_type,
-                            *x,
-                            *y,
-                            *expected_r,
-                            *expected_g,
-                            *expected_b,
-                            *tolerance,
-                            bitmap_name.as_deref(),
-                            match_target_str,
-                            no_match_target_str,
-                        )
-                    },
-                )
+                    generate_branch_summary(
+                        &r.condition_type,
+                        r.x,
+                        r.y,
+                        r.expected_r,
+                        r.expected_g,
+                        r.expected_b,
+                        r.tolerance,
+                        r.bitmap_name.as_deref(),
+                        match_target_str,
+                        no_match_target_str,
+                    )
+                })
                 .unwrap_or_else(|| "BRANCH evaluation".to_string()),
             _ => "Unknown step".to_string(),
         };
@@ -686,11 +676,11 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         let (ref_bitmap_id, ref_bitmap_key) = match step_type.as_str() {
             "find_bitmap" => find_bitmap_map
                 .get(&step_id)
-                .map(|(id, key, _, _)| (*id, key.clone()))
+                .map(|r| (r.reference_bitmap_id, r.reference_bitmap_key.clone()))
                 .unwrap_or((None, None)),
             "branch" => branch_map
                 .get(&step_id)
-                .map(|(_, _, _, _, _, _, _, id, key, _, _, _)| (*id, key.clone()))
+                .map(|r| (r.reference_bitmap_id, r.reference_bitmap_key.clone()))
                 .unwrap_or((None, None)),
             _ => (None, None),
         };
