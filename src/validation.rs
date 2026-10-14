@@ -1,4 +1,4 @@
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 
 /// Result of linting an automation before activation or execution.
@@ -17,6 +17,70 @@ impl std::fmt::Display for AutomationLintError {
             write!(f, "{}", self.message)
         }
     }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct StepRow {
+    id: i64,
+    step_type: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct VarRow {
+    id: i64,
+    name: String,
+    var_type: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ParamRow {
+    name: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct MouseClickRow {
+    step_id: i64,
+    x: Option<i32>,
+    y: Option<i32>,
+    x_variable_id: Option<i64>,
+    y_variable_id: Option<i64>,
+    region_variable_id: Option<i64>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct FindPixelRow {
+    step_id: i64,
+    x: i32,
+    y: i32,
+    output_variable_id: Option<i64>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct FindBitmapRow {
+    step_id: i64,
+    reference_bitmap_id: i64,
+    output_found_variable_id: Option<i64>,
+    output_x_variable_id: Option<i64>,
+    output_y_variable_id: Option<i64>,
+    output_region_variable_id: Option<i64>,
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct BranchRow {
+    step_id: i64,
+    condition_type: String,
+    on_match_step_id: Option<i64>,
+    on_no_match_step_id: Option<i64>,
+    reference_bitmap_id: Option<i64>,
+    x: Option<i32>,
+    y: Option<i32>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct BitmapRow {
+    id: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +213,7 @@ impl VarBitSet {
 
 /// Lints and validates an automation to ensure it is safe and ready for execution.
 ///
-/// Performance-tuned: Uses index-mapped step nodes, direct subtype mapping into vectors,
+/// Performance-tuned: Uses strongly-typed `FromRow` queries, index-mapped step nodes, direct subtype mapping into vectors,
 /// boolean reachability sets, and zero-allocation bitmask operations for variable dataflow analysis.
 pub async fn validate_automation_for_activation(
     db: &PgPool,
@@ -157,24 +221,26 @@ pub async fn validate_automation_for_activation(
 ) -> Result<(), Vec<AutomationLintError>> {
     let mut errors = Vec::new();
 
-    // 1. Concurrently fetch step metadata, variables, parameters, subtype details, and bitmaps.
-    let steps_fut = sqlx::query(
-        "SELECT id, position, step_type, label FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+    // 1. Concurrently fetch step metadata, variables, parameters, subtype details, and bitmaps using strongly typed sqlx::query_as.
+    let steps_fut = sqlx::query_as::<_, StepRow>(
+        "SELECT id, step_type FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(db);
 
-    let vars_fut =
-        sqlx::query("SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1")
-            .bind(automation_id)
-            .fetch_all(db);
+    let vars_fut = sqlx::query_as::<_, VarRow>(
+        "SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1",
+    )
+    .bind(automation_id)
+    .fetch_all(db);
 
-    let params_fut =
-        sqlx::query("SELECT name, param_type FROM automation_parameters WHERE automation_id = $1")
-            .bind(automation_id)
-            .fetch_all(db);
+    let params_fut = sqlx::query_as::<_, ParamRow>(
+        "SELECT name FROM automation_parameters WHERE automation_id = $1",
+    )
+    .bind(automation_id)
+    .fetch_all(db);
 
-    let mc_fut = sqlx::query(
+    let mc_fut = sqlx::query_as::<_, MouseClickRow>(
         r#"
         SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id, smc.region_variable_id
         FROM step_mouse_clicks smc
@@ -185,7 +251,7 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
-    let fp_fut = sqlx::query(
+    let fp_fut = sqlx::query_as::<_, FindPixelRow>(
         r#"
         SELECT sfp.step_id, sfp.x, sfp.y, sfp.output_variable_id
         FROM step_find_pixel_rgb sfp
@@ -196,7 +262,7 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
-    let fb_fut = sqlx::query(
+    let fb_fut = sqlx::query_as::<_, FindBitmapRow>(
         r#"
         SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id, sfb.output_region_variable_id, sfb.search_x, sfb.search_y
         FROM step_find_bitmap sfb
@@ -207,10 +273,9 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
-    let branch_fut = sqlx::query(
+    let branch_fut = sqlx::query_as::<_, BranchRow>(
         r#"
-        SELECT sb.step_id, sb.condition_type, sb.on_match_step_id, sb.on_no_match_step_id,
-               sb.reference_bitmap_id, sb.x, sb.y, sb.search_x, sb.search_y
+        SELECT sb.step_id, sb.condition_type, sb.on_match_step_id, sb.on_no_match_step_id, sb.reference_bitmap_id, sb.x, sb.y
         FROM step_branches sb
         JOIN automation_steps s ON sb.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL
@@ -219,7 +284,7 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
-    let bitmap_fut = sqlx::query("SELECT id FROM bitmaps").fetch_all(db);
+    let bitmap_fut = sqlx::query_as::<_, BitmapRow>("SELECT id FROM bitmaps").fetch_all(db);
 
     let (raw_steps, var_rows, param_rows, mc_rows, fp_rows, fb_rows, branch_rows, bitmap_rows) =
         match tokio::try_join!(
@@ -250,67 +315,62 @@ pub async fn validate_automation_for_activation(
     // Map step_id -> 0-based integer index
     let mut step_id_to_idx: HashMap<i64, usize> = HashMap::with_capacity(n);
     for (idx, row) in raw_steps.iter().enumerate() {
-        let sid: i64 = row.get("id");
-        step_id_to_idx.insert(sid, idx);
+        step_id_to_idx.insert(row.id, idx);
     }
 
     // Direct subtype mapping into contiguous vector by step index
     let mut subtypes = vec![StepSubtype::Other; n];
 
     for r in mc_rows {
-        let sid: i64 = r.get("step_id");
-        if let Some(&idx) = step_id_to_idx.get(&sid) {
+        if let Some(&idx) = step_id_to_idx.get(&r.step_id) {
             subtypes[idx] = StepSubtype::MouseClick(MouseClickMeta {
-                x: r.get("x"),
-                y: r.get("y"),
-                x_var_id: r.get("x_variable_id"),
-                y_var_id: r.get("y_variable_id"),
-                region_var_id: r.get("region_variable_id"),
+                x: r.x,
+                y: r.y,
+                x_var_id: r.x_variable_id,
+                y_var_id: r.y_variable_id,
+                region_var_id: r.region_variable_id,
             });
         }
     }
 
     for r in fp_rows {
-        let sid: i64 = r.get("step_id");
-        if let Some(&idx) = step_id_to_idx.get(&sid) {
+        if let Some(&idx) = step_id_to_idx.get(&r.step_id) {
             subtypes[idx] = StepSubtype::FindPixel(FindPixelMeta {
-                x: r.get("x"),
-                y: r.get("y"),
-                output_var_id: r.get("output_variable_id"),
+                x: r.x,
+                y: r.y,
+                output_var_id: r.output_variable_id,
             });
         }
     }
 
     for r in fb_rows {
-        let sid: i64 = r.get("step_id");
-        if let Some(&idx) = step_id_to_idx.get(&sid) {
+        if let Some(&idx) = step_id_to_idx.get(&r.step_id) {
             subtypes[idx] = StepSubtype::FindBitmap(FindBitmapMeta {
-                reference_bitmap_id: r.get("reference_bitmap_id"),
-                output_found_var_id: r.get("output_found_variable_id"),
-                output_x_var_id: r.get("output_x_variable_id"),
-                output_y_var_id: r.get("output_y_variable_id"),
-                output_region_var_id: r.get("output_region_variable_id"),
-                search_x: r.get("search_x"),
-                search_y: r.get("search_y"),
+                reference_bitmap_id: r.reference_bitmap_id,
+                output_found_var_id: r.output_found_variable_id,
+                output_x_var_id: r.output_x_variable_id,
+                output_y_var_id: r.output_y_variable_id,
+                output_region_var_id: r.output_region_variable_id,
+                search_x: r.search_x,
+                search_y: r.search_y,
             });
         }
     }
 
     for r in branch_rows {
-        let sid: i64 = r.get("step_id");
-        if let Some(&idx) = step_id_to_idx.get(&sid) {
+        if let Some(&idx) = step_id_to_idx.get(&r.step_id) {
             subtypes[idx] = StepSubtype::Branch(BranchMeta {
-                condition_type: r.get("condition_type"),
-                on_match_step_id: r.get("on_match_step_id"),
-                on_no_match_step_id: r.get("on_no_match_step_id"),
-                reference_bitmap_id: r.get("reference_bitmap_id"),
-                x: r.get("x"),
-                y: r.get("y"),
+                condition_type: r.condition_type,
+                on_match_step_id: r.on_match_step_id,
+                on_no_match_step_id: r.on_no_match_step_id,
+                reference_bitmap_id: r.reference_bitmap_id,
+                x: r.x,
+                y: r.y,
             });
         }
     }
 
-    let existing_bitmaps: HashSet<i64> = bitmap_rows.into_iter().map(|r| r.get("id")).collect();
+    let existing_bitmaps: HashSet<i64> = bitmap_rows.into_iter().map(|r| r.id).collect();
 
     // Construct contiguous steps vector
     let steps: Vec<StepNode> = raw_steps
@@ -318,9 +378,9 @@ pub async fn validate_automation_for_activation(
         .zip(subtypes)
         .enumerate()
         .map(|(idx, (row, subtype))| StepNode {
-            id: row.get("id"),
+            id: row.id,
             step_number: idx + 1,
-            step_type: row.get("step_type"),
+            step_type: row.step_type,
             subtype,
         })
         .collect();
@@ -329,19 +389,17 @@ pub async fn validate_automation_for_activation(
     let num_vars = var_rows.len();
     let mut vars_map: HashMap<i64, VarMeta> = HashMap::with_capacity(num_vars);
     for (idx, vr) in var_rows.into_iter().enumerate() {
-        let vid: i64 = vr.get("id");
         vars_map.insert(
-            vid,
+            vr.id,
             VarMeta {
                 index: idx,
-                name: vr.get("name"),
-                var_type: vr.get("var_type"),
+                name: vr.name,
+                var_type: vr.var_type,
             },
         );
     }
 
-    let available_params: HashSet<String> =
-        param_rows.into_iter().map(|pr| pr.get("name")).collect();
+    let available_params: HashSet<String> = param_rows.into_iter().map(|pr| pr.name).collect();
 
     // 2. Validate individual steps for bounds, types, referenced IDs
     for step in &steps {
@@ -808,17 +866,15 @@ fn validate_branch(
     errors: &mut Vec<AutomationLintError>,
 ) {
     match b.on_match_step_id {
-        Some(target_id) => {
-            if !step_id_to_idx.contains_key(&target_id) {
-                errors.push(AutomationLintError {
-                    step_id: Some(sid),
-                    step_number: Some(step_num),
-                    message: format!(
-                        "Branch 'On Match' target step ID {} is invalid or deleted.",
-                        target_id
-                    ),
-                });
-            }
+        Some(target_id) if !step_id_to_idx.contains_key(&target_id) => {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: format!(
+                    "Branch 'On Match' target step ID {} is invalid or deleted.",
+                    target_id
+                ),
+            });
         }
         None => {
             errors.push(AutomationLintError {
@@ -827,20 +883,19 @@ fn validate_branch(
                 message: "Branch step is missing 'On Match' target step.".to_string(),
             });
         }
+        _ => {}
     }
 
     match b.on_no_match_step_id {
-        Some(target_id) => {
-            if !step_id_to_idx.contains_key(&target_id) {
-                errors.push(AutomationLintError {
-                    step_id: Some(sid),
-                    step_number: Some(step_num),
-                    message: format!(
-                        "Branch 'On No Match' target step ID {} is invalid or deleted.",
-                        target_id
-                    ),
-                });
-            }
+        Some(target_id) if !step_id_to_idx.contains_key(&target_id) => {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: format!(
+                    "Branch 'On No Match' target step ID {} is invalid or deleted.",
+                    target_id
+                ),
+            });
         }
         None => {
             errors.push(AutomationLintError {
@@ -849,11 +904,12 @@ fn validate_branch(
                 message: "Branch step is missing 'On No Match' target step.".to_string(),
             });
         }
+        _ => {}
     }
 
     if b.condition_type == "bitmap" {
-        if let Some(bmp_id) = b.reference_bitmap_id {
-            if !existing_bitmaps.contains(&bmp_id) {
+        match b.reference_bitmap_id {
+            Some(bmp_id) if !existing_bitmaps.contains(&bmp_id) => {
                 errors.push(AutomationLintError {
                     step_id: Some(sid),
                     step_number: Some(step_num),
@@ -863,12 +919,14 @@ fn validate_branch(
                     ),
                 });
             }
-        } else {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: "Bitmap branch condition is missing reference bitmap.".to_string(),
-            });
+            None => {
+                errors.push(AutomationLintError {
+                    step_id: Some(sid),
+                    step_number: Some(step_num),
+                    message: "Bitmap branch condition is missing reference bitmap.".to_string(),
+                });
+            }
+            _ => {}
         }
     } else if b.condition_type == "pixel_rgb" {
         check_coord_bounds(
