@@ -25,3 +25,7 @@
 ## 2025-03-10 - [Concurrent step edit detail and dropdown option queries with tokio::join!]
 **Learning:** `get_edit_step_handler` in `src/routes/automations/steps.rs` sequentially queried step subtype details (`step_find_bitmap`, `step_branches`, `step_find_pixel_rgb`, `step_mouse_clicks`) and then fetched dropdown option lists (`fetch_available_bitmaps`, `fetch_automation_variables`, `fetch_automation_step_options`), taking 2 sequential DB round-trips per step edit form load.
 **Action:** Use `tokio::join!` to execute step subtype detail queries concurrently with form dropdown option queries across PgPool connections, halving database wait latency (~50% reduction) on step editing UI endpoints.
+
+## 2025-03-10 - [Concurrent manual run trigger queries with tokio::join!]
+**Learning:** `post_run_now_automation_handler` in `src/routes/automations/detail.rs` sequentially executed 4 database queries (`SELECT status`, `validate_automation_for_activation`, `SELECT COUNT(*)`, and `SELECT automation_parameters`) before queueing a task run.
+**Action:** Use `tokio::join!` to execute the automation status, step count, and parameter definition queries concurrently across PgPool connections, reducing pre-dispatch database wait latency on manual run triggers from 4 sequential round-trips down to 2.
