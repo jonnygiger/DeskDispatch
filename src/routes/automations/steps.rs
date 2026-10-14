@@ -470,13 +470,19 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .fetch_all(db),
     );
 
-    let key_presses_map: std::collections::HashMap<i64, String> = kp_res
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| (r.get("step_id"), r.get("key_combo")))
-        .collect();
+    let kp_rows = kp_res.unwrap_or_default();
+    let mc_rows = mc_res.unwrap_or_default();
+    let fp_rows = fp_res.unwrap_or_default();
+    let fb_rows = fb_res.unwrap_or_default();
+    let br_rows = br_res.unwrap_or_default();
 
-    let mouse_clicks_map: std::collections::HashMap<
+    let mut key_presses_map: std::collections::HashMap<i64, String> =
+        std::collections::HashMap::with_capacity(kp_rows.len());
+    for r in kp_rows {
+        key_presses_map.insert(r.get("step_id"), r.get("key_combo"));
+    }
+
+    let mut mouse_clicks_map: std::collections::HashMap<
         i64,
         (
             Option<i32>,
@@ -487,43 +493,38 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             String,
             String,
         ),
-    > = mc_res
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| {
+    > = std::collections::HashMap::with_capacity(mc_rows.len());
+    for r in mc_rows {
+        mouse_clicks_map.insert(
+            r.get("step_id"),
             (
-                r.get("step_id"),
-                (
-                    r.get("x"),
-                    r.get("y"),
-                    r.get("x_var_name"),
-                    r.get("y_var_name"),
-                    r.get("region_var_name"),
-                    r.get("button"),
-                    r.get("click_type"),
-                ),
-            )
-        })
-        .collect();
+                r.get("x"),
+                r.get("y"),
+                r.get("x_var_name"),
+                r.get("y_var_name"),
+                r.get("region_var_name"),
+                r.get("button"),
+                r.get("click_type"),
+            ),
+        );
+    }
 
-    let find_pixel_map: std::collections::HashMap<i64, (i32, i32, Option<String>)> = fp_res
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| {
-            (
-                r.get("step_id"),
-                (r.get("x"), r.get("y"), r.get("var_name")),
-            )
-        })
-        .collect();
+    let mut find_pixel_map: std::collections::HashMap<i64, (i32, i32, Option<String>)> =
+        std::collections::HashMap::with_capacity(fp_rows.len());
+    for r in fp_rows {
+        find_pixel_map.insert(
+            r.get("step_id"),
+            (r.get("x"), r.get("y"), r.get("var_name")),
+        );
+    }
 
-    let find_bitmap_map: std::collections::HashMap<i64, (String, Option<String>)> = fb_res
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| (r.get("step_id"), (r.get("bitmap_name"), r.get("var_name"))))
-        .collect();
+    let mut find_bitmap_map: std::collections::HashMap<i64, (String, Option<String>)> =
+        std::collections::HashMap::with_capacity(fb_rows.len());
+    for r in fb_rows {
+        find_bitmap_map.insert(r.get("step_id"), (r.get("bitmap_name"), r.get("var_name")));
+    }
 
-    let branch_map: std::collections::HashMap<
+    let mut branch_map: std::collections::HashMap<
         i64,
         (
             String,
@@ -537,27 +538,24 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             Option<i64>,
             Option<i64>,
         ),
-    > = br_res
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| {
+    > = std::collections::HashMap::with_capacity(br_rows.len());
+    for r in br_rows {
+        branch_map.insert(
+            r.get("step_id"),
             (
-                r.get("step_id"),
-                (
-                    r.get("condition_type"),
-                    r.get("x"),
-                    r.get("y"),
-                    r.get("expected_r"),
-                    r.get("expected_g"),
-                    r.get("expected_b"),
-                    r.get("tolerance"),
-                    r.get("bitmap_name"),
-                    r.get("on_match_step_id"),
-                    r.get("on_no_match_step_id"),
-                ),
-            )
-        })
-        .collect();
+                r.get("condition_type"),
+                r.get("x"),
+                r.get("y"),
+                r.get("expected_r"),
+                r.get("expected_g"),
+                r.get("expected_b"),
+                r.get("tolerance"),
+                r.get("bitmap_name"),
+                r.get("on_match_step_id"),
+                r.get("on_no_match_step_id"),
+            ),
+        );
+    }
 
     let step_target_map: std::collections::HashMap<i64, String> = if !branch_map.is_empty() {
         let mut map = std::collections::HashMap::with_capacity(raw_steps.len());
