@@ -988,4 +988,213 @@ mod tests {
         assert!(target.contains(0));
         assert!(target.contains(99));
     }
+
+    #[test]
+    fn test_validation_helper_functions() {
+        // 1. check_coord_bounds
+        let mut errors = Vec::new();
+        check_coord_bounds(Some(5000), "Valid X", 1, 1, &mut errors);
+        assert!(errors.is_empty());
+
+        check_coord_bounds(Some(-1), "Invalid X lower", 1, 1, &mut errors);
+        check_coord_bounds(Some(10001), "Invalid X upper", 1, 1, &mut errors);
+        assert_eq!(errors.len(), 2);
+        assert!(
+            errors[0]
+                .message
+                .contains("Invalid X lower is outside valid bounds")
+        );
+        assert!(
+            errors[1]
+                .message
+                .contains("Invalid X upper is outside valid bounds")
+        );
+
+        // 2. validate_mouse_click and validate_var_ref
+        let mut errors = Vec::new();
+        let mut vars_map = HashMap::new();
+        vars_map.insert(
+            1,
+            VarMeta {
+                index: 0,
+                name: "x_pos".to_string(),
+                var_type: "int".to_string(),
+            },
+        );
+        vars_map.insert(
+            2,
+            VarMeta {
+                index: 1,
+                name: "invalid_type_var".to_string(),
+                var_type: "string".to_string(),
+            },
+        );
+
+        let mc_valid = MouseClickMeta {
+            x: Some(100),
+            y: Some(200),
+            x_var_id: Some(1),
+            y_var_id: None,
+            region_var_id: None,
+        };
+        validate_mouse_click(1, 1, &mc_valid, &vars_map, &mut errors);
+        assert!(errors.is_empty());
+
+        let mc_invalid = MouseClickMeta {
+            x: Some(-50),
+            y: Some(15000),
+            x_var_id: Some(2),  // wrong type (expected int, got string)
+            y_var_id: Some(99), // non-existent variable ID
+            region_var_id: None,
+        };
+        validate_mouse_click(1, 1, &mc_invalid, &vars_map, &mut errors);
+        assert_eq!(errors.len(), 4);
+        assert!(
+            errors[0]
+                .message
+                .contains("X coordinate -50 is outside valid bounds")
+        );
+        assert!(
+            errors[1]
+                .message
+                .contains("Y coordinate 15000 is outside valid bounds")
+        );
+        assert!(
+            errors[2]
+                .message
+                .contains("is of type 'string', expected 'int'")
+        );
+        assert!(
+            errors[3]
+                .message
+                .contains("Referenced Y coordinate variable ID 99 does not exist")
+        );
+
+        // 3. validate_find_pixel
+        let mut errors = Vec::new();
+        let fp_valid = FindPixelMeta {
+            x: 50,
+            y: 50,
+            output_var_id: Some(1), // int is valid
+        };
+        validate_find_pixel(1, 1, &fp_valid, &vars_map, &mut errors);
+        assert!(errors.is_empty());
+
+        let fp_invalid = FindPixelMeta {
+            x: -10,
+            y: 20000,
+            output_var_id: Some(99),
+        };
+        validate_find_pixel(1, 1, &fp_invalid, &vars_map, &mut errors);
+        assert_eq!(errors.len(), 2);
+        assert!(
+            errors[0]
+                .message
+                .contains("Pixel coordinates (-10, 20000) are outside valid bounds")
+        );
+        assert!(
+            errors[1]
+                .message
+                .contains("Output variable ID 99 does not exist")
+        );
+
+        // 4. validate_find_bitmap and validate_output_var
+        let mut errors = Vec::new();
+        let mut bitmaps = HashSet::new();
+        bitmaps.insert(10);
+
+        let fb_valid = FindBitmapMeta {
+            reference_bitmap_id: 10,
+            output_found_var_id: None,
+            output_x_var_id: Some(1),
+            output_y_var_id: None,
+            output_region_var_id: None,
+            search_x: Some(100),
+            search_y: Some(200),
+        };
+        validate_find_bitmap(1, 1, &fb_valid, &vars_map, &bitmaps, &mut errors);
+        assert!(errors.is_empty());
+
+        let fb_invalid = FindBitmapMeta {
+            reference_bitmap_id: 999,     // missing bitmap
+            output_found_var_id: Some(1), // wrong type (expected bool, got int)
+            output_x_var_id: None,
+            output_y_var_id: None,
+            output_region_var_id: None,
+            search_x: Some(-5),
+            search_y: Some(12000),
+        };
+        validate_find_bitmap(1, 1, &fb_invalid, &vars_map, &bitmaps, &mut errors);
+        assert_eq!(errors.len(), 4);
+        assert!(
+            errors[0]
+                .message
+                .contains("References bitmap ID 999 which does not exist")
+        );
+        assert!(
+            errors[1]
+                .message
+                .contains("Search X coordinate -5 is outside valid bounds")
+        );
+        assert!(
+            errors[2]
+                .message
+                .contains("Search Y coordinate 12000 is outside valid bounds")
+        );
+        assert!(
+            errors[3]
+                .message
+                .contains("'Found' output variable 'x_pos' is of type 'int', expected 'bool'")
+        );
+
+        // 5. validate_branch
+        let mut errors = Vec::new();
+        let mut step_id_to_idx = HashMap::new();
+        step_id_to_idx.insert(100, 0);
+        step_id_to_idx.insert(101, 1);
+
+        let branch_valid = BranchMeta {
+            condition_type: "bitmap".to_string(),
+            on_match_step_id: Some(100),
+            on_no_match_step_id: Some(101),
+            reference_bitmap_id: Some(10),
+            x: None,
+            y: None,
+        };
+        validate_branch(1, 1, &branch_valid, &step_id_to_idx, &bitmaps, &mut errors);
+        assert!(errors.is_empty());
+
+        let branch_invalid = BranchMeta {
+            condition_type: "bitmap".to_string(),
+            on_match_step_id: Some(999), // missing target
+            on_no_match_step_id: None,   // missing target
+            reference_bitmap_id: None,   // missing reference bitmap
+            x: None,
+            y: None,
+        };
+        validate_branch(
+            1,
+            1,
+            &branch_invalid,
+            &step_id_to_idx,
+            &bitmaps,
+            &mut errors,
+        );
+        assert_eq!(errors.len(), 3);
+        assert!(
+            errors[0]
+                .message
+                .contains("Branch 'On Match' target step ID 999 is invalid or deleted")
+        );
+        assert!(
+            errors[1]
+                .message
+                .contains("Branch step is missing 'On No Match' target step")
+        );
+        assert!(
+            errors[2]
+                .message
+                .contains("Bitmap branch condition is missing reference bitmap")
+        );
+    }
 }

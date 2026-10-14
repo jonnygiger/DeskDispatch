@@ -74,21 +74,15 @@ where
             }
         };
 
-        #[derive(serde::Deserialize)]
-        struct CsrfExtractor<'a> {
-            #[serde(borrow)]
-            csrf_token: Option<std::borrow::Cow<'a, str>>,
-        }
-
         let header_csrf = parts
             .headers
             .get("X-CSRF-Token")
             .and_then(|h| h.to_str().ok());
 
         let body_csrf = if header_csrf.is_none() {
-            serde_urlencoded::from_bytes::<CsrfExtractor>(&bytes)
-                .ok()
-                .and_then(|ext| ext.csrf_token)
+            url::form_urlencoded::parse(&bytes)
+                .find(|(k, _)| k == "csrf_token")
+                .map(|(_, v)| v)
         } else {
             None
         };
@@ -105,8 +99,9 @@ where
             return Err((StatusCode::FORBIDDEN, "Invalid CSRF token").into_response());
         }
 
-        let value: T = match serde_urlencoded::from_bytes(&bytes) {
-            Ok(v) => v,
+        let req = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
+        let value: T = match axum::Form::<T>::from_request(req, state).await {
+            Ok(axum::Form(v)) => v,
             Err(e) => {
                 tracing::error!("Failed to deserialize CsrfForm payload: {}", e);
                 return Err(
@@ -124,8 +119,8 @@ pub async fn csrf_origin_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Result<Response, StatusCode> {
-    let method = req.method().clone();
-    let path = req.uri().path().to_string();
+    let method = req.method();
+    let path = req.uri().path();
 
     if method == axum::http::Method::GET
         || method == axum::http::Method::HEAD

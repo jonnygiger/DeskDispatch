@@ -22,29 +22,64 @@ pub fn encode_hex(bytes: &[u8]) -> String {
 const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 pub fn encode_base64(bytes: &[u8]) -> String {
-    let mut encoded = String::with_capacity(bytes.len().saturating_add(2) / 3 * 4);
+    let cap = bytes.len().saturating_add(2) / 3 * 4;
+    let mut buf = Vec::with_capacity(cap);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = chunk.get(1).map_or(0, |&b| b as u32);
         let b2 = chunk.get(2).map_or(0, |&b| b as u32);
         let triple = (b0 << 16) | (b1 << 8) | b2;
 
-        encoded.push(BASE64_CHARS[((triple >> 18) & 0x3f) as usize] as char);
-        encoded.push(BASE64_CHARS[((triple >> 12) & 0x3f) as usize] as char);
+        buf.push(BASE64_CHARS[((triple >> 18) & 0x3f) as usize]);
+        buf.push(BASE64_CHARS[((triple >> 12) & 0x3f) as usize]);
 
         if chunk.len() > 1 {
-            encoded.push(BASE64_CHARS[((triple >> 6) & 0x3f) as usize] as char);
+            buf.push(BASE64_CHARS[((triple >> 6) & 0x3f) as usize]);
         } else {
-            encoded.push('=');
+            buf.push(b'=');
         }
 
         if chunk.len() > 2 {
-            encoded.push(BASE64_CHARS[(triple & 0x3f) as usize] as char);
+            buf.push(BASE64_CHARS[(triple & 0x3f) as usize]);
         } else {
-            encoded.push('=');
+            buf.push(b'=');
         }
     }
-    encoded
+    String::from_utf8(buf).unwrap_or_default()
+}
+
+#[derive(serde::Serialize)]
+struct PolicyDocument<'a> {
+    expiration: &'a str,
+    conditions: Vec<PolicyCondition<'a>>,
+}
+
+enum PolicyCondition<'a> {
+    Eq(&'static str, &'a str),
+    ContentLengthRange(u64, u64),
+    StartingWith(&'static str, &'static str),
+}
+
+impl serde::Serialize for PolicyCondition<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            PolicyCondition::Eq(key, val) => {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry(key, val)?;
+                map.end()
+            }
+            PolicyCondition::ContentLengthRange(min, max) => {
+                ("content-length-range", *min, *max).serialize(serializer)
+            }
+            PolicyCondition::StartingWith(field, prefix) => {
+                ("starting-with", *field, *prefix).serialize(serializer)
+            }
+        }
+    }
 }
 
 pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
@@ -377,31 +412,30 @@ pub fn generate_presigned_post_policy(
     let credential_scope = format!("{}/{}/s3/aws4_request", date_str, region);
     let credential = format!("{}/{}", access_key, credential_scope);
 
-    let mut conditions = vec![
-        serde_json::json!({ "bucket": bucket }),
-        serde_json::json!({ "key": object_key }),
-        serde_json::json!({ "x-amz-algorithm": "AWS4-HMAC-SHA256" }),
-        serde_json::json!({ "x-amz-credential": credential }),
-        serde_json::json!({ "x-amz-date": amz_date }),
-        serde_json::json!(["content-length-range", 0, max_content_length]),
-    ];
+    let mut conditions = Vec::with_capacity(7);
+    conditions.push(PolicyCondition::Eq("bucket", bucket));
+    conditions.push(PolicyCondition::Eq("key", object_key));
+    conditions.push(PolicyCondition::Eq("x-amz-algorithm", "AWS4-HMAC-SHA256"));
+    conditions.push(PolicyCondition::Eq("x-amz-credential", &credential));
+    conditions.push(PolicyCondition::Eq("x-amz-date", &amz_date));
+    conditions.push(PolicyCondition::ContentLengthRange(0, max_content_length));
 
     if let Some(redirect) = success_action_redirect {
-        conditions.push(serde_json::json!({ "success_action_redirect": redirect }));
+        conditions.push(PolicyCondition::Eq("success_action_redirect", redirect));
     } else {
-        conditions.push(serde_json::json!([
-            "starting-with",
+        conditions.push(PolicyCondition::StartingWith(
             "$success_action_redirect",
-            ""
-        ]));
+            "",
+        ));
     }
 
-    let policy_json = serde_json::json!({
-        "expiration": expiration_iso,
-        "conditions": conditions,
-    });
+    let policy_doc = PolicyDocument {
+        expiration: &expiration_iso,
+        conditions,
+    };
 
-    let policy_str = policy_json.to_string();
+    let policy_str = serde_json::to_string(&policy_doc)
+        .map_err(|e| StorageError::PostPolicy(format!("Failed to serialize policy JSON: {}", e)))?;
 
     let policy_base64 = encode_base64(policy_str.as_bytes());
 
@@ -415,15 +449,14 @@ pub fn generate_presigned_post_policy(
     let signature_bytes = hmac_sha256(&k_signing, policy_base64.as_bytes());
     let signature_hex = encode_hex(&signature_bytes);
 
-    let mut ordered_fields = vec![
-        ("key".to_string(), object_key.to_string()),
-        (
-            "x-amz-algorithm".to_string(),
-            "AWS4-HMAC-SHA256".to_string(),
-        ),
-        ("x-amz-credential".to_string(), credential),
-        ("x-amz-date".to_string(), amz_date),
-    ];
+    let mut ordered_fields = Vec::with_capacity(7);
+    ordered_fields.push(("key".to_string(), object_key.to_string()));
+    ordered_fields.push((
+        "x-amz-algorithm".to_string(),
+        "AWS4-HMAC-SHA256".to_string(),
+    ));
+    ordered_fields.push(("x-amz-credential".to_string(), credential));
+    ordered_fields.push(("x-amz-date".to_string(), amz_date));
     if let Some(redirect) = success_action_redirect {
         ordered_fields.push(("success_action_redirect".to_string(), redirect.to_string()));
     }
