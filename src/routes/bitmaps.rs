@@ -1585,27 +1585,51 @@ mod tests {
 
     #[test]
     fn test_form_deserialization_click_coords() {
-        // Step 1: Top-Left click form deserialization (click.x=300&click.y=170)
-        let body_tl = "csrf_token=test_token&image_url=/static/sample_screenshot.png&width=1920&height=1080&click.x=300&click.y=170";
-        let form_tl: PickRegionTopLeftForm =
-            serde_urlencoded::from_str(body_tl).expect("Should deserialize PickRegionTopLeftForm");
+        let json_tl = serde_json::json!({
+            "csrf_token": "test_token",
+            "image_url": "/static/sample_screenshot.png",
+            "width": 1920,
+            "height": 1080,
+            "click.x": "300",
+            "click.y": "170"
+        });
 
+        let form_tl: PickRegionTopLeftForm =
+            serde_json::from_value(json_tl).expect("Should deserialize top left form");
         assert_eq!(form_tl.x, Some(300));
         assert_eq!(form_tl.y, Some(170));
 
         // Step 2: Bottom-Right grid click form deserialization (grid_click.x=160&grid_click.y=180)
-        let body_br_grid = "csrf_token=test_token&image_url=/static/sample_screenshot.png&width=1920&height=1080&top_left_x=100&top_left_y=200&grid_click.x=160&grid_click.y=180";
-        let form_br_grid: PickRegionBottomRightForm = serde_urlencoded::from_str(body_br_grid)
-            .expect("Should deserialize PickRegionBottomRightForm grid click");
+        let json_br_grid = serde_json::json!({
+            "csrf_token": "test_token",
+            "image_url": "/static/sample_screenshot.png",
+            "width": 1920,
+            "height": 1080,
+            "top_left_x": 100,
+            "top_left_y": 200,
+            "grid_click.x": "160",
+            "grid_click.y": "180"
+        });
 
+        let form_br_grid: PickRegionBottomRightForm = serde_json::from_value(json_br_grid)
+            .expect("Should deserialize bottom right grid form");
         assert_eq!(form_br_grid.grid_x, Some(160));
         assert_eq!(form_br_grid.grid_y, Some(180));
 
         // Step 2: Bottom-Right coarse click form deserialization (coarse_click.x=400&coarse_click.y=250)
-        let body_br_coarse = "csrf_token=test_token&image_url=/static/sample_screenshot.png&width=1920&height=1080&top_left_x=100&top_left_y=200&coarse_click.x=400&coarse_click.y=250";
-        let form_br_coarse: PickRegionBottomRightForm = serde_urlencoded::from_str(body_br_coarse)
-            .expect("Should deserialize PickRegionBottomRightForm coarse click");
+        let json_br_coarse = serde_json::json!({
+            "csrf_token": "test_token",
+            "image_url": "/static/sample_screenshot.png",
+            "width": 1920,
+            "height": 1080,
+            "top_left_x": 100,
+            "top_left_y": 200,
+            "coarse_click.x": "400",
+            "coarse_click.y": "250"
+        });
 
+        let form_br_coarse: PickRegionBottomRightForm = serde_json::from_value(json_br_coarse)
+            .expect("Should deserialize bottom right coarse form");
         assert_eq!(form_br_coarse.coarse_x, Some(400));
         assert_eq!(form_br_coarse.coarse_y, Some(250));
     }
