@@ -23,3 +23,7 @@ Action: Write pure unit tests asserting exact boolean outputs across double-digi
 ## 2025-03-15 Deserialization Option Number Boundary and Error Edge Cases Coverage
 Learning: `deserialize_option_number` converts empty or whitespace-only strings to `None` for optional form fields, but handles string trimming before numeric parsing. Key edge cases include whitespace-padded numeric strings in urlencoded forms or JSON (e.g. `" 123 "`, `"\t42\n"`), invalid non-numeric or float-to-integer string payloads (`"not_a_number"`, `"12.34"` into `i64`), and numeric overflow strings (e.g. `"99999999999"` into `i16`).
 Action: Test both successful whitespace trimming and deserialization error failures (non-numeric, type mismatch, overflow) directly across `serde_urlencoded` and `serde_json` in `src/de.rs`.
+
+## 2025-03-16 Automation Validation Helper Functions Unit Test Coverage
+Learning: Internal validation helper routines (`check_coord_bounds`, `validate_mouse_click`, `validate_var_ref`, `validate_find_pixel`, `validate_find_bitmap`, `validate_output_var`, `validate_branch`) contain boundary condition checks (0..10,000 range), variable type compatibility validation, and optional target/bitmap existence rules that can be tested in isolation using lightweight in-memory data structures.
+Action: Test validation helper functions directly with boundary coordinates (-1, 0, 10000, 10001), missing vs present variable/bitmap IDs, and type mismatch inputs in unit tests within `src/validation.rs`.
