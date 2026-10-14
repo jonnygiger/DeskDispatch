@@ -289,8 +289,10 @@ pub async fn fetch_full_automation_json_with_overrides(
                 .map(serde_json::Value::from)
                 .unwrap_or(serde_json::Value::String(pval_str)),
             "bool" => {
-                let lower = pval_str.to_lowercase();
-                serde_json::Value::Bool(matches!(lower.as_str(), "true" | "1" | "yes"))
+                let is_true = pval_str.eq_ignore_ascii_case("true")
+                    || pval_str == "1"
+                    || pval_str.eq_ignore_ascii_case("yes");
+                serde_json::Value::Bool(is_true)
             }
             _ => serde_json::Value::String(pval_str),
         };
@@ -1372,20 +1374,18 @@ pub fn is_agent_version_outdated(agent_version: Option<&str>, min_version: Optio
         _ => return true,
     };
 
-    let parse_version = |v: &str| -> Vec<u64> {
-        v.split('.')
-            .map(|part| {
-                part.bytes()
-                    .take_while(|b| b.is_ascii_digit())
-                    .fold(0u64, |acc, b| acc * 10 + (b - b'0') as u64)
-            })
-            .collect()
-    };
+    let agent_it = agent_ver.split('.').map(|part| {
+        part.bytes()
+            .take_while(|b| b.is_ascii_digit())
+            .fold(0u64, |acc, b| acc * 10 + (b - b'0') as u64)
+    });
+    let min_it = min_ver.split('.').map(|part| {
+        part.bytes()
+            .take_while(|b| b.is_ascii_digit())
+            .fold(0u64, |acc, b| acc * 10 + (b - b'0') as u64)
+    });
 
-    let agent_parts = parse_version(agent_ver);
-    let min_parts = parse_version(min_ver);
-
-    agent_parts < min_parts
+    agent_it.cmp(min_it).is_lt()
 }
 
 #[tracing::instrument(skip(worker, state, payload))]
