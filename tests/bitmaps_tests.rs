@@ -223,7 +223,7 @@ async fn test_bitmap_upload_flow() {
         )
         .route(
             "/bitmaps/commit",
-            axum::routing::get(get_bitmap_commit_handler).post(post_bitmap_commit_handler),
+            axum::routing::get(get_bitmap_commit_handler).post(bitmaps::post_bitmap_commit_handler),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

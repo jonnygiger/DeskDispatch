@@ -28,6 +28,7 @@ fn test_worker_status_badges() {
         agent_version: Some("1.0.0".to_string()),
         created_at: Utc::now(),
         groups: vec!["Group A".to_string()],
+        latest_screenshot_step_id: None,
     };
     assert_eq!(item.status_badge_class(), "badge-success");
 
@@ -75,6 +76,7 @@ fn test_worker_templates_rendering() {
         agent_version: Some("v2.1.0".to_string()),
         created_at: Utc::now(),
         groups: vec!["Warehouse Fleet".to_string()],
+        latest_screenshot_step_id: None,
     };
 
     let group_item = WorkerGroupItem {
@@ -117,6 +119,7 @@ fn test_worker_templates_rendering() {
             description: "PCs located on warehouse floor".to_string(),
         }],
         registration_token: None,
+        latest_screenshot_step_id: None,
     };
 
     let detail_tmpl = WorkerDetailTemplate {

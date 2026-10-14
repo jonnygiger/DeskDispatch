@@ -499,7 +499,9 @@ impl SimulatedWorker {
             if (step_type == "find_bitmap" || step_type == "branch") && random_bool(0.2) {
                 let auto_id = automation.get("id").and_then(|i| i.as_i64());
                 let bitmap_name = format!("sim_ref_{}_step_{}", self.config.worker_index, step_id);
-                let _ = self.upload_reference_bitmap(auto_id, &bitmap_name, api_key).await;
+                let _ = self
+                    .upload_reference_bitmap(auto_id, &bitmap_name, api_key)
+                    .await;
             }
 
             // Rich variable updates covering region, color, coordinate, and status variable types
@@ -518,10 +520,16 @@ impl SimulatedWorker {
                         "status": result_str
                     }),
                 };
-                var_updates.push(VariableUpdateItem { variable_id: var_id, value: var_val });
+                var_updates.push(VariableUpdateItem {
+                    variable_id: var_id,
+                    value: var_val,
+                });
             }
 
-            if let Some(var_id) = step.get("output_found_variable_id").and_then(|v| v.as_i64()) {
+            if let Some(var_id) = step
+                .get("output_found_variable_id")
+                .and_then(|v| v.as_i64())
+            {
                 var_updates.push(VariableUpdateItem {
                     variable_id: var_id,
                     value: serde_json::json!(found.unwrap_or(true)),
@@ -542,7 +550,10 @@ impl SimulatedWorker {
                 });
             }
 
-            if let Some(var_id) = step.get("output_region_variable_id").and_then(|v| v.as_i64()) {
+            if let Some(var_id) = step
+                .get("output_region_variable_id")
+                .and_then(|v| v.as_i64())
+            {
                 let x = captured_x.unwrap_or(400);
                 let y = captured_y.unwrap_or(300);
                 var_updates.push(VariableUpdateItem {
@@ -656,7 +667,10 @@ impl SimulatedWorker {
 
         match res {
             Ok(resp) if resp.status().is_success() => Ok(()),
-            Ok(resp) if resp.status() == StatusCode::FORBIDDEN || resp.status() == StatusCode::BAD_REQUEST => {
+            Ok(resp)
+                if resp.status() == StatusCode::FORBIDDEN
+                    || resp.status() == StatusCode::BAD_REQUEST =>
+            {
                 let retry_res = self
                     .client
                     .put(upload_url)
@@ -674,7 +688,10 @@ impl SimulatedWorker {
                     ))
                 }
             }
-            Ok(resp) => Err(format!("PUT image upload returned status {}", resp.status())),
+            Ok(resp) => Err(format!(
+                "PUT image upload returned status {}",
+                resp.status()
+            )),
             Err(e) => Err(format!("Failed to PUT image: {}", e)),
         }
     }
@@ -715,10 +732,7 @@ impl SimulatedWorker {
         self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
             .await?;
 
-        let commit_url = format!(
-            "{}/api/v1/workers/bitmaps/commit",
-            self.config.server_url
-        );
+        let commit_url = format!("{}/api/v1/workers/bitmaps/commit", self.config.server_url);
 
         let commit_req = CommitBitmapRequest {
             automation_id,

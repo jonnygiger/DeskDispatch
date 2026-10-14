@@ -1114,17 +1114,26 @@ mod tests {
 
     #[test]
     fn test_runs_filter_query_empty_string_deserialization() {
-        let query_str = "automation_id=&worker_id=&status=&before_id=";
-        let filter: RunsFilterQuery = serde_urlencoded::from_str(query_str)
-            .expect("Failed to deserialize empty query params in RunsFilterQuery");
+        let uri = format!("/runs?{}", "automation_id=&worker_id=&status=&before_id=")
+            .parse::<axum::http::Uri>()
+            .expect("Failed to parse URI");
+        let filter = Query::<RunsFilterQuery>::try_from_uri(&uri)
+            .expect("Failed to deserialize empty query params in RunsFilterQuery")
+            .0;
         assert_eq!(filter.automation_id, None);
         assert_eq!(filter.worker_id, None);
         assert_eq!(filter.before_id, None);
         assert_eq!(filter.status.as_deref(), Some(""));
 
-        let query_str_valid = "automation_id=10&worker_id=5&status=succeeded&before_id=100";
-        let filter_valid: RunsFilterQuery = serde_urlencoded::from_str(query_str_valid)
-            .expect("Failed to deserialize valid query params in RunsFilterQuery");
+        let uri_valid = format!(
+            "/runs?{}",
+            "automation_id=10&worker_id=5&status=succeeded&before_id=100"
+        )
+        .parse::<axum::http::Uri>()
+        .expect("Failed to parse URI");
+        let filter_valid = Query::<RunsFilterQuery>::try_from_uri(&uri_valid)
+            .expect("Failed to deserialize valid query params in RunsFilterQuery")
+            .0;
         assert_eq!(filter_valid.automation_id, Some(10));
         assert_eq!(filter_valid.worker_id, Some(5));
         assert_eq!(filter_valid.before_id, Some(100));
