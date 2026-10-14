@@ -115,27 +115,27 @@ impl VarBitSet {
         }
     }
 
+    #[inline]
     fn copy_from(&mut self, other: &Self) {
         self.words.copy_from_slice(&other.words);
     }
 
+    #[inline]
     fn set(&mut self, idx: usize) {
-        let w_idx = idx / 64;
-        let b_idx = idx % 64;
-        if let Some(w) = self.words.get_mut(w_idx) {
-            *w |= 1u64 << b_idx;
+        if let Some(w) = self.words.get_mut(idx / 64) {
+            *w |= 1u64 << (idx % 64);
         }
     }
 
+    #[inline]
     fn contains(&self, idx: usize) -> bool {
-        let w_idx = idx / 64;
-        let b_idx = idx % 64;
         self.words
-            .get(w_idx)
-            .is_some_and(|w| (w & (1u64 << b_idx)) != 0)
+            .get(idx / 64)
+            .is_some_and(|&w| (w & (1u64 << (idx % 64))) != 0)
     }
 
     /// Intersects `self` in-place with `(pred_inits | pred_writes)` for predecessor node `p`.
+    #[inline]
     fn intersect_with_pred_output(&mut self, pred_inits: &Self, pred_writes: &Self) {
         for (w, (&a, &b)) in self
             .words
@@ -570,7 +570,7 @@ pub async fn validate_automation_for_activation(
 
 fn check_coord_bounds(
     val: Option<i32>,
-    prefix: &str,
+    label: &str,
     sid: i64,
     step_num: usize,
     errors: &mut Vec<AutomationLintError>,
@@ -581,7 +581,7 @@ fn check_coord_bounds(
         errors.push(AutomationLintError {
             step_id: Some(sid),
             step_number: Some(step_num),
-            message: format!("{} is outside valid bounds.", prefix),
+            message: format!("{} {} is outside valid bounds.", label, v),
         });
     }
 }
@@ -662,24 +662,25 @@ fn validate_var_ref(
     vars_map: &HashMap<i64, VarMeta>,
     errors: &mut Vec<AutomationLintError>,
 ) {
-    if let Some(v) = vars_map.get(&var_id) {
-        if v.var_type != expected_type {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: format!(
-                    "Variable '{}' used for {} is of type '{}', expected '{}'.",
-                    v.name, usage_label, v.var_type, expected_type
-                ),
-            });
-        }
-    } else {
+    let Some(v) = vars_map.get(&var_id) else {
         errors.push(AutomationLintError {
             step_id: Some(sid),
             step_number: Some(step_num),
             message: format!(
                 "Referenced {} variable ID {} does not exist.",
                 usage_label, var_id
+            ),
+        });
+        return;
+    };
+
+    if v.var_type != expected_type {
+        errors.push(AutomationLintError {
+            step_id: Some(sid),
+            step_number: Some(step_num),
+            message: format!(
+                "Variable '{}' used for {} is of type '{}', expected '{}'.",
+                v.name, usage_label, v.var_type, expected_type
             ),
         });
     }
@@ -703,28 +704,31 @@ fn validate_find_pixel(
         });
     }
 
-    if let Some(out_vid) = fp.output_var_id {
-        if let Some(v) = vars_map.get(&out_vid) {
-            if !matches!(
-                v.var_type.as_str(),
-                "color" | "point" | "string" | "int" | "region"
-            ) {
-                errors.push(AutomationLintError {
-                    step_id: Some(sid),
-                    step_number: Some(step_num),
-                    message: format!(
-                        "Output variable '{}' for pixel RGB is of type '{}', expected 'color' or 'string'.",
-                        v.name, v.var_type
-                    ),
-                });
-            }
-        } else {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: format!("Output variable ID {} does not exist.", out_vid),
-            });
-        }
+    let Some(out_vid) = fp.output_var_id else {
+        return;
+    };
+
+    let Some(v) = vars_map.get(&out_vid) else {
+        errors.push(AutomationLintError {
+            step_id: Some(sid),
+            step_number: Some(step_num),
+            message: format!("Output variable ID {} does not exist.", out_vid),
+        });
+        return;
+    };
+
+    if !matches!(
+        v.var_type.as_str(),
+        "color" | "point" | "string" | "int" | "region"
+    ) {
+        errors.push(AutomationLintError {
+            step_id: Some(sid),
+            step_number: Some(step_num),
+            message: format!(
+                "Output variable '{}' for pixel RGB is of type '{}', expected 'color' or 'string'.",
+                v.name, v.var_type
+            ),
+        });
     }
 }
 
@@ -747,20 +751,8 @@ fn validate_find_bitmap(
         });
     }
 
-    check_coord_bounds(
-        fb.search_x,
-        &format!("Search X coordinate {}", fb.search_x.unwrap_or(0)),
-        sid,
-        step_num,
-        errors,
-    );
-    check_coord_bounds(
-        fb.search_y,
-        &format!("Search Y coordinate {}", fb.search_y.unwrap_or(0)),
-        sid,
-        step_num,
-        errors,
-    );
+    check_coord_bounds(fb.search_x, "Search X coordinate", sid, step_num, errors);
+    check_coord_bounds(fb.search_y, "Search Y coordinate", sid, step_num, errors);
 
     if let Some(f_vid) = fb.output_found_var_id {
         validate_output_var(sid, step_num, f_vid, "'Found'", "bool", vars_map, errors);
@@ -881,14 +873,14 @@ fn validate_branch(
     } else if b.condition_type == "pixel_rgb" {
         check_coord_bounds(
             b.x,
-            &format!("Pixel branch condition X coordinate {}", b.x.unwrap_or(0)),
+            "Pixel branch condition X coordinate",
             sid,
             step_num,
             errors,
         );
         check_coord_bounds(
             b.y,
-            &format!("Pixel branch condition Y coordinate {}", b.y.unwrap_or(0)),
+            "Pixel branch condition Y coordinate",
             sid,
             step_num,
             errors,
@@ -1002,12 +994,12 @@ mod tests {
         assert!(
             errors[0]
                 .message
-                .contains("Invalid X lower is outside valid bounds")
+                .contains("Invalid X lower -1 is outside valid bounds")
         );
         assert!(
             errors[1]
                 .message
-                .contains("Invalid X upper is outside valid bounds")
+                .contains("Invalid X upper 10001 is outside valid bounds")
         );
 
         // 2. validate_mouse_click and validate_var_ref
