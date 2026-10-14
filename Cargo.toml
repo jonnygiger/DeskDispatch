@@ -40,8 +40,8 @@ uuid = { version = "1.28", features = ["v4", "serde"] }
 image = "0.25"
 url = "2.5"
 zip = "2.2"
-reqwest = { version = "0.12", features = ["cookies", "multipart"] }
-utoipa = { version = "5.5", features = ["axum_extras", "chrono"] }
 
 [dev-dependencies]
 proptest = "1.11"
+reqwest = { version = "0.12", features = ["cookies", "multipart"] }
+utoipa = { version = "5.5", features = ["axum_extras", "chrono"] }

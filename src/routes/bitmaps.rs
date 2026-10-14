@@ -818,17 +818,17 @@ pub async fn post_automation_delete_bitmap_handler(
 }
 
 /// Sanitizes and validates image URLs used in region pick handlers to prevent CSS injection and open redirects.
-pub fn sanitize_image_url(raw_url: Option<String>) -> String {
+pub fn sanitize_image_url(raw_url: Option<&str>) -> &str {
     const DEFAULT_URL: &str = "/static/sample_screenshot.png";
-    let url = match raw_url.as_deref().map(str::trim) {
+    let url = match raw_url.map(str::trim) {
         Some(u) if !u.is_empty() => u,
-        _ => return DEFAULT_URL.to_string(),
+        _ => return DEFAULT_URL,
     };
 
     if url.bytes().any(|b| {
         b.is_ascii_control() || matches!(b, b'\'' | b'"' | b'\\' | b'<' | b'>' | b';' | b'{' | b'}')
     }) {
-        return DEFAULT_URL.to_string();
+        return DEFAULT_URL;
     }
 
     if url.starts_with("/static/")
@@ -836,9 +836,9 @@ pub fn sanitize_image_url(raw_url: Option<String>) -> String {
         || url.starts_with("http://")
         || url.starts_with("https://")
     {
-        url.to_string()
+        url
     } else {
-        DEFAULT_URL.to_string()
+        DEFAULT_URL
     }
 }
 
@@ -850,7 +850,7 @@ pub async fn get_pick_region_handler(
     Query(query): Query<PickRegionQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
-    let image_url = sanitize_image_url(query.image_url);
+    let image_url = sanitize_image_url(query.image_url.as_deref()).to_string();
     let width = query.width.unwrap_or(1920);
     let height = query.height.unwrap_or(1080);
 
@@ -898,7 +898,7 @@ pub async fn post_pick_region_top_left_handler(
     user: AuthUser,
     CsrfForm(form): CsrfForm<PickRegionTopLeftForm>,
 ) -> Response {
-    let image_url = sanitize_image_url(Some(form.image_url.clone()));
+    let image_url = sanitize_image_url(Some(&form.image_url)).to_string();
 
     let (click_x, click_y, has_click) = match (form.x, form.y) {
         (Some(cx), Some(cy)) => (cx, cy, true),
@@ -1007,7 +1007,7 @@ pub async fn post_pick_region_bottom_right_handler(
     user: AuthUser,
     CsrfForm(form): CsrfForm<PickRegionBottomRightForm>,
 ) -> Response {
-    let image_url = sanitize_image_url(Some(form.image_url.clone()));
+    let image_url = sanitize_image_url(Some(&form.image_url)).to_string();
 
     let (raw_br_x, raw_br_y, is_valid_selection) = match (form.manual_x, form.manual_y) {
         (Some(mx), Some(my)) => (
@@ -1188,11 +1188,22 @@ async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<V
         }
     }
 
-    if image_url.starts_with("http://") || image_url.starts_with("https://") {
-        if let Ok(res) = reqwest::get(image_url).await {
-            if let Ok(data) = res.bytes().await {
-                return Some(data.to_vec());
-            }
+    // Direct S3 object lookup from presigned or public S3 URLs
+    let bucket_prefix = format!("/{}/", state.config.s3_bucket);
+    let s3_key = if let Some(key) = path.strip_prefix(&bucket_prefix) {
+        Some(key)
+    } else if path.starts_with('/') && !path.starts_with("/static/") && !path.starts_with("/media/")
+    {
+        path.strip_prefix('/')
+    } else {
+        None
+    };
+
+    if let Some(key) = s3_key
+        && !key.is_empty()
+    {
+        if let Ok(data) = state.storage_service().get_object(key).await {
+            return Some(data);
         }
     }
 
@@ -1243,7 +1254,7 @@ pub async fn confirm_region_crop_logic(
     user: &AuthUser,
     mut form: PickRegionConfirmForm,
 ) -> Response {
-    form.image_url = sanitize_image_url(Some(form.image_url));
+    form.image_url = sanitize_image_url(Some(&form.image_url)).to_string();
     if form.csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
@@ -1485,20 +1496,20 @@ mod tests {
     #[test]
     fn test_sanitize_image_url() {
         assert_eq!(
-            sanitize_image_url(Some("/static/test.png".to_string())),
+            sanitize_image_url(Some("/static/test.png")),
             "/static/test.png"
         );
         assert_eq!(
-            sanitize_image_url(Some("/media/screenshots/12".to_string())),
+            sanitize_image_url(Some("/media/screenshots/12")),
             "/media/screenshots/12"
         );
         // Malicious injection attempts fall back to default
         assert_eq!(
-            sanitize_image_url(Some("javascript:alert(1)".to_string())),
+            sanitize_image_url(Some("javascript:alert(1)")),
             "/static/sample_screenshot.png"
         );
         assert_eq!(
-            sanitize_image_url(Some("/static/test.png'; body { color: red }".to_string())),
+            sanitize_image_url(Some("/static/test.png'; body { color: red }")),
             "/static/sample_screenshot.png"
         );
     }
