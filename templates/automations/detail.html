@@ -166,12 +166,12 @@
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/move-up" style="display: inline;">
                     {% call macros::csrf_field(csrf_token) %}{% endcall %}
-                    <button type="submit" class="btn btn-sm btn-outline" title="Move step {{ step.step_number }} up" aria-label="Move step {{ step.step_number }} up">↑</button>
+                    <button type="submit" class="btn btn-sm btn-outline" title="{% if loop.first %}Step is already at the top{% else %}Move step {{ step.step_number }} up{% endif %}" aria-label="Move step {{ step.step_number }} up"{% if loop.first %} disabled{% endif %}>↑</button>
                 </form>
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/move-down" style="display: inline;">
                     {% call macros::csrf_field(csrf_token) %}{% endcall %}
-                    <button type="submit" class="btn btn-sm btn-outline" title="Move step {{ step.step_number }} down" aria-label="Move step {{ step.step_number }} down">↓</button>
+                    <button type="submit" class="btn btn-sm btn-outline" title="{% if loop.last %}Step is already at the bottom{% else %}Move step {{ step.step_number }} down{% endif %}" aria-label="Move step {{ step.step_number }} down"{% if loop.last %} disabled{% endif %}>↓</button>
                 </form>
 
                 <form method="post" action="/automations/{{ automation.id }}/steps/{{ step.id }}/delete" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete step {{ step.step_number }}?');">
