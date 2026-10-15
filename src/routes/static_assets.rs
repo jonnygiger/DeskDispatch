@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::Path,
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::get,
 };
@@ -17,7 +17,27 @@ pub fn router() -> Router<AppState> {
 #[folder = "static/"]
 pub struct Assets;
 
-fn get_mime_type(path: &str) -> &'static str {
+const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+
+/// Zero-allocation helper to format a 256-bit SHA-256 hash array into a quoted ETag ASCII byte buffer
+/// `[0x22, hex_0, hex_1, ..., hex_63, 0x22]` and a pre-constructed `HeaderValue`.
+#[inline]
+fn format_etag(hash: &[u8; 32]) -> ([u8; 66], HeaderValue) {
+    let mut buf = [0u8; 66];
+    buf[0] = b'"';
+    for (i, &b) in hash.iter().enumerate() {
+        buf[1 + i * 2] = HEX_CHARS[(b >> 4) as usize];
+        buf[2 + i * 2] = HEX_CHARS[(b & 0x0f) as usize];
+    }
+    buf[65] = b'"';
+    // Safety: buf contains only ASCII '"' and lowercase hex digits
+    let header_val = HeaderValue::from_bytes(&buf).expect("valid ASCII ETag header value");
+    (buf, header_val)
+}
+
+/// Returns the static string slice corresponding to the file extension of `path`.
+#[inline]
+pub fn get_mime_type(path: &str) -> &'static str {
     let ext = path.rsplit('.').next().unwrap_or_default();
     match ext.to_ascii_lowercase().as_str() {
         "css" => "text/css; charset=utf-8",
@@ -37,35 +57,34 @@ fn get_mime_type(path: &str) -> &'static str {
     }
 }
 
+/// Returns the static `HeaderValue` corresponding to the file extension of `path`.
+#[inline]
+fn get_mime_header_value(path: &str) -> HeaderValue {
+    HeaderValue::from_static(get_mime_type(path))
+}
+
 #[tracing::instrument(skip(headers))]
 pub async fn static_asset_handler(
     headers: HeaderMap,
     Path(path): Path<String>,
 ) -> impl IntoResponse {
-    let path = path.trim_start_matches('/');
-    match Assets::get(path) {
+    let clean_path = path.trim_start_matches('/');
+    match Assets::get(clean_path) {
         Some(content) => {
-            let mime_str = get_mime_type(path);
-            let mut response_headers = HeaderMap::new();
-            if let Ok(content_type) = mime_str.parse() {
-                response_headers.insert(header::CONTENT_TYPE, content_type);
-            }
+            let (etag_buf, etag_val) = format_etag(&content.metadata.sha256_hash());
+            let etag_str = std::str::from_utf8(&etag_buf).unwrap_or_default();
 
+            let mut response_headers = HeaderMap::with_capacity(3);
+            response_headers.insert(header::CONTENT_TYPE, get_mime_header_value(clean_path));
             response_headers.insert(
                 header::CACHE_CONTROL,
-                header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
             );
-
-            let hash = content.metadata.sha256_hash();
-            let etag = format!("\"{}\"", crate::storage::encode_hex(&hash));
-
-            if let Ok(etag_val) = header::HeaderValue::from_str(&etag) {
-                response_headers.insert(header::ETAG, etag_val);
-            }
+            response_headers.insert(header::ETAG, etag_val);
 
             if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH)
                 && let Ok(req_etag) = if_none_match.to_str()
-                && (req_etag.trim() == etag || req_etag.contains(&etag))
+                && (req_etag.trim() == etag_str || req_etag.contains(etag_str))
             {
                 return (StatusCode::NOT_MODIFIED, response_headers).into_response();
             }
@@ -121,6 +140,17 @@ mod tests {
         assert_eq!(get_mime_type("README"), "application/octet-stream");
         assert_eq!(get_mime_type("binary.dat"), "application/octet-stream");
         assert_eq!(get_mime_type(".gitignore"), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_format_etag() {
+        let dummy_hash = [0xab_u8; 32];
+        let (buf, val) = format_etag(&dummy_hash);
+        let s = std::str::from_utf8(&buf).unwrap();
+        assert_eq!(s.len(), 66);
+        assert!(s.starts_with('"'));
+        assert!(s.ends_with('"'));
+        assert_eq!(val.to_str().unwrap(), s);
     }
 
     #[tokio::test]
