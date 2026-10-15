@@ -11,3 +11,7 @@
 ## 2025-05-18 - Form Input Helper Text Accessibility Pattern
 **Learning:** Form helper texts (`<small>` or `<span class="text-muted">`) placed beneath `<input>` or `<select>` elements are bypassed by screen readers unless explicitly linked via `aria-describedby="[id]"` matching the helper element's `id`.
 **Action:** Always link form controls with descriptive text or syntax guidance using `aria-describedby` and matching `id` attributes on Askama form templates.
+
+## 2025-05-18 - Loop Boundary Action Button Accessibility Pattern
+**Learning:** In Askama list loops, using `loop.first` and `loop.last` to set `disabled` and descriptive `title` tooltips on directional reordering actions (`↑` / `↓`) prevents redundant form submissions and provides immediate visual and screen reader feedback at collection boundaries.
+**Action:** Always inspect sequence reordering controls in Askama templates and disable boundary operations using `loop.first` and `loop.last`.
