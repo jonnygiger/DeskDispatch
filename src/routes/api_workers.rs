@@ -164,25 +164,29 @@ struct BranchRow {
     reference_bitmap_key: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct AutomationMetaRow {
+    id: i64,
+    name: String,
+    description: String,
+    status: String,
+}
+
 #[tracing::instrument(skip(db))]
 pub async fn fetch_full_automation_json_with_overrides(
     db: &PgPool,
     automation_id: i64,
     overrides: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<serde_json::Value, sqlx::Error> {
-    let auto_row =
-        sqlx::query("SELECT id, name, description, status FROM automations WHERE id = $1")
-            .bind(automation_id)
-            .fetch_optional(db)
-            .await?;
+    let auto_row = sqlx::query_as::<_, AutomationMetaRow>(
+        "SELECT id, name, description, status FROM automations WHERE id = $1",
+    )
+    .bind(automation_id)
+    .fetch_optional(db)
+    .await?;
 
     let (id, name, description, status) = match auto_row {
-        Some(row) => (
-            row.get::<i64, _>("id"),
-            row.get::<String, _>("name"),
-            row.get::<String, _>("description"),
-            row.get::<String, _>("status"),
-        ),
+        Some(auto) => (auto.id, auto.name, auto.description, auto.status),
         None => {
             return Ok(serde_json::json!({
                 "id": automation_id,
