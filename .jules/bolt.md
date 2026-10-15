@@ -29,3 +29,7 @@
 ## 2025-03-10 - [Concurrent manual run trigger queries with tokio::join!]
 **Learning:** `post_run_now_automation_handler` in `src/routes/automations/detail.rs` sequentially executed 4 database queries (`SELECT status`, `validate_automation_for_activation`, `SELECT COUNT(*)`, and `SELECT automation_parameters`) before queueing a task run.
 **Action:** Use `tokio::join!` to execute the automation status, step count, and parameter definition queries concurrently across PgPool connections, reducing pre-dispatch database wait latency on manual run triggers from 4 sequential round-trips down to 2.
+
+## 2025-03-10 - [Zero-allocation SQLx deserialization for UserRole]
+**Learning:** `get_users_handler` in `src/routes/users.rs` and `SessionUserRow` in `src/auth/user.rs` were querying role as `String` and calling `UserRole::from_str` per row, causing unnecessary heap allocations and string parsing overhead on user listing and authentication extractor paths.
+**Action:** Derive `sqlx::Type` on `UserRole` and `sqlx::FromRow` on `UserListItem` / `SessionUserRow`, enabling direct `sqlx::query_as::<_, UserListItem>` deserialization from database `text` columns without intermediate `String` allocations.

@@ -58,7 +58,8 @@ pub async fn hash_password_async(
     .map_err(|e| format!("Password hashing task panicked: {}", e))?
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum UserRole {
     Admin,
@@ -164,7 +165,7 @@ struct SessionUserRow {
     id: i64,
     username: String,
     display_name: String,
-    role: String,
+    role: UserRole,
     session_id: Uuid,
     must_change_password: bool,
 }
@@ -203,11 +204,6 @@ impl FromRequestParts<AppState> for AuthUser {
         })?
         .ok_or_else(|| Redirect::to("/login").into_response())?;
 
-        let role = UserRole::from_str(&record.role).map_err(|e| {
-            tracing::error!("Invalid role in database: {}", e);
-            Redirect::to("/login").into_response()
-        })?;
-
         let csrf_token = super::csrf::generate_csrf_token(
             record.session_id,
             state.config.session_secret.expose_secret(),
@@ -224,7 +220,7 @@ impl FromRequestParts<AppState> for AuthUser {
             id: record.id,
             username: record.username,
             display_name: record.display_name,
-            role,
+            role: record.role,
             session_id: record.session_id,
             csrf_token,
             must_change_password: record.must_change_password,

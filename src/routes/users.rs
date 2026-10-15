@@ -6,7 +6,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use sqlx::Row;
+use sqlx::{FromRow, Row};
 use std::str::FromStr;
 
 use super::auth::HtmlTemplate;
@@ -32,7 +32,7 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, FromRow)]
 pub struct UserListItem {
     pub id: i64,
     pub username: String,
@@ -151,7 +151,10 @@ pub async fn get_users_handler(
     State(state): State<AppState>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let rows = match sqlx::query(
+    // Bolt Optimization: Use query_as::<_, UserListItem> to directly map rows into UserListItem
+    // using strongly typed UserRole SQLx deserialization, eliminating per-row String allocations
+    // and manual string parsing/get operations.
+    let users = match sqlx::query_as::<_, UserListItem>(
         r#"
         SELECT id, username, display_name, role, is_active, must_change_password, created_at, last_login_at
         FROM users
@@ -161,7 +164,7 @@ pub async fn get_users_handler(
     .fetch_all(&state.db)
     .await
     {
-        Ok(r) => r,
+        Ok(u) => u,
         Err(e) => {
             tracing::error!("Failed to fetch users: {}", e);
             return (
@@ -171,24 +174,6 @@ pub async fn get_users_handler(
                 .into_response();
         }
     };
-
-    let users = rows
-        .into_iter()
-        .filter_map(|r| {
-            let role_str: String = r.get("role");
-            let role = UserRole::from_str(&role_str).ok()?;
-            Some(UserListItem {
-                id: r.get("id"),
-                username: r.get("username"),
-                display_name: r.get("display_name"),
-                role,
-                is_active: r.get("is_active"),
-                must_change_password: r.get("must_change_password"),
-                created_at: r.get("created_at"),
-                last_login_at: r.get("last_login_at"),
-            })
-        })
-        .collect();
 
     HtmlTemplate(UsersIndexTemplate {
         user,
