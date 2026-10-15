@@ -3,13 +3,104 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 
 use super::types::*;
 use super::variables::fetch_automation_variables;
 use crate::AppState;
 use crate::auth::{AuthUser, CsrfForm, log_audit};
 use crate::routes::auth::HtmlTemplate;
+
+// ============================================================================
+// Strongly-Typed Row Structs for Database Queries
+// ============================================================================
+
+#[derive(sqlx::FromRow)]
+struct RawStepOptionRow {
+    id: i64,
+    step_type: String,
+    label: Option<String>,
+    position: f64,
+}
+
+#[derive(sqlx::FromRow)]
+struct MaxPosRow {
+    max_pos: Option<f64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct StepIdRow {
+    id: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct StepTypeRow {
+    step_type: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct StepPosRow {
+    id: i64,
+    position: f64,
+}
+
+#[derive(sqlx::FromRow)]
+struct BaseStepRow {
+    step_type: String,
+    label: Option<String>,
+    post_delay_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct FindBitmapDetailRow {
+    reference_bitmap_id: Option<i64>,
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    match_threshold: f32,
+    output_found_variable_id: Option<i64>,
+    output_x_variable_id: Option<i64>,
+    output_y_variable_id: Option<i64>,
+    output_region_variable_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct BranchDetailRow {
+    condition_type: String,
+    x: Option<i32>,
+    y: Option<i32>,
+    expected_r: Option<i16>,
+    expected_g: Option<i16>,
+    expected_b: Option<i16>,
+    tolerance: Option<i16>,
+    reference_bitmap_id: Option<i64>,
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    match_threshold: Option<f32>,
+    on_match_step_id: Option<i64>,
+    on_no_match_step_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct FindPixelDetailRow {
+    x: Option<i32>,
+    y: Option<i32>,
+    output_variable_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct MouseClickDetailRow {
+    x: Option<i32>,
+    y: Option<i32>,
+    x_variable_id: Option<i64>,
+    y_variable_id: Option<i64>,
+    region_variable_id: Option<i64>,
+    button: String,
+    click_type: String,
+}
 
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
@@ -137,20 +228,16 @@ async fn get_next_step_position<'e, E>(executor: E, automation_id: i64) -> f64
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    let max_pos_row = sqlx::query(
+    sqlx::query_as::<_, MaxPosRow>(
         "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
     )
     .bind(automation_id)
     .fetch_one(executor)
-    .await;
-
-    match max_pos_row {
-        Ok(r) => r
-            .get::<Option<f64>, _>("max_pos")
-            .map(|p| p + 10.0)
-            .unwrap_or(10.0),
-        _ => 10.0,
-    }
+    .await
+    .ok()
+    .and_then(|r| r.max_pos)
+    .map(|p| p + 10.0)
+    .unwrap_or(10.0)
 }
 
 async fn insert_base_step(
@@ -164,7 +251,7 @@ async fn insert_base_step(
     let post_delay_ms = seconds_to_post_delay_ms(post_delay_seconds);
     let clean_label = sanitize_label(label);
 
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, StepIdRow>(
         "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(automation_id)
@@ -175,7 +262,7 @@ async fn insert_base_step(
     .fetch_one(&mut **tx)
     .await?;
 
-    Ok(row.get("id"))
+    Ok(row.id)
 }
 
 async fn update_base_step(
@@ -236,7 +323,7 @@ pub async fn fetch_automation_step_options(
     automation_id: i64,
     exclude_step_id: Option<i64>,
 ) -> Vec<StepOption> {
-    let raw_steps = sqlx::query(
+    let raw_steps = sqlx::query_as::<_, RawStepOptionRow>(
         "SELECT id, step_type, label, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
@@ -248,15 +335,14 @@ pub async fn fetch_automation_step_options(
         .into_iter()
         .enumerate()
         .filter_map(|(idx, row)| {
-            let id: i64 = row.get("id");
-            if exclude_step_id == Some(id) {
+            if exclude_step_id == Some(row.id) {
                 return None;
             }
             Some(StepOption {
-                id,
-                step_type: row.get("step_type"),
-                label: row.get("label"),
-                position: row.get("position"),
+                id: row.id,
+                step_type: row.step_type,
+                label: row.label,
+                position: row.position,
                 display_number: idx + 1,
             })
         })
@@ -1417,7 +1503,7 @@ pub async fn get_edit_step_handler(
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
-    let step_row = match sqlx::query(
+    let step_row = match sqlx::query_as::<_, BaseStepRow>(
         "SELECT step_type, label, post_delay_ms FROM automation_steps WHERE id = $1 AND automation_id = $2 AND deleted_at IS NULL",
     )
     .bind(sid)
@@ -1429,13 +1515,10 @@ pub async fn get_edit_step_handler(
         _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     };
 
-    let step_type: String = step_row.get("step_type");
-    let label = step_row
-        .get::<Option<String>, _>("label")
-        .unwrap_or_default();
-    let post_delay_seconds = step_row.get::<i32, _>("post_delay_ms") as f64 / 1000.0;
+    let label = step_row.label.unwrap_or_default();
+    let post_delay_seconds = step_row.post_delay_ms as f64 / 1000.0;
 
-    match step_type.as_str() {
+    match step_row.step_type.as_str() {
         "key_press" => {
             let key_combo = sqlx::query_scalar::<_, String>(
                 "SELECT key_combo FROM step_key_presses WHERE step_id = $1",
@@ -1461,13 +1544,15 @@ pub async fn get_edit_step_handler(
         }
         "find_bitmap" => {
             let (fb_row, bitmaps, variables) = tokio::join!(
-                sqlx::query("SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1")
-                    .bind(sid).fetch_optional(&state.db),
+                sqlx::query_as::<_, FindBitmapDetailRow>(
+                    "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1"
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
                 fetch_available_bitmaps(&state.db, id),
                 fetch_automation_variables(&state.db, id),
             );
 
-            let r = fb_row.ok().flatten();
             let (
                 db_ref_id,
                 db_sx,
@@ -1479,18 +1564,18 @@ pub async fn get_edit_step_handler(
                 out_x,
                 out_y,
                 out_r,
-            ) = match r {
+            ) = match fb_row.ok().flatten() {
                 Some(r) => (
-                    r.get("reference_bitmap_id"),
-                    r.get("search_x"),
-                    r.get("search_y"),
-                    r.get("search_width"),
-                    r.get("search_height"),
-                    r.get("match_threshold"),
-                    r.get("output_found_variable_id"),
-                    r.get("output_x_variable_id"),
-                    r.get("output_y_variable_id"),
-                    r.get("output_region_variable_id"),
+                    r.reference_bitmap_id,
+                    r.search_x,
+                    r.search_y,
+                    r.search_width,
+                    r.search_height,
+                    r.match_threshold,
+                    r.output_found_variable_id,
+                    r.output_x_variable_id,
+                    r.output_y_variable_id,
+                    r.output_region_variable_id,
                 ),
                 None => (None, None, None, None, None, 0.95, None, None, None, None),
             };
@@ -1521,7 +1606,7 @@ pub async fn get_edit_step_handler(
         }
         "branch" => {
             let (branch_row, steps, bitmaps) = tokio::join!(
-                sqlx::query(r#"
+                sqlx::query_as::<_, BranchDetailRow>(r#"
                     SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                            reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
                            on_match_step_id, on_no_match_step_id
@@ -1531,40 +1616,39 @@ pub async fn get_edit_step_handler(
                 fetch_available_bitmaps(&state.db, id),
             );
 
-            let r = branch_row.ok().flatten();
             let (
-                c_type,
+                condition_type,
                 db_x,
                 db_y,
-                db_r,
-                db_g,
-                db_b,
-                db_tol,
-                db_ref,
+                expected_r,
+                expected_g,
+                expected_b,
+                tolerance,
+                db_ref_id,
                 db_sx,
                 db_sy,
                 db_sw,
                 db_sh,
-                db_thresh,
-                on_m,
-                on_nm,
-            ) = match r {
+                match_threshold,
+                on_match_step_id,
+                on_no_match_step_id,
+            ) = match branch_row.ok().flatten() {
                 Some(r) => (
-                    r.get("condition_type"),
-                    r.get("x"),
-                    r.get("y"),
-                    r.get("expected_r"),
-                    r.get("expected_g"),
-                    r.get("expected_b"),
-                    r.get("tolerance"),
-                    r.get("reference_bitmap_id"),
-                    r.get("search_x"),
-                    r.get("search_y"),
-                    r.get("search_width"),
-                    r.get("search_height"),
-                    r.get("match_threshold"),
-                    r.get("on_match_step_id"),
-                    r.get("on_no_match_step_id"),
+                    r.condition_type,
+                    r.x,
+                    r.y,
+                    r.expected_r,
+                    r.expected_g,
+                    r.expected_b,
+                    r.tolerance,
+                    r.reference_bitmap_id,
+                    r.search_x,
+                    r.search_y,
+                    r.search_width,
+                    r.search_height,
+                    r.match_threshold,
+                    r.on_match_step_id,
+                    r.on_no_match_step_id,
                 ),
                 None => (
                     "pixel_rgb".to_string(),
@@ -1592,21 +1676,21 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                condition_type: c_type,
+                condition_type,
                 x: query.search_x.or(db_x),
                 y: query.search_y.or(db_y),
-                expected_r: db_r,
-                expected_g: db_g,
-                expected_b: db_b,
-                tolerance: db_tol,
-                reference_bitmap_id: query.reference_bitmap_id.or(db_ref),
+                expected_r,
+                expected_g,
+                expected_b,
+                tolerance,
+                reference_bitmap_id: query.reference_bitmap_id.or(db_ref_id),
                 search_x: query.search_x.or(db_sx),
                 search_y: query.search_y.or(db_sy),
                 search_width: query.search_width.or(db_sw),
                 search_height: query.search_height.or(db_sh),
-                match_threshold: db_thresh,
-                on_match_step_id: on_m,
-                on_no_match_step_id: on_nm,
+                match_threshold,
+                on_match_step_id,
+                on_no_match_step_id,
                 steps,
                 bitmaps,
                 error: None,
@@ -1616,7 +1700,7 @@ pub async fn get_edit_step_handler(
         }
         "find_pixel_rgb" => {
             let (fp_row, variables) = tokio::join!(
-                sqlx::query(
+                sqlx::query_as::<_, FindPixelDetailRow>(
                     "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1"
                 )
                 .bind(sid)
@@ -1624,10 +1708,7 @@ pub async fn get_edit_step_handler(
                 fetch_automation_variables(&state.db, id),
             );
 
-            let (x, y, output_variable_id) = match fp_row.ok().flatten() {
-                Some(r) => (r.get("x"), r.get("y"), r.get("output_variable_id")),
-                None => (None, None, None),
-            };
+            let fp = fp_row.ok().flatten();
 
             HtmlTemplate(StepFindPixelRgbTemplate {
                 user,
@@ -1636,9 +1717,9 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                x,
-                y,
-                output_variable_id,
+                x: fp.as_ref().and_then(|r| r.x),
+                y: fp.as_ref().and_then(|r| r.y),
+                output_variable_id: fp.as_ref().and_then(|r| r.output_variable_id),
                 variables,
                 error: None,
                 is_edit: true,
@@ -1647,32 +1728,16 @@ pub async fn get_edit_step_handler(
         }
         "mouse_click" => {
             let (mc_row, variables) = tokio::join!(
-                sqlx::query("SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
+                sqlx::query_as::<_, MouseClickDetailRow>("SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
                     .bind(sid).fetch_optional(&state.db),
                 fetch_automation_variables(&state.db, id),
             );
 
-            let (x, y, x_var_id, y_var_id, region_var_id, button, click_type) =
-                match mc_row.ok().flatten() {
-                    Some(r) => (
-                        r.get("x"),
-                        r.get("y"),
-                        r.get("x_variable_id"),
-                        r.get("y_variable_id"),
-                        r.get("region_variable_id"),
-                        r.get("button"),
-                        r.get("click_type"),
-                    ),
-                    None => (
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        "left".to_string(),
-                        "single".to_string(),
-                    ),
-                };
+            let mc = mc_row.ok().flatten();
+
+            let x_var_id = mc.as_ref().and_then(|r| r.x_variable_id);
+            let y_var_id = mc.as_ref().and_then(|r| r.y_variable_id);
+            let region_var_id = mc.as_ref().and_then(|r| r.region_variable_id);
 
             let x_mode = if x_var_id.is_some() {
                 "variable"
@@ -1701,15 +1766,21 @@ pub async fn get_edit_step_handler(
                 label,
                 post_delay_seconds,
                 x_mode,
-                x,
+                x: mc.as_ref().and_then(|r| r.x),
                 x_variable_id: x_var_id,
                 y_mode,
-                y,
+                y: mc.as_ref().and_then(|r| r.y),
                 y_variable_id: y_var_id,
                 click_mode,
                 region_variable_id: region_var_id,
-                button,
-                click_type,
+                button: mc
+                    .as_ref()
+                    .map(|r| r.button.clone())
+                    .unwrap_or_else(|| "left".to_string()),
+                click_type: mc
+                    .as_ref()
+                    .map(|r| r.click_type.clone())
+                    .unwrap_or_else(|| "single".to_string()),
                 variables,
                 error: None,
                 is_edit: true,
@@ -1748,7 +1819,7 @@ pub async fn post_edit_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let step_type_row = sqlx::query(
+    let step_type_row = sqlx::query_as::<_, StepTypeRow>(
         "SELECT step_type FROM automation_steps WHERE id = $1 AND automation_id = $2 AND deleted_at IS NULL",
     )
     .bind(sid)
@@ -1756,8 +1827,8 @@ pub async fn post_edit_step_handler(
     .fetch_optional(&state.db)
     .await;
 
-    let step_type: String = match step_type_row {
-        Ok(Some(r)) => r.get("step_type"),
+    let step_type = match step_type_row {
+        Ok(Some(r)) => r.step_type,
         _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     };
 
@@ -1818,12 +1889,14 @@ pub async fn reorder_step(
         .fetch_optional(&mut *tx)
         .await?;
 
-    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC")
-        .bind(automation_id)
-        .fetch_all(&mut *tx)
-        .await?;
+    let steps = sqlx::query_as::<_, StepPosRow>(
+        "SELECT id, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(&mut *tx)
+    .await?;
 
-    let current_idx = steps.iter().position(|r| r.get::<i64, _>("id") == step_id);
+    let current_idx = steps.iter().position(|r| r.id == step_id);
     let idx = match current_idx {
         Some(i) => i,
         None => return Ok(()),
@@ -1838,9 +1911,9 @@ pub async fn reorder_step(
 
     let target_idx = if is_up { idx - 1 } else { idx + 1 };
 
-    let pos_curr: f64 = steps[idx].get("position");
-    let pos_target: f64 = steps[target_idx].get("position");
-    let target_id: i64 = steps[target_idx].get("id");
+    let pos_curr = steps[idx].position;
+    let pos_target = steps[target_idx].position;
+    let target_id = steps[target_idx].id;
 
     // Swap positions within the transaction
     sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
@@ -1949,16 +2022,16 @@ pub async fn check_and_compact_positions(
     db: &PgPool,
     automation_id: i64,
 ) -> Result<(), sqlx::Error> {
-    let steps = sqlx::query("SELECT id, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC")
-        .bind(automation_id)
-        .fetch_all(db)
-        .await?;
+    let steps = sqlx::query_as::<_, StepPosRow>(
+        "SELECT id, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(db)
+    .await?;
 
     let mut needs_compaction = false;
     for i in 0..steps.len().saturating_sub(1) {
-        let pos1: f64 = steps[i].get("position");
-        let pos2: f64 = steps[i + 1].get("position");
-        if (pos2 - pos1).abs() < 0.0001 {
+        if (steps[i + 1].position - steps[i].position).abs() < 0.0001 {
             needs_compaction = true;
             break;
         }
@@ -1981,17 +2054,18 @@ pub async fn compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sq
         .fetch_optional(&mut *tx)
         .await?;
 
-    let steps = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC")
-        .bind(automation_id)
-        .fetch_all(&mut *tx)
-        .await?;
+    let steps = sqlx::query_as::<_, StepIdRow>(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+    )
+    .bind(automation_id)
+    .fetch_all(&mut *tx)
+    .await?;
 
     for (i, row) in steps.iter().enumerate() {
-        let step_id: i64 = row.get("id");
         let new_pos = (i as f64 + 1.0) * 10.0;
         sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
             .bind(new_pos)
-            .bind(step_id)
+            .bind(row.id)
             .execute(&mut *tx)
             .await?;
     }
