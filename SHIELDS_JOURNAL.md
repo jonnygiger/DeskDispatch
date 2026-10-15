@@ -27,3 +27,7 @@ Action: Test both successful whitespace trimming and deserialization error failu
 ## 2025-03-16 Automation Validation Helper Functions Unit Test Coverage
 Learning: Internal validation helper routines (`check_coord_bounds`, `validate_mouse_click`, `validate_var_ref`, `validate_find_pixel`, `validate_find_bitmap`, `validate_output_var`, `validate_branch`) contain boundary condition checks (0..10,000 range), variable type compatibility validation, and optional target/bitmap existence rules that can be tested in isolation using lightweight in-memory data structures.
 Action: Test validation helper functions directly with boundary coordinates (-1, 0, 10000, 10001), missing vs present variable/bitmap IDs, and type mismatch inputs in unit tests within `src/validation.rs`.
+
+## 2025-03-17 Static Assets MIME Type & Conditional ETag Caching Coverage
+Learning: Static asset handlers serving embedded `rust_embed::RustEmbed` assets construct SHA256 ETags and evaluate `If-None-Match` HTTP headers. Converting `static_asset_handler(...).await.into_response()` directly into `axum::response::Response` allows verifying `StatusCode::OK` vs `StatusCode::NOT_MODIFIED` vs `StatusCode::NOT_FOUND`, `Content-Type`, `Cache-Control`, and `ETag` headers at the unit test level without network listeners or database fixtures.
+Action: Test static asset handlers and MIME type resolution functions directly using `into_response()` assertions across case variations, missing/unknown extensions, multi-dot paths, and ETag header lists.
