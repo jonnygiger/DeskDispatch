@@ -75,3 +75,130 @@ pub async fn static_asset_handler(
         None => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+
+    #[test]
+    fn test_get_mime_type_extension_resolution() {
+        assert_eq!(get_mime_type("style.css"), "text/css; charset=utf-8");
+        assert_eq!(
+            get_mime_type("script.js"),
+            "application/javascript; charset=utf-8"
+        );
+        assert_eq!(get_mime_type("logo.png"), "image/png");
+        assert_eq!(get_mime_type("photo.jpg"), "image/jpeg");
+        assert_eq!(get_mime_type("photo.jpeg"), "image/jpeg");
+        assert_eq!(get_mime_type("anim.gif"), "image/gif");
+        assert_eq!(get_mime_type("icon.svg"), "image/svg+xml");
+        assert_eq!(get_mime_type("favicon.ico"), "image/x-icon");
+        assert_eq!(get_mime_type("banner.webp"), "image/webp");
+        assert_eq!(get_mime_type("font.woff2"), "font/woff2");
+        assert_eq!(get_mime_type("font.woff"), "font/woff");
+        assert_eq!(get_mime_type("font.ttf"), "font/ttf");
+        assert_eq!(get_mime_type("index.html"), "text/html; charset=utf-8");
+        assert_eq!(get_mime_type("data.json"), "application/json");
+
+        // Case insensitivity
+        assert_eq!(get_mime_type("MAIN.CSS"), "text/css; charset=utf-8");
+        assert_eq!(
+            get_mime_type("App.JS"),
+            "application/javascript; charset=utf-8"
+        );
+        assert_eq!(get_mime_type("Hero.PNG"), "image/png");
+
+        // Multi-dot paths
+        assert_eq!(get_mime_type("styles.min.css"), "text/css; charset=utf-8");
+        assert_eq!(
+            get_mime_type("bundle.v2.js"),
+            "application/javascript; charset=utf-8"
+        );
+
+        // Missing / unknown extensions
+        assert_eq!(get_mime_type("README"), "application/octet-stream");
+        assert_eq!(get_mime_type("binary.dat"), "application/octet-stream");
+        assert_eq!(get_mime_type(".gitignore"), "application/octet-stream");
+    }
+
+    #[tokio::test]
+    async fn test_static_asset_handler_existing_asset_and_404() {
+        let headers = HeaderMap::new();
+
+        // 1. Existing asset ("style.css")
+        let res = static_asset_handler(headers.clone(), Path("style.css".to_string()))
+            .await
+            .into_response();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/css; charset=utf-8"
+        );
+        assert_eq!(
+            res.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=31536000, immutable"
+        );
+        assert!(res.headers().get(header::ETAG).is_some());
+
+        // 2. Existing asset with leading slash ("/style.css")
+        let res_slash = static_asset_handler(headers, Path("/style.css".to_string()))
+            .await
+            .into_response();
+        assert_eq!(res_slash.status(), StatusCode::OK);
+
+        // 3. Non-existent asset ("missing.css")
+        let res_404 = static_asset_handler(HeaderMap::new(), Path("missing.css".to_string()))
+            .await
+            .into_response();
+        assert_eq!(res_404.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_static_asset_handler_conditional_caching() {
+        // Fetch original asset to extract generated ETag
+        let orig_res = static_asset_handler(HeaderMap::new(), Path("style.css".to_string()))
+            .await
+            .into_response();
+        let etag_val = orig_res
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // Match exact ETag -> 304 NOT_MODIFIED
+        let mut match_headers = HeaderMap::new();
+        match_headers.insert(header::IF_NONE_MATCH, HeaderValue::from_str(&etag_val).unwrap());
+        let res_304 = static_asset_handler(match_headers, Path("style.css".to_string()))
+            .await
+            .into_response();
+        assert_eq!(res_304.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            res_304.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=31536000, immutable"
+        );
+
+        // Match ETag in comma-separated or weak list -> 304 NOT_MODIFIED
+        let mut list_headers = HeaderMap::new();
+        let list_etag = format!("\"other-etag\", {etag_val}");
+        list_headers.insert(header::IF_NONE_MATCH, HeaderValue::from_str(&list_etag).unwrap());
+        let res_list_304 = static_asset_handler(list_headers, Path("style.css".to_string()))
+            .await
+            .into_response();
+        assert_eq!(res_list_304.status(), StatusCode::NOT_MODIFIED);
+
+        // Mismatched ETag -> 200 OK
+        let mut mismatch_headers = HeaderMap::new();
+        mismatch_headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"outdated-etag-12345\""),
+        );
+        let res_200 = static_asset_handler(mismatch_headers, Path("style.css".to_string()))
+            .await
+            .into_response();
+        assert_eq!(res_200.status(), StatusCode::OK);
+    }
+}
