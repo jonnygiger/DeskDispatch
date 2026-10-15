@@ -171,7 +171,10 @@ mod tests {
 
         // Match exact ETag -> 304 NOT_MODIFIED
         let mut match_headers = HeaderMap::new();
-        match_headers.insert(header::IF_NONE_MATCH, HeaderValue::from_str(&etag_val).unwrap());
+        match_headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_str(&etag_val).unwrap(),
+        );
         let res_304 = static_asset_handler(match_headers, Path("style.css".to_string()))
             .await
             .into_response();
@@ -184,7 +187,10 @@ mod tests {
         // Match ETag in comma-separated or weak list -> 304 NOT_MODIFIED
         let mut list_headers = HeaderMap::new();
         let list_etag = format!("\"other-etag\", {etag_val}");
-        list_headers.insert(header::IF_NONE_MATCH, HeaderValue::from_str(&list_etag).unwrap());
+        list_headers.insert(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_str(&list_etag).unwrap(),
+        );
         let res_list_304 = static_asset_handler(list_headers, Path("style.css".to_string()))
             .await
             .into_response();
