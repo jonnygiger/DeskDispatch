@@ -6,7 +6,6 @@ pub mod de;
 pub mod domain;
 pub mod error;
 pub mod magnifier;
-pub mod picker;
 pub mod retention;
 pub mod routes;
 pub mod storage;

@@ -641,34 +641,33 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     let br_rows = br_res.unwrap_or_default();
     let ss_rows = ss_res.unwrap_or_default();
 
-    let mut key_presses_map: std::collections::HashMap<i64, KeyPressViewRow> =
-        std::collections::HashMap::with_capacity(kp_rows.len());
+    enum StepDetailView {
+        KeyPress(KeyPressViewRow),
+        MouseClick(MouseClickViewRow),
+        FindPixel(FindPixelViewRow),
+        FindBitmap(FindBitmapViewRow),
+        Branch(BranchViewRow),
+    }
+
+    let mut details_map: std::collections::HashMap<i64, StepDetailView> =
+        std::collections::HashMap::with_capacity(raw_steps.len());
+    let mut has_branch = false;
+
     for r in kp_rows {
-        key_presses_map.insert(r.step_id, r);
+        details_map.insert(r.step_id, StepDetailView::KeyPress(r));
     }
-
-    let mut mouse_clicks_map: std::collections::HashMap<i64, MouseClickViewRow> =
-        std::collections::HashMap::with_capacity(mc_rows.len());
     for r in mc_rows {
-        mouse_clicks_map.insert(r.step_id, r);
+        details_map.insert(r.step_id, StepDetailView::MouseClick(r));
     }
-
-    let mut find_pixel_map: std::collections::HashMap<i64, FindPixelViewRow> =
-        std::collections::HashMap::with_capacity(fp_rows.len());
     for r in fp_rows {
-        find_pixel_map.insert(r.step_id, r);
+        details_map.insert(r.step_id, StepDetailView::FindPixel(r));
     }
-
-    let mut find_bitmap_map: std::collections::HashMap<i64, FindBitmapViewRow> =
-        std::collections::HashMap::with_capacity(fb_rows.len());
     for r in fb_rows {
-        find_bitmap_map.insert(r.step_id, r);
+        details_map.insert(r.step_id, StepDetailView::FindBitmap(r));
     }
-
-    let mut branch_map: std::collections::HashMap<i64, BranchViewRow> =
-        std::collections::HashMap::with_capacity(br_rows.len());
     for r in br_rows {
-        branch_map.insert(r.step_id, r);
+        has_branch = true;
+        details_map.insert(r.step_id, StepDetailView::Branch(r));
     }
 
     let mut step_screenshot_map: std::collections::HashMap<i64, String> =
@@ -677,7 +676,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         step_screenshot_map.insert(r.step_id, r.object_storage_key);
     }
 
-    let step_target_map = if !branch_map.is_empty() {
+    let step_target_map = if has_branch {
         let mut target_map = std::collections::HashMap::with_capacity(raw_steps.len());
         for (idx, row) in raw_steps.iter().enumerate() {
             let step_num = idx + 1;
@@ -702,73 +701,70 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         let post_delay_ms = row.post_delay_ms;
         let position = row.position;
 
-        let description = match step_type.as_str() {
-            "key_press" => key_presses_map
-                .get(&step_id)
-                .map(|r| format!("Press {}", r.key_combo))
-                .unwrap_or_else(|| "Press key".to_string()),
-            "mouse_click" => mouse_clicks_map
-                .get(&step_id)
-                .map(|r| {
-                    generate_mouse_click_summary(
-                        r.x,
-                        r.y,
-                        r.x_var_name.as_deref(),
-                        r.y_var_name.as_deref(),
-                        r.region_var_name.as_deref(),
-                        &r.button,
-                        &r.click_type,
-                    )
-                })
-                .unwrap_or_else(|| "Click mouse".to_string()),
-            "find_pixel_rgb" => find_pixel_map
-                .get(&step_id)
-                .map(|r| generate_find_pixel_rgb_summary(r.x, r.y, r.var_name.as_deref()))
-                .unwrap_or_else(|| "Read pixel at coordinate".to_string()),
-            "find_bitmap" => find_bitmap_map
-                .get(&step_id)
-                .map(|r| generate_find_bitmap_summary(&r.bitmap_name, r.var_name.as_deref()))
-                .unwrap_or_else(|| "Search for bitmap on screen".to_string()),
-            "branch" => branch_map
-                .get(&step_id)
-                .map(|r| {
-                    let match_target_str = r
-                        .on_match_step_id
-                        .and_then(|m_id| step_target_map.get(&m_id))
-                        .map(|s| s.as_str());
+        let detail_opt = details_map.remove(&step_id);
 
-                    let no_match_target_str = r
-                        .on_no_match_step_id
-                        .and_then(|n_id| step_target_map.get(&n_id))
-                        .map(|s| s.as_str());
+        let (description, ref_bitmap_id, ref_bitmap_key) = match detail_opt {
+            Some(StepDetailView::KeyPress(r)) => (format!("Press {}", r.key_combo), None, None),
+            Some(StepDetailView::MouseClick(r)) => (
+                generate_mouse_click_summary(
+                    r.x,
+                    r.y,
+                    r.x_var_name.as_deref(),
+                    r.y_var_name.as_deref(),
+                    r.region_var_name.as_deref(),
+                    &r.button,
+                    &r.click_type,
+                ),
+                None,
+                None,
+            ),
+            Some(StepDetailView::FindPixel(r)) => (
+                generate_find_pixel_rgb_summary(r.x, r.y, r.var_name.as_deref()),
+                None,
+                None,
+            ),
+            Some(StepDetailView::FindBitmap(r)) => (
+                generate_find_bitmap_summary(&r.bitmap_name, r.var_name.as_deref()),
+                r.reference_bitmap_id,
+                r.reference_bitmap_key,
+            ),
+            Some(StepDetailView::Branch(r)) => {
+                let match_target_str = r
+                    .on_match_step_id
+                    .and_then(|m_id| step_target_map.get(&m_id))
+                    .map(|s| s.as_str());
 
-                    generate_branch_summary(
-                        &r.condition_type,
-                        r.x,
-                        r.y,
-                        r.expected_r,
-                        r.expected_g,
-                        r.expected_b,
-                        r.tolerance,
-                        r.bitmap_name.as_deref(),
-                        match_target_str,
-                        no_match_target_str,
-                    )
-                })
-                .unwrap_or_else(|| "BRANCH evaluation".to_string()),
-            _ => "Unknown step".to_string(),
-        };
+                let no_match_target_str = r
+                    .on_no_match_step_id
+                    .and_then(|n_id| step_target_map.get(&n_id))
+                    .map(|s| s.as_str());
 
-        let (ref_bitmap_id, ref_bitmap_key) = match step_type.as_str() {
-            "find_bitmap" => find_bitmap_map
-                .get(&step_id)
-                .map(|r| (r.reference_bitmap_id, r.reference_bitmap_key.clone()))
-                .unwrap_or((None, None)),
-            "branch" => branch_map
-                .get(&step_id)
-                .map(|r| (r.reference_bitmap_id, r.reference_bitmap_key.clone()))
-                .unwrap_or((None, None)),
-            _ => (None, None),
+                let summary = generate_branch_summary(
+                    &r.condition_type,
+                    r.x,
+                    r.y,
+                    r.expected_r,
+                    r.expected_g,
+                    r.expected_b,
+                    r.tolerance,
+                    r.bitmap_name.as_deref(),
+                    match_target_str,
+                    no_match_target_str,
+                );
+                (summary, r.reference_bitmap_id, r.reference_bitmap_key)
+            }
+            None => (
+                match step_type.as_str() {
+                    "key_press" => "Press key".to_string(),
+                    "mouse_click" => "Click mouse".to_string(),
+                    "find_pixel_rgb" => "Read pixel at coordinate".to_string(),
+                    "find_bitmap" => "Search for bitmap on screen".to_string(),
+                    "branch" => "BRANCH evaluation".to_string(),
+                    _ => "Unknown step".to_string(),
+                },
+                None,
+                None,
+            ),
         };
 
         let screenshot_key = step_screenshot_map.get(&step_id).cloned();

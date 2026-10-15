@@ -10,8 +10,7 @@ use std::time::Duration;
 use super::auth::HtmlTemplate;
 use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
 use crate::de::deserialize_option_number;
-use crate::magnifier::ImageMagnifier;
-use crate::picker::{map_coarse_click_to_native, map_grid_click_to_native};
+use crate::magnifier::{ImageMagnifier, map_coarse_click_to_native, map_grid_click_to_native};
 use axum::Router;
 use axum::routing::{get, post};
 
