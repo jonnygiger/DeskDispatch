@@ -1,10 +1,19 @@
 #![allow(clippy::unwrap_used)]
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
+};
 use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode, header},
 };
-use deskdispatch::{AppState, config::Config, routes::*};
+use deskdispatch::{
+    AppState,
+    auth::generate_csrf_token,
+    config::Config,
+    routes::*,
+};
 use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -1275,4 +1284,280 @@ async fn test_automation_parameters_crud_and_validation() {
             .await
             .unwrap();
     assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
+    let Some(pool) = get_test_pool().await else {
+        println!(
+            "Database not available, skipping test_e2e_admin_password_change_automation_bitmap_step_flow"
+        );
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
+    let s3_config = aws_sdk_s3::config::Builder::new()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(credentials)
+        .region(aws_sdk_s3::config::Region::new("us-east-1"))
+        .endpoint_url("http://localhost:9000")
+        .force_path_style(true)
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let state = AppState {
+        db: pool.clone(),
+        s3_client: s3_client.clone(),
+        config: config.clone(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+
+    let app = Router::new()
+        .route(
+            "/login",
+            axum::routing::get(get_login_handler).post(post_login_handler),
+        )
+        .route(
+            "/account/password",
+            axum::routing::get(get_password_handler).post(post_password_handler),
+        )
+        .route(
+            "/automations",
+            axum::routing::get(get_automations_handler).post(post_automations_handler),
+        )
+        .route(
+            "/automations/{id}",
+            axum::routing::get(get_automation_detail_handler),
+        )
+        .route(
+            "/bitmaps",
+            axum::routing::get(get_bitmaps_handler).post(post_bitmaps_handler),
+        )
+        .route(
+            "/bitmaps/commit",
+            axum::routing::get(get_bitmap_commit_handler).post(bitmaps::post_bitmap_commit_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new/find_bitmap",
+            axum::routing::get(get_new_find_bitmap_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps",
+            axum::routing::post(post_create_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/edit",
+            axum::routing::get(get_edit_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}",
+            axum::routing::post(post_edit_step_handler),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            deskdispatch::auth::csrf_middleware,
+        ))
+        .with_state(state);
+
+    // 1. Seed admin user
+    let username = format!("admin_e2e_{}", uuid::Uuid::new_v4().simple());
+    let old_password = "InitialAdminPassword123!";
+    let new_password = "NewUpdatedAdminPassword456!";
+
+    let argon2 = Argon2::default();
+    let hash = argon2
+        .hash_password(old_password.as_bytes())
+        .unwrap()
+        .to_string();
+
+    let admin_row = sqlx::query(
+        "INSERT INTO users (username, password_hash, display_name, role, is_active) VALUES ($1, $2, 'E2E Admin', 'admin', true) RETURNING id",
+    )
+    .bind(&username)
+    .bind(&hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let admin_id: i64 = sqlx::Row::get(&admin_row, "id");
+
+    // Admin logs in via POST /login
+    let login_form = format!("username={}&password={}", username, old_password);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/login")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(login_form))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    let cookie_header = res
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let session_id = deskdispatch::auth::session::extract_session_id(&cookie_header).unwrap();
+    let csrf_token = generate_csrf_token(session_id, config.session_secret.expose_secret());
+
+    // 2. Admin changes password via POST /account/password
+    let change_pwd_form = format!(
+        "csrf_token={}&current_password={}&new_password={}&confirm_password={}",
+        csrf_token, old_password, new_password, new_password
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/account/password")
+        .header(header::COOKIE, &cookie_header)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(change_pwd_form))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Verify updated password hash in DB
+    let user_db = sqlx::query("SELECT password_hash FROM users WHERE id = $1")
+        .bind(admin_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let updated_hash: String = sqlx::Row::get(&user_db, "password_hash");
+    let parsed_hash = PasswordHash::new(&updated_hash).unwrap();
+    assert!(argon2.verify_password(new_password.as_bytes(), &parsed_hash).is_ok());
+
+    // 3. Admin creates an automation via POST /automations
+    let auto_name = format!("E2E Admin Automation {}", uuid::Uuid::new_v4().simple());
+    let auto_name_encoded: String = url::form_urlencoded::byte_serialize(auto_name.as_bytes()).collect();
+    let create_auto_form = format!(
+        "csrf_token={}&name={}&description=Created+during+E2E+test",
+        csrf_token,
+        auto_name_encoded
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/automations")
+        .header(header::COOKIE, &cookie_header)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(create_auto_form))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
+    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+
+    // 4. Admin uploads a reference bitmap
+    let test_bitmap_name = format!("E2E Target Logo {}", uuid::Uuid::new_v4().simple());
+    let bitmap_key = format!("bitmaps/e2e_{}_{}.png", admin_id, uuid::Uuid::new_v4().simple());
+
+    // Upload 15x20 PNG image bytes to S3
+    let img_buf = image::RgbImage::from_fn(15, 20, |_, _| image::Rgb([0, 128, 255]));
+    let mut png_bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img_buf)
+        .write_to(&mut png_bytes, image::ImageFormat::Png)
+        .unwrap();
+
+    let _ = s3_client
+        .put_object()
+        .bucket(&config.s3_bucket)
+        .key(&bitmap_key)
+        .content_type("image/png")
+        .body(png_bytes.into_inner().into())
+        .send()
+        .await;
+
+    // Commit reference bitmap via POST /bitmaps/commit
+    let test_bitmap_name_encoded: String = url::form_urlencoded::byte_serialize(test_bitmap_name.as_bytes()).collect();
+    let commit_form = format!(
+        "csrf_token={}&key={}&name={}",
+        csrf_token,
+        bitmap_key,
+        test_bitmap_name_encoded
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/bitmaps/commit")
+        .header(header::COOKIE, &cookie_header)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(commit_form))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Obtain uploaded bitmap record ID from DB
+    let bitmap_row = sqlx::query("SELECT id FROM bitmaps WHERE object_storage_key = $1")
+        .bind(&bitmap_key)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let bitmap_id: i64 = sqlx::Row::get(&bitmap_row, "id");
+
+    // 5. Admin creates a step using the bitmap via POST /automations/{id}/steps
+    let create_step_form = format!(
+        "step_type=find_bitmap&label=Locate+Target+Logo&reference_bitmap_id={}&match_threshold=0.95&post_delay_seconds=1.0&csrf_token={}",
+        bitmap_id, csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, &cookie_header)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(create_step_form))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    let step_row = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 AND step_type = 'find_bitmap'")
+        .bind(automation_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let step_id: i64 = sqlx::Row::get(&step_row, "id");
+
+    // 6. In the image selection screen, verify presented image matches up with uploaded bitmap
+    // Test A: GET /automations/{id}/steps/new/find_bitmap renders reference_bitmap_id options
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}/steps/new/find_bitmap", automation_id))
+        .header(header::COOKIE, &cookie_header)
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let html_new = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    assert!(html_new.contains(&test_bitmap_name), "Uploaded bitmap name missing in step creation screen");
+    assert!(html_new.contains(&format!("value=\"{}\"", bitmap_id)), "Uploaded bitmap ID missing in option list");
+    assert!(html_new.contains("15x20px"), "Uploaded bitmap dimensions missing in option text");
+
+    // Test B: GET /automations/{id}/steps/{sid}/edit presents the uploaded bitmap selected
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}/steps/{}/edit", automation_id, step_id))
+        .header(header::COOKIE, &cookie_header)
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let html_edit = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    assert!(html_edit.contains(&test_bitmap_name), "Uploaded bitmap name missing in step edit screen");
+    let expected_option = format!("<option value=\"{}\" selected>", bitmap_id);
+    assert!(
+        html_edit.contains(&expected_option),
+        "Uploaded bitmap option is not selected in step edit screen. HTML excerpt: {}",
+        html_edit
+    );
 }
