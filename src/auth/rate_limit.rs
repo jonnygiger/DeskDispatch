@@ -4,10 +4,67 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
+pub const ERR_USER_RATE_LIMIT: &str = "Too many failed login attempts. Please try again later.";
+pub const ERR_IP_RATE_LIMIT: &str =
+    "Too many failed login attempts from this IP address. Please try again later.";
+
+const EVICTION_THRESHOLD: usize = 256;
+
 #[derive(Debug)]
 struct RateLimiterInner {
     user_attempts: HashMap<(IpAddr, String), Vec<Instant>>,
     ip_attempts: HashMap<IpAddr, Vec<Instant>>,
+}
+
+impl RateLimiterInner {
+    fn prune_and_clean_user(
+        &mut self,
+        ip: IpAddr,
+        username: &str,
+        now: Instant,
+        window: Duration,
+    ) -> Option<usize> {
+        match self.user_attempts.entry((ip, username.to_lowercase())) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let ts = entry.get_mut();
+                ts.retain(|t| now.duration_since(*t) < window);
+                if ts.is_empty() {
+                    entry.remove();
+                    None
+                } else {
+                    Some(ts.len())
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(_) => None,
+        }
+    }
+
+    fn prune_and_clean_ip(&mut self, ip: IpAddr, now: Instant, window: Duration) -> Option<usize> {
+        match self.ip_attempts.entry(ip) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let ts = entry.get_mut();
+                ts.retain(|t| now.duration_since(*t) < window);
+                if ts.is_empty() {
+                    entry.remove();
+                    None
+                } else {
+                    Some(ts.len())
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(_) => None,
+        }
+    }
+
+    fn sweep_expired(&mut self, now: Instant, window: Duration) {
+        self.user_attempts.retain(|_, timestamps| {
+            timestamps.retain(|t| now.duration_since(*t) < window);
+            !timestamps.is_empty()
+        });
+        self.ip_attempts.retain(|_, timestamps| {
+            timestamps.retain(|t| now.duration_since(*t) < window);
+            !timestamps.is_empty()
+        });
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -47,38 +104,20 @@ impl LoginRateLimiter {
         }
     }
 
-    fn sweep_expired(&self, inner: &mut RateLimiterInner, now: Instant) {
-        let window = self.window;
-        inner.user_attempts.retain(|_, timestamps| {
-            timestamps.retain(|t| now.duration_since(*t) < window);
-            !timestamps.is_empty()
-        });
-        inner.ip_attempts.retain(|_, timestamps| {
-            timestamps.retain(|t| now.duration_since(*t) < window);
-            !timestamps.is_empty()
-        });
-    }
-
-    pub fn check_rate_limit(&self, ip: IpAddr, username: &str) -> Result<(), String> {
+    pub fn check_rate_limit(&self, ip: IpAddr, username: &str) -> Result<(), &'static str> {
         let now = Instant::now();
         let mut inner = self.inner.lock().expect("lock rate limiter mutex");
-        self.sweep_expired(&mut inner, now);
 
-        let key = (ip, username.to_lowercase());
-
-        if let Some(timestamps) = inner.user_attempts.get(&key)
-            && timestamps.len() >= self.max_user_attempts
+        if let Some(user_count) = inner.prune_and_clean_user(ip, username, now, self.window)
+            && user_count >= self.max_user_attempts
         {
-            return Err("Too many failed login attempts. Please try again later.".to_string());
+            return Err(ERR_USER_RATE_LIMIT);
         }
 
-        if let Some(ip_timestamps) = inner.ip_attempts.get(&ip)
-            && ip_timestamps.len() >= self.max_ip_attempts
+        if let Some(ip_count) = inner.prune_and_clean_ip(ip, now, self.window)
+            && ip_count >= self.max_ip_attempts
         {
-            return Err(
-                "Too many failed login attempts from this IP address. Please try again later."
-                    .to_string(),
-            );
+            return Err(ERR_IP_RATE_LIMIT);
         }
 
         Ok(())
@@ -87,24 +126,32 @@ impl LoginRateLimiter {
     pub fn record_failure(&self, ip: IpAddr, username: &str) {
         let now = Instant::now();
         let mut inner = self.inner.lock().expect("lock rate limiter mutex");
-        self.sweep_expired(&mut inner, now);
 
-        let key = (ip, username.to_lowercase());
+        if inner.user_attempts.len() + inner.ip_attempts.len() > EVICTION_THRESHOLD {
+            inner.sweep_expired(now, self.window);
+        }
 
-        inner.user_attempts.entry(key).or_default().push(now);
-        inner.ip_attempts.entry(ip).or_default().push(now);
+        let user_ts = inner
+            .user_attempts
+            .entry((ip, username.to_lowercase()))
+            .or_default();
+        user_ts.retain(|t| now.duration_since(*t) < self.window);
+        user_ts.push(now);
+
+        let ip_ts = inner.ip_attempts.entry(ip).or_default();
+        ip_ts.retain(|t| now.duration_since(*t) < self.window);
+        ip_ts.push(now);
     }
 
     pub fn clear(&self, ip: IpAddr, username: &str) {
-        let now = Instant::now();
         let mut inner = self.inner.lock().expect("lock rate limiter mutex");
-        let key = (ip, username.to_lowercase());
-        inner.user_attempts.remove(&key);
-        self.sweep_expired(&mut inner, now);
+        inner.user_attempts.remove(&(ip, username.to_lowercase()));
     }
 
     pub fn entry_counts(&self) -> (usize, usize) {
-        let inner = self.inner.lock().expect("lock rate limiter mutex");
+        let now = Instant::now();
+        let mut inner = self.inner.lock().expect("lock rate limiter mutex");
+        inner.sweep_expired(now, self.window);
         (inner.user_attempts.len(), inner.ip_attempts.len())
     }
 }

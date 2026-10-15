@@ -86,7 +86,7 @@ pub async fn post_login_handler(
         return (
             StatusCode::TOO_MANY_REQUESTS,
             HtmlTemplate(LoginTemplate {
-                error: Some(rate_err),
+                error: Some(rate_err.to_string()),
             }),
         )
             .into_response();
