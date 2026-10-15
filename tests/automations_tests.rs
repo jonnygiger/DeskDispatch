@@ -8,12 +8,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
-use deskdispatch::{
-    AppState,
-    auth::generate_csrf_token,
-    config::Config,
-    routes::*,
-};
+use deskdispatch::{AppState, auth::generate_csrf_token, config::Config, routes::*};
 use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -1429,15 +1424,19 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         .unwrap();
     let updated_hash: String = sqlx::Row::get(&user_db, "password_hash");
     let parsed_hash = PasswordHash::new(&updated_hash).unwrap();
-    assert!(argon2.verify_password(new_password.as_bytes(), &parsed_hash).is_ok());
+    assert!(
+        argon2
+            .verify_password(new_password.as_bytes(), &parsed_hash)
+            .is_ok()
+    );
 
     // 3. Admin creates an automation via POST /automations
     let auto_name = format!("E2E Admin Automation {}", uuid::Uuid::new_v4().simple());
-    let auto_name_encoded: String = url::form_urlencoded::byte_serialize(auto_name.as_bytes()).collect();
+    let auto_name_encoded: String =
+        url::form_urlencoded::byte_serialize(auto_name.as_bytes()).collect();
     let create_auto_form = format!(
         "csrf_token={}&name={}&description=Created+during+E2E+test",
-        csrf_token,
-        auto_name_encoded
+        csrf_token, auto_name_encoded
     );
     let req = Request::builder()
         .method("POST")
@@ -1449,12 +1448,24 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let location = res.headers().get(header::LOCATION).unwrap().to_str().unwrap();
-    let automation_id: i64 = location.trim_start_matches("/automations/").parse().unwrap();
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let automation_id: i64 = location
+        .trim_start_matches("/automations/")
+        .parse()
+        .unwrap();
 
     // 4. Admin uploads a reference bitmap
     let test_bitmap_name = format!("E2E Target Logo {}", uuid::Uuid::new_v4().simple());
-    let bitmap_key = format!("bitmaps/e2e_{}_{}.png", admin_id, uuid::Uuid::new_v4().simple());
+    let bitmap_key = format!(
+        "bitmaps/e2e_{}_{}.png",
+        admin_id,
+        uuid::Uuid::new_v4().simple()
+    );
 
     // Upload 15x20 PNG image bytes to S3
     let img_buf = image::RgbImage::from_fn(15, 20, |_, _| image::Rgb([0, 128, 255]));
@@ -1473,12 +1484,11 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         .await;
 
     // Commit reference bitmap via POST /bitmaps/commit
-    let test_bitmap_name_encoded: String = url::form_urlencoded::byte_serialize(test_bitmap_name.as_bytes()).collect();
+    let test_bitmap_name_encoded: String =
+        url::form_urlencoded::byte_serialize(test_bitmap_name.as_bytes()).collect();
     let commit_form = format!(
         "csrf_token={}&key={}&name={}",
-        csrf_token,
-        bitmap_key,
-        test_bitmap_name_encoded
+        csrf_token, bitmap_key, test_bitmap_name_encoded
     );
     let req = Request::builder()
         .method("POST")
@@ -1515,45 +1525,69 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
-    let step_row = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1 AND step_type = 'find_bitmap'")
-        .bind(automation_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let step_row = sqlx::query(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 AND step_type = 'find_bitmap'",
+    )
+    .bind(automation_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     let step_id: i64 = sqlx::Row::get(&step_row, "id");
 
     // 6. In the image selection screen, verify presented image matches up with uploaded bitmap
     // Test A: GET /automations/{id}/steps/new/find_bitmap renders reference_bitmap_id options
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/automations/{}/steps/new/find_bitmap", automation_id))
+        .uri(format!(
+            "/automations/{}/steps/new/find_bitmap",
+            automation_id
+        ))
         .header(header::COOKIE, &cookie_header)
         .body(Body::empty())
         .unwrap();
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let html_new = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-    assert!(html_new.contains(&test_bitmap_name), "Uploaded bitmap name missing in step creation screen");
-    assert!(html_new.contains(&format!("value=\"{}\"", bitmap_id)), "Uploaded bitmap ID missing in option list");
-    assert!(html_new.contains("15x20px"), "Uploaded bitmap dimensions missing in option text");
+    assert!(
+        html_new.contains(&test_bitmap_name),
+        "Uploaded bitmap name missing in step creation screen"
+    );
+    assert!(
+        html_new.contains(&format!("value=\"{}\"", bitmap_id)),
+        "Uploaded bitmap ID missing in option list"
+    );
+    assert!(
+        html_new.contains("15x20px"),
+        "Uploaded bitmap dimensions missing in option text"
+    );
 
     // Test B: GET /automations/{id}/steps/{sid}/edit presents the uploaded bitmap selected
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/automations/{}/steps/{}/edit", automation_id, step_id))
+        .uri(format!(
+            "/automations/{}/steps/{}/edit",
+            automation_id, step_id
+        ))
         .header(header::COOKIE, &cookie_header)
         .body(Body::empty())
         .unwrap();
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let html_edit = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-    assert!(html_edit.contains(&test_bitmap_name), "Uploaded bitmap name missing in step edit screen");
+    assert!(
+        html_edit.contains(&test_bitmap_name),
+        "Uploaded bitmap name missing in step edit screen"
+    );
     let expected_option = format!("<option value=\"{}\" selected>", bitmap_id);
     assert!(
         html_edit.contains(&expected_option),
