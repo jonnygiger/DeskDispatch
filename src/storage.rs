@@ -1,12 +1,9 @@
 use aws_sdk_s3::Client;
 use aws_sdk_s3::presigning::PresigningConfig;
 use chrono::Utc;
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::time::Duration;
-
-type HmacSha256 = Hmac<Sha256>;
 
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 
@@ -132,10 +129,33 @@ pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
     Some(decoded)
 }
 
-fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key length valid");
-    mac.update(data);
-    mac.finalize().into_bytes().into()
+/// Zero-dependency HMAC-SHA256 calculation according to RFC 2104 / RFC 4231 using `sha2::Sha256`.
+pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    let mut k_ipad = [0x36u8; 64];
+    let mut k_opad = [0x5cu8; 64];
+
+    if key.len() > 64 {
+        let hashed_key = Sha256::digest(key);
+        for (i, &b) in hashed_key.iter().enumerate() {
+            k_ipad[i] ^= b;
+            k_opad[i] ^= b;
+        }
+    } else {
+        for (i, &b) in key.iter().enumerate() {
+            k_ipad[i] ^= b;
+            k_opad[i] ^= b;
+        }
+    }
+
+    let mut inner_hasher = Sha256::new();
+    inner_hasher.update(k_ipad);
+    inner_hasher.update(data);
+    let inner_hash = inner_hasher.finalize();
+
+    let mut outer_hasher = Sha256::new();
+    outer_hasher.update(k_opad);
+    outer_hasher.update(inner_hash);
+    outer_hasher.finalize().into()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -439,9 +459,19 @@ pub fn generate_presigned_post_policy(
 
     let policy_base64 = encode_base64(policy_str.as_bytes());
 
-    // SigV4 Key Calculation
-    let k_secret = format!("AWS4{}", secret_key);
-    let k_date = hmac_sha256(k_secret.as_bytes(), date_str.as_bytes());
+    // SigV4 Key Calculation without heap String allocations
+    let k_secret_bytes = if secret_key.len() <= 56 {
+        let mut buf = [0u8; 64];
+        buf[..4].copy_from_slice(b"AWS4");
+        buf[4..4 + secret_key.len()].copy_from_slice(secret_key.as_bytes());
+        hmac_sha256(&buf[..4 + secret_key.len()], date_str.as_bytes())
+    } else {
+        let mut vec = Vec::with_capacity(4 + secret_key.len());
+        vec.extend_from_slice(b"AWS4");
+        vec.extend_from_slice(secret_key.as_bytes());
+        hmac_sha256(&vec, date_str.as_bytes())
+    };
+    let k_date = k_secret_bytes;
     let k_region = hmac_sha256(&k_date, region.as_bytes());
     let k_service = hmac_sha256(&k_region, b"s3");
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
@@ -524,6 +554,27 @@ mod tests {
     fn test_encode_hex() {
         let input = b"\x00\x0f\x10\xff";
         assert_eq!(encode_hex(input), "000f10ff");
+    }
+
+    #[test]
+    fn test_hmac_sha256_rfc4231_vectors() {
+        // RFC 4231 Test Case 1
+        let key1 = [0x0bu8; 20];
+        let data1 = b"Hi There";
+        let expected1 = "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7";
+        assert_eq!(encode_hex(&hmac_sha256(&key1, data1)), expected1);
+
+        // RFC 4231 Test Case 2 ("Jefe")
+        let key2 = b"Jefe";
+        let data2 = b"what do ya want for nothing?";
+        let expected2 = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
+        assert_eq!(encode_hex(&hmac_sha256(key2, data2)), expected2);
+
+        // RFC 4231 Test Case 6 (Key > 64 bytes)
+        let key6 = [0xaa_u8; 131];
+        let data6 = b"Test Using Larger Than Block-Size Key - Hash Key First";
+        let expected6 = "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54";
+        assert_eq!(encode_hex(&hmac_sha256(&key6, data6)), expected6);
     }
 
     #[tokio::test]
