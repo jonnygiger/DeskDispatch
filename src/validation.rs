@@ -145,18 +145,22 @@ struct StepNode {
 }
 
 /// Compact bitset for variable initialization tracking.
-/// Every `VarBitSet` for an automation shares the exact same word vector length `num_words = num_vars.div_ceil(64)`.
+/// Inlined for `num_vars <= 64` to eliminate inner heap allocations on validation hot path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VarBitSet {
-    words: Vec<u64>,
+    w0: u64,
+    extra: Option<Box<[u64]>>,
 }
 
 impl VarBitSet {
     fn empty(num_vars: usize) -> Self {
-        let num_words = num_vars.div_ceil(64).max(1);
-        Self {
-            words: vec![0; num_words],
-        }
+        let extra = if num_vars > 64 {
+            let extra_words = (num_vars - 64).div_ceil(64);
+            Some(vec![0u64; extra_words].into_boxed_slice())
+        } else {
+            None
+        };
+        Self { w0: 0, extra }
     }
 
     fn all(num_vars: usize) -> Self {
@@ -167,46 +171,77 @@ impl VarBitSet {
 
     fn fill_all(&mut self, num_vars: usize) {
         if num_vars == 0 {
-            self.words.fill(0);
+            self.w0 = 0;
+            if let Some(extra) = &mut self.extra {
+                extra.fill(0);
+            }
             return;
         }
-        self.words.fill(u64::MAX);
-        let rem = num_vars % 64;
-        if rem != 0 {
-            if let Some(last) = self.words.last_mut() {
-                *last = (1u64 << rem) - 1;
+
+        if num_vars <= 64 {
+            self.w0 = if num_vars == 64 {
+                u64::MAX
+            } else {
+                (1u64 << num_vars) - 1
+            };
+            if let Some(extra) = &mut self.extra {
+                extra.fill(0);
+            }
+        } else {
+            self.w0 = u64::MAX;
+            if let Some(extra) = &mut self.extra {
+                extra.fill(u64::MAX);
+                let rem = (num_vars - 64) % 64;
+                if rem != 0 {
+                    if let Some(last) = extra.last_mut() {
+                        *last = (1u64 << rem) - 1;
+                    }
+                }
             }
         }
     }
 
     #[inline]
     fn copy_from(&mut self, other: &Self) {
-        self.words.copy_from_slice(&other.words);
+        self.w0 = other.w0;
+        if let (Some(s_extra), Some(o_extra)) = (&mut self.extra, &other.extra) {
+            s_extra.copy_from_slice(o_extra);
+        }
     }
 
     #[inline]
     fn set(&mut self, idx: usize) {
-        if let Some(w) = self.words.get_mut(idx / 64) {
-            *w |= 1u64 << (idx % 64);
+        if idx < 64 {
+            self.w0 |= 1u64 << idx;
+        } else if let Some(extra) = &mut self.extra {
+            if let Some(w) = extra.get_mut((idx - 64) / 64) {
+                *w |= 1u64 << ((idx - 64) % 64);
+            }
         }
     }
 
     #[inline]
     fn contains(&self, idx: usize) -> bool {
-        self.words
-            .get(idx / 64)
-            .is_some_and(|&w| (w & (1u64 << (idx % 64))) != 0)
+        if idx < 64 {
+            (self.w0 & (1u64 << idx)) != 0
+        } else {
+            self.extra.as_ref().is_some_and(|e| {
+                e.get((idx - 64) / 64)
+                    .is_some_and(|&w| (w & (1u64 << ((idx - 64) % 64))) != 0)
+            })
+        }
     }
 
     /// Intersects `self` in-place with `(pred_inits | pred_writes)` for predecessor node `p`.
     #[inline]
     fn intersect_with_pred_output(&mut self, pred_inits: &Self, pred_writes: &Self) {
-        for (w, (&a, &b)) in self
-            .words
-            .iter_mut()
-            .zip(pred_inits.words.iter().zip(&pred_writes.words))
+        self.w0 &= pred_inits.w0 | pred_writes.w0;
+        if let (Some(s_ex), Some(i_ex), Some(w_ex)) =
+            (&mut self.extra, &pred_inits.extra, &pred_writes.extra)
         {
-            *w &= a | b;
+            for (sw, (&iw, &ww)) in s_ex.iter_mut().zip(i_ex.iter().zip(w_ex.iter())) {
+                *sw &= iw | ww;
+            }
         }
     }
 }
