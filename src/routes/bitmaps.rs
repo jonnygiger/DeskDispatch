@@ -526,8 +526,25 @@ pub fn validate_bitmap_key(key: &str, user_id: i64) -> bool {
     true
 }
 
-/// Probes bitmap dimensions from S3 using a ranged GET request with `image::Limits`.
-/// Enforces PNG format only and fails on probe or retrieval errors.
+/// Zero-allocation O(1) PNG header parser.
+/// Verifies PNG magic bytes `[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]` and `IHDR` chunk marker (`[0x49, 0x48, 0x44, 0x52]`),
+/// returning `(width, height)` as `(u32, u32)` directly from PNG header bytes without decoding image payload or heap allocations.
+#[inline]
+pub fn parse_png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const PNG_HEADER: &[u8; 8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.len() < 24 || &bytes[..8] != PNG_HEADER || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    Some((w, h))
+}
+
+/// Probes bitmap dimensions from S3 using a ranged GET request.
+/// Enforces PNG format only via zero-allocation PNG IHDR header parsing and fails on probe or retrieval errors.
 pub async fn probe_s3_bitmap_dimensions(
     state: &AppState,
     key: &str,
@@ -537,7 +554,7 @@ pub async fn probe_s3_bitmap_dimensions(
         .get_object()
         .bucket(&state.config.s3_bucket)
         .key(key)
-        .range("bytes=0-65535")
+        .range("bytes=0-63")
         .send()
         .await
         .map_err(|e| {
@@ -562,31 +579,10 @@ pub async fn probe_s3_bitmap_dimensions(
 
     let bytes = aggregated.into_bytes();
 
-    let format = image::guess_format(&bytes)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Failed to determine image format"))?;
-
-    if format != image::ImageFormat::Png {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Only PNG images are supported for reference bitmaps",
-        ));
-    }
-
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(10000);
-    limits.max_image_height = Some(10000);
-
-    let mut reader =
-        image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Png);
-    reader.limits(limits);
-
-    let (w, h) = reader.into_dimensions().map_err(|e| {
-        tracing::error!("Failed to parse PNG dimensions for key {}: {}", key, e);
-        (
-            StatusCode::BAD_REQUEST,
-            "Failed to parse PNG image dimensions",
-        )
-    })?;
+    let (w, h) = parse_png_dimensions(&bytes).ok_or((
+        StatusCode::BAD_REQUEST,
+        "Only PNG images are supported for reference bitmaps",
+    ))?;
 
     Ok((w as i32, h as i32))
 }
@@ -1481,6 +1477,43 @@ mod tests {
         // Boundary clamping near native max
         let (nx_max, ny_max) = map_grid_click_to_native(319, 319, 1918, 1078, 1920, 1080);
         assert_eq!((nx_max, ny_max), (1919, 1079));
+    }
+
+    #[test]
+    fn test_parse_png_dimensions() {
+        // Valid PNG header for 1920 x 1080 image
+        let mut valid_png = vec![0u8; 24];
+        valid_png[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        valid_png[8..12].copy_from_slice(&13u32.to_be_bytes()); // Chunk length = 13
+        valid_png[12..16].copy_from_slice(b"IHDR");
+        valid_png[16..20].copy_from_slice(&1920u32.to_be_bytes());
+        valid_png[20..24].copy_from_slice(&1080u32.to_be_bytes());
+
+        assert_eq!(parse_png_dimensions(&valid_png), Some((1920, 1080)));
+
+        // Valid PNG header for 100 x 50 image
+        let mut valid_small = valid_png.clone();
+        valid_small[16..20].copy_from_slice(&100u32.to_be_bytes());
+        valid_small[20..24].copy_from_slice(&50u32.to_be_bytes());
+        assert_eq!(parse_png_dimensions(&valid_small), Some((100, 50)));
+
+        // Too short buffer
+        assert_eq!(parse_png_dimensions(&valid_png[..20]), None);
+
+        // Invalid PNG signature magic
+        let mut bad_magic = valid_png.clone();
+        bad_magic[0] = 0x00;
+        assert_eq!(parse_png_dimensions(&bad_magic), None);
+
+        // Invalid chunk type (JPEG or non-IHDR)
+        let mut bad_chunk = valid_png.clone();
+        bad_chunk[12..16].copy_from_slice(b"gAMA");
+        assert_eq!(parse_png_dimensions(&bad_chunk), None);
+
+        // Zero dimensions
+        let mut zero_dim = valid_png.clone();
+        zero_dim[16..20].copy_from_slice(&0u32.to_be_bytes());
+        assert_eq!(parse_png_dimensions(&zero_dim), None);
     }
 
     #[test]
