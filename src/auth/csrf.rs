@@ -3,23 +3,16 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
 use uuid::Uuid;
 
 use super::user::AuthUser;
 use crate::AppState;
 
-type HmacSha256 = Hmac<Sha256>;
-
 pub fn generate_csrf_token(session_id: Uuid, session_secret: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(session_secret.as_bytes())
-        .expect("HMAC can take key of any size");
     let mut buf = [0u8; 36];
     let str_uuid = session_id.hyphenated().encode_lower(&mut buf);
-    mac.update(str_uuid.as_bytes());
-    let result = mac.finalize();
-    crate::storage::encode_hex(&result.into_bytes())
+    let mac_result = crate::storage::hmac_sha256(session_secret.as_bytes(), str_uuid.as_bytes());
+    crate::storage::encode_hex(&mac_result)
 }
 
 pub fn validate_csrf_token(token: &str, expected_token: &str) -> bool {
