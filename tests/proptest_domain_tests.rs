@@ -100,27 +100,36 @@ proptest! {
         prop_assert!(!needs_position_compaction(&sorted_compacted));
     }
 
-    // 3. Step position swap property: swapping two adjacent step positions preserves overall set and order bounds
+    // 3. Step position swap property: swapping two adjacent step positions preserves overall set, element isolation, exact value exchange, and reversibility
     #[test]
     fn prop_step_position_swap_invariants(
-        positions in prop::collection::vec(10.0f64..100.0f64, 2..20),
-        swap_idx in 0..19usize
+        (positions, swap_idx) in prop::collection::vec(10.0f64..100.0f64, 2..20)
+            .prop_flat_map(|vec| {
+                let max_swap = vec.len() - 2;
+                (Just(vec), 0..=max_swap)
+            })
     ) {
-        if swap_idx >= positions.len() - 1 {
-            return Ok(());
-        }
-
         let mut swapped = positions.clone();
         swapped.swap(swap_idx, swap_idx + 1);
 
-        // Position set size preserved
+        // 1. Position set size preserved
         prop_assert_eq!(swapped.len(), positions.len());
-        // Elements outside swap index remain untouched
+
+        // 2. Exact value swapping at indices swap_idx and swap_idx + 1
+        prop_assert_eq!(swapped[swap_idx], positions[swap_idx + 1]);
+        prop_assert_eq!(swapped[swap_idx + 1], positions[swap_idx]);
+
+        // 3. Elements outside swap index remain untouched
         for i in 0..positions.len() {
             if i != swap_idx && i != swap_idx + 1 {
                 prop_assert_eq!(swapped[i], positions[i]);
             }
         }
+
+        // 4. Reversibility invariant: swapping again restores original vector
+        let mut restored = swapped.clone();
+        restored.swap(swap_idx, swap_idx + 1);
+        prop_assert_eq!(restored, positions);
     }
 
     // 4. Task run state machine terminal state invariant: terminal states cannot transition to non-terminal or different terminal states
