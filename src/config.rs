@@ -1,5 +1,38 @@
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
+use std::collections::HashMap;
 use std::env;
+
+/// Zero-dependency `.env` file parser returning key-value pairs without modifying process environment state.
+pub fn parse_dotenv() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Ok(content) = std::fs::read_to_string(".env") else {
+        return map;
+    };
+    parse_dotenv_content(&content, &mut map);
+    map
+}
+
+pub fn parse_dotenv_content(content: &str, map: &mut HashMap<String, String>) {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            let unquoted = if value.len() >= 2
+                && ((value.starts_with('"') && value.ends_with('"'))
+                    || (value.starts_with('\'') && value.ends_with('\'')))
+            {
+                &value[1..value.len() - 1]
+            } else {
+                value
+            };
+            map.insert(key.to_string(), unquoted.to_string());
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -31,101 +64,89 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self, String> {
-        let _ = dotenvy::dotenv();
+        let dotenv_vars = parse_dotenv();
 
-        let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+        let get_var = |key: &str| -> Option<String> {
+            env::var(key)
+                .ok()
+                .or_else(|| dotenv_vars.get(key).cloned())
+                .filter(|v| !v.trim().is_empty())
+        };
+
+        let database_url = get_var("DATABASE_URL").unwrap_or_else(|| {
             "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
         });
 
-        let public_base_url = env::var("PUBLIC_BASE_URL")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| "http://localhost:3000".to_string());
+        let public_base_url =
+            get_var("PUBLIC_BASE_URL").unwrap_or_else(|| "http://localhost:3000".to_string());
 
-        let s3_endpoint = env::var("S3_ENDPOINT")
-            .ok()
-            .filter(|v| !v.trim().is_empty());
+        let s3_endpoint = get_var("S3_ENDPOINT");
 
-        let s3_public_endpoint = env::var("S3_PUBLIC_ENDPOINT")
-            .ok()
-            .filter(|v| !v.trim().is_empty());
+        let s3_public_endpoint = get_var("S3_PUBLIC_ENDPOINT");
 
-        let s3_bucket = env::var("S3_BUCKET").unwrap_or_else(|_| "deskdispatch-bucket".to_string());
+        let s3_bucket = get_var("S3_BUCKET").unwrap_or_else(|| "deskdispatch-bucket".to_string());
 
-        let s3_access_key = env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "rustfsadmin".to_string());
+        let s3_access_key = get_var("S3_ACCESS_KEY").unwrap_or_else(|| "rustfsadmin".to_string());
 
         let s3_secret_key =
-            env::var("S3_SECRET_KEY").unwrap_or_else(|_| "rustfsadminpassword".to_string());
+            get_var("S3_SECRET_KEY").unwrap_or_else(|| "rustfsadminpassword".to_string());
 
-        let s3_region = env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+        let s3_region = get_var("S3_REGION").unwrap_or_else(|| "us-east-1".to_string());
 
-        let session_secret = env::var("SESSION_SECRET")
-            .unwrap_or_else(|_| "default_session_secret_change_me_in_production".to_string());
+        let session_secret = get_var("SESSION_SECRET")
+            .unwrap_or_else(|| "default_session_secret_change_me_in_production".to_string());
 
-        let bind_address = env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
+        let bind_address = get_var("BIND_ADDRESS").unwrap_or_else(|| "0.0.0.0:3000".to_string());
 
-        let environment = env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
+        let environment = get_var("APP_ENV").unwrap_or_else(|| "development".to_string());
 
-        let min_agent_version = env::var("MIN_AGENT_VERSION")
-            .ok()
-            .filter(|v| !v.trim().is_empty());
+        let min_agent_version = get_var("MIN_AGENT_VERSION");
 
-        let worker_poll_interval_secs = env::var("WORKER_POLL_INTERVAL_SECS")
-            .ok()
+        let worker_poll_interval_secs = get_var("WORKER_POLL_INTERVAL_SECS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(5);
 
-        let worker_heartbeat_interval_secs = env::var("WORKER_HEARTBEAT_INTERVAL_SECS")
-            .ok()
+        let worker_heartbeat_interval_secs = get_var("WORKER_HEARTBEAT_INTERVAL_SECS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(15);
 
-        let trust_proxy_headers = env::var("TRUST_PROXY_HEADERS")
+        let trust_proxy_headers = get_var("TRUST_PROXY_HEADERS")
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
             .unwrap_or(false);
 
-        let database_max_connections = env::var("DATABASE_MAX_CONNECTIONS")
-            .ok()
+        let database_max_connections = get_var("DATABASE_MAX_CONNECTIONS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(20);
 
-        let database_acquire_timeout_secs = env::var("DATABASE_ACQUIRE_TIMEOUT_SECS")
-            .ok()
+        let database_acquire_timeout_secs = get_var("DATABASE_ACQUIRE_TIMEOUT_SECS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(5);
 
-        let worker_long_poll_timeout_secs = env::var("WORKER_LONG_POLL_TIMEOUT_SECS")
-            .ok()
+        let worker_long_poll_timeout_secs = get_var("WORKER_LONG_POLL_TIMEOUT_SECS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(10);
 
-        let session_retention_days = env::var("SESSION_RETENTION_DAYS")
-            .ok()
+        let session_retention_days = get_var("SESSION_RETENTION_DAYS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(7);
 
-        let audit_log_retention_days = env::var("AUDIT_LOG_RETENTION_DAYS")
-            .ok()
+        let audit_log_retention_days = get_var("AUDIT_LOG_RETENTION_DAYS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(90);
 
-        let task_run_step_retention_days = env::var("TASK_RUN_STEP_RETENTION_DAYS")
-            .ok()
+        let task_run_step_retention_days = get_var("TASK_RUN_STEP_RETENTION_DAYS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(30);
 
-        let screenshot_retention_days = env::var("SCREENSHOT_RETENTION_DAYS")
-            .ok()
+        let screenshot_retention_days = get_var("SCREENSHOT_RETENTION_DAYS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(30);
 
-        let metrics_bind_address = env::var("METRICS_BIND_ADDRESS")
-            .ok()
-            .filter(|v| !v.trim().is_empty());
+        let metrics_bind_address = get_var("METRICS_BIND_ADDRESS");
 
-        let unattended_registration_psk = env::var("UNATTENDED_REGISTRATION_PSK")
-            .or_else(|_| env::var("STATIC_PSK"))
-            .unwrap_or_else(|_| "deskdispatch_wps_psk_secret".to_string());
+        let unattended_registration_psk = get_var("UNATTENDED_REGISTRATION_PSK")
+            .or_else(|| get_var("STATIC_PSK"))
+            .unwrap_or_else(|| "deskdispatch_wps_psk_secret".to_string());
 
         let config = Self {
             database_url,
@@ -164,6 +185,23 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.is_production() {
+            if self.session_secret.expose_secret()
+                == "default_session_secret_change_me_in_production"
+            {
+                return Err(
+                    "In production mode, SESSION_SECRET must be set to a custom secret."
+                        .to_string(),
+                );
+            }
+            if self.s3_access_key == "rustfsadmin"
+                || self.s3_secret_key.expose_secret() == "rustfsadminpassword"
+            {
+                return Err(
+                    "In production mode, default S3 credentials cannot be used.".to_string()
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -220,6 +258,57 @@ mod tests {
     fn test_production_secure_config_succeeds() {
         let config = create_valid_prod_config();
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_production_config_rejects_default_credentials() {
+        let mut config = create_valid_prod_config();
+        config.session_secret =
+            SecretString::from("default_session_secret_change_me_in_production".to_string());
+        assert!(config.validate().is_err());
+
+        let mut config2 = create_valid_prod_config();
+        config2.s3_access_key = "rustfsadmin".to_string();
+        assert!(config2.validate().is_err());
+
+        let mut config3 = create_valid_prod_config();
+        config3.s3_secret_key = SecretString::from("rustfsadminpassword".to_string());
+        assert!(config3.validate().is_err());
+    }
+
+    #[test]
+    fn test_parse_dotenv_content() {
+        let env_content = r#"
+# Comment line
+TEST_DESKDISPATCH_PORT=8080
+TEST_DESKDISPATCH_NAME="DeskDispatch Service"
+TEST_DESKDISPATCH_SINGLE='SingleQuoted'
+TEST_DESKDISPATCH_QUOTE_CHAR="
+TEST_DESKDISPATCH_APOS_CHAR='
+"#;
+        let mut map = HashMap::new();
+        parse_dotenv_content(env_content, &mut map);
+
+        assert_eq!(
+            map.get("TEST_DESKDISPATCH_PORT").map(String::as_str),
+            Some("8080")
+        );
+        assert_eq!(
+            map.get("TEST_DESKDISPATCH_NAME").map(String::as_str),
+            Some("DeskDispatch Service")
+        );
+        assert_eq!(
+            map.get("TEST_DESKDISPATCH_SINGLE").map(String::as_str),
+            Some("SingleQuoted")
+        );
+        assert_eq!(
+            map.get("TEST_DESKDISPATCH_QUOTE_CHAR").map(String::as_str),
+            Some("\"")
+        );
+        assert_eq!(
+            map.get("TEST_DESKDISPATCH_APOS_CHAR").map(String::as_str),
+            Some("'")
+        );
     }
 
     #[test]
