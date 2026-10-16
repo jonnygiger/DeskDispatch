@@ -75,11 +75,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
 
     let state = AppState {
         db: pool.clone(),
-        s3_client: aws_sdk_s3::Client::from_conf(
-            aws_sdk_s3::config::Builder::new()
-                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-                .build(),
-        ),
+        storage: deskdispatch::storage::StorageService::new(&config.s3_bucket),
         config,
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tx_notify.clone(),
