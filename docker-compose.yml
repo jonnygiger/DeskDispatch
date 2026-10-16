@@ -104,6 +104,7 @@ services:
       S3_ACCESS_KEY: deskdispatch_s3_user
       S3_SECRET_KEY: deskdispatch_s3_prod_secret_4712
       S3_REGION: us-east-1
+      SESSION_SECRET: deskdispatch_session_prod_secret_8832
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: test
       ADMIN_DISPLAY_NAME: Admin
