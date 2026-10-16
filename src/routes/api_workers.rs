@@ -46,10 +46,6 @@ pub fn router() -> Router<AppState> {
             post(post_task_run_screenshot_commit_handler),
         )
         .route(
-            "/api/v1/workers/task-runs/{id}/screenshots/{*object_key}/commit",
-            post(post_task_run_screenshot_commit_with_key_handler),
-        )
-        .route(
             "/api/v1/workers/recordings/{id}/events",
             post(post_recording_events_handler),
         )
