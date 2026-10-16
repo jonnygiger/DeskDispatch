@@ -1,19 +1,18 @@
 use askama::Template;
 use axum::{
+    Router,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
+    routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use sqlx::Row;
 
 use super::auth::HtmlTemplate;
 use super::workers::WorkerDetail;
 use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
 use crate::magnifier::ImageMagnifier;
-use axum::Router;
-use axum::routing::{get, post};
 
 use crate::AppState;
 
@@ -37,6 +36,20 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RecordingSessionDetailRow {
+    pub id: i64,
+    pub worker_id: i64,
+    pub worker_display_name: String,
+    pub worker_hostname: String,
+    pub started_by_user_id: i64,
+    pub started_by_display_name: String,
+    pub status: String,
+    pub resulting_automation_id: Option<i64>,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RecordingSessionDetail {
     pub id: i64,
@@ -49,6 +62,23 @@ pub struct RecordingSessionDetail {
     pub resulting_automation_id: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
+}
+
+impl From<RecordingSessionDetailRow> for RecordingSessionDetail {
+    fn from(r: RecordingSessionDetailRow) -> Self {
+        Self {
+            id: r.id,
+            worker_id: r.worker_id,
+            worker_display_name: r.worker_display_name,
+            worker_hostname: r.worker_hostname,
+            started_by_user_id: r.started_by_user_id,
+            started_by_display_name: r.started_by_display_name,
+            status: r.status,
+            resulting_automation_id: r.resulting_automation_id,
+            started_at: r.started_at,
+            ended_at: r.ended_at,
+        }
+    }
 }
 
 impl RecordingSessionDetail {
@@ -72,6 +102,20 @@ impl RecordingSessionDetail {
             None => "In progress".to_string(),
         }
     }
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RecordingEventRow {
+    pub id: i64,
+    pub recording_session_id: i64,
+    pub sequence_number: i32,
+    pub event_type: String,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub button: Option<String>,
+    pub key_combo: Option<String>,
+    pub screenshot_object_key: Option<String>,
+    pub captured_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -220,19 +264,18 @@ pub async fn post_worker_record_start_handler(
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    let worker_exists = matches!(
-        sqlx::query("SELECT id FROM task_worker_pcs WHERE id = $1")
+    let worker_exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM task_worker_pcs WHERE id = $1)")
             .bind(id)
-            .fetch_optional(&state.db)
-            .await,
-        Ok(Some(_))
-    );
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(false);
 
     if !worker_exists {
         return (StatusCode::NOT_FOUND, "Worker PC not found").into_response();
     }
 
-    let insert_res = sqlx::query(
+    let session_id = match sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO recording_sessions (worker_id, started_by_user_id, status, started_at)
         VALUES ($1, $2, 'recording', now())
@@ -242,10 +285,9 @@ pub async fn post_worker_record_start_handler(
     .bind(id)
     .bind(user.id)
     .fetch_one(&state.db)
-    .await;
-
-    let session_id: i64 = match insert_res {
-        Ok(r) => r.get("id"),
+    .await
+    {
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create recording_session: {}", e);
             return (
@@ -275,7 +317,7 @@ async fn fetch_recording_session_detail(
     db: &sqlx::PgPool,
     session_id: i64,
 ) -> Result<Option<RecordingSessionDetail>, sqlx::Error> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, RecordingSessionDetailRow>(
         r#"
         SELECT
             rs.id,
@@ -298,18 +340,7 @@ async fn fetch_recording_session_detail(
     .fetch_optional(db)
     .await?;
 
-    Ok(row.map(|r| RecordingSessionDetail {
-        id: r.get("id"),
-        worker_id: r.get("worker_id"),
-        worker_display_name: r.get("worker_display_name"),
-        worker_hostname: r.get("worker_hostname"),
-        started_by_user_id: r.get("started_by_user_id"),
-        started_by_display_name: r.get("started_by_display_name"),
-        status: r.get("status"),
-        resulting_automation_id: r.get("resulting_automation_id"),
-        started_at: r.get("started_at"),
-        ended_at: r.get("ended_at"),
-    }))
+    Ok(row.map(Into::into))
 }
 
 /// GET /recordings/{id}
@@ -320,8 +351,6 @@ pub async fn get_recording_status_handler(
     user: AuthUser,
     axum::extract::Query(query): axum::extract::Query<RecordingStatusQuery>,
 ) -> impl IntoResponse {
-    // Bolt Optimization: Run recording session detail query and event count query concurrently
-    // using `tokio::join!`, halving database wait latency for recording status frame updates.
     let (session_res, event_count_res) = tokio::join!(
         fetch_recording_session_detail(&state.db, id),
         sqlx::query_scalar::<_, i64>(
@@ -391,11 +420,9 @@ pub async fn get_recording_review_handler(
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    // Bolt Optimization: Run recording session detail query and event list query concurrently
-    // using `tokio::join!`, halving database wait latency for recording review page loads.
     let (session_res, event_rows_res) = tokio::join!(
         fetch_recording_session_detail(&state.db, id),
-        sqlx::query(
+        sqlx::query_as::<_, RecordingEventRow>(
             r#"
             SELECT
                 id, recording_session_id, sequence_number, event_type,
@@ -414,58 +441,56 @@ pub async fn get_recording_review_handler(
         _ => return Redirect::to("/workers").into_response(),
     };
 
-    let event_rows = match event_rows_res {
-        Ok(rows) => rows,
-        Err(e) => {
-            tracing::error!("Error fetching recording_events: {}", e);
-            Vec::new()
-        }
-    };
-
+    let event_rows = event_rows_res.unwrap_or_default();
     let storage = state.storage_service();
-    let mut events = Vec::new();
 
-    for r in event_rows {
-        let event_id: i64 = r.get("id");
-        let recording_session_id: i64 = r.get("recording_session_id");
-        let sequence_number: i32 = r.get("sequence_number");
-        let event_type: String = r.get("event_type");
-        let x: Option<i32> = r.get("x");
-        let y: Option<i32> = r.get("y");
-        let button: Option<String> = r.get("button");
-        let key_combo: Option<String> = r.get("key_combo");
-        let screenshot_object_key: Option<String> = r.get("screenshot_object_key");
-        let captured_at: DateTime<Utc> = r.get("captured_at");
+    let mut set = tokio::task::JoinSet::new();
+    for (idx, r) in event_rows.into_iter().enumerate() {
+        let storage = storage.clone();
+        set.spawn(async move {
+            let mut magnifier = None;
+            if let Some(ref key) = r.screenshot_object_key
+                && let Ok(presigned_url) = storage
+                    .generate_presigned_get_url(key, std::time::Duration::from_secs(3600))
+                    .await
+            {
+                magnifier = Some(ImageMagnifier::new(
+                    presigned_url,
+                    1920,
+                    1080,
+                    r.x.and_then(|v| u32::try_from(v).ok()),
+                    r.y.and_then(|v| u32::try_from(v).ok()),
+                ));
+            }
 
-        let mut magnifier = None;
-        if let Some(ref key) = screenshot_object_key
-            && let Ok(presigned_url) = storage
-                .generate_presigned_get_url(key, std::time::Duration::from_secs(3600))
-                .await
-        {
-            magnifier = Some(ImageMagnifier::new(
-                presigned_url,
-                1920,
-                1080,
-                x.and_then(|v| u32::try_from(v).ok()),
-                y.and_then(|v| u32::try_from(v).ok()),
-            ));
-        }
-
-        events.push(RecordingEventDetail {
-            id: event_id,
-            recording_session_id,
-            sequence_number,
-            event_type,
-            x,
-            y,
-            button,
-            key_combo,
-            screenshot_object_key,
-            captured_at,
-            magnifier,
+            (
+                idx,
+                RecordingEventDetail {
+                    id: r.id,
+                    recording_session_id: r.recording_session_id,
+                    sequence_number: r.sequence_number,
+                    event_type: r.event_type,
+                    x: r.x,
+                    y: r.y,
+                    button: r.button,
+                    key_combo: r.key_combo,
+                    screenshot_object_key: r.screenshot_object_key,
+                    captured_at: r.captured_at,
+                    magnifier,
+                },
+            )
         });
     }
+
+    let mut indexed_events = Vec::with_capacity(set.len());
+    while let Some(res) = set.join_next().await {
+        if let Ok(pair) = res {
+            indexed_events.push(pair);
+        }
+    }
+    indexed_events.sort_unstable_by_key(|(idx, _)| *idx);
+    let events: Vec<RecordingEventDetail> =
+        indexed_events.into_iter().map(|(_, evt)| evt).collect();
 
     let default_automation_name = format!(
         "Recorded Automation - {}",
@@ -529,10 +554,13 @@ pub async fn post_recording_convert_handler(
         .trim()
         .to_string();
 
-    let _session = match fetch_recording_session_detail(&state.db, id).await {
-        Ok(Some(s)) => s,
-        _ => return Redirect::to("/workers").into_response(),
-    };
+    if (fetch_recording_session_detail(&state.db, id).await)
+        .ok()
+        .flatten()
+        .is_none()
+    {
+        return Redirect::to("/workers").into_response();
+    }
 
     let mut tx = match state.db.begin().await {
         Ok(t) => t,
@@ -545,17 +573,16 @@ pub async fn post_recording_convert_handler(
         }
     };
 
-    let new_automation_row = sqlx::query(
+    let new_automation_id: i64 = match sqlx::query_scalar::<_, i64>(
         "INSERT INTO automations (name, description, status, created_by) VALUES ($1, $2, 'draft', $3) RETURNING id",
     )
     .bind(auto_name)
     .bind(&auto_desc)
     .bind(user.id)
     .fetch_one(&mut *tx)
-    .await;
-
-    let new_automation_id: i64 = match new_automation_row {
-        Ok(r) => r.get("id"),
+    .await
+    {
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create automation during conversion: {}", e);
             let _ = tx.rollback().await;
@@ -567,9 +594,9 @@ pub async fn post_recording_convert_handler(
         crate::routes::automations::variables::ensure_success_variable(&mut *tx, new_automation_id)
             .await;
 
-    let events = sqlx::query(
+    let events = sqlx::query_as::<_, RecordingEventRow>(
         r#"
-        SELECT id, sequence_number, event_type, x, y, button, key_combo, screenshot_object_key
+        SELECT id, recording_session_id, sequence_number, event_type, x, y, button, key_combo, screenshot_object_key, captured_at
         FROM recording_events
         WHERE recording_session_id = $1
           AND id != ALL($2)
@@ -586,39 +613,30 @@ pub async fn post_recording_convert_handler(
     let mut last_created_step_id: Option<i64> = None;
 
     for event in events {
-        let event_type: String = event.get("event_type");
-        let x: Option<i32> = event.get("x");
-        let y: Option<i32> = event.get("y");
-        let button: Option<String> = event.get("button");
-        let key_combo: Option<String> = event.get("key_combo");
-        let screenshot_object_key: Option<String> = event.get("screenshot_object_key");
-
-        match event_type.as_str() {
+        match event.event_type.as_str() {
             "mouse_click" => {
-                let step_row = sqlx::query(
+                if let Ok(step_id) = sqlx::query_scalar::<_, i64>(
                     "INSERT INTO automation_steps (automation_id, position, step_type, post_delay_ms) VALUES ($1, $2, 'mouse_click', 0) RETURNING id",
                 )
                 .bind(new_automation_id)
                 .bind(current_position)
                 .fetch_one(&mut *tx)
-                .await;
-
-                if let Ok(r) = step_row {
-                    let step_id: i64 = r.get("id");
+                .await
+                {
                     last_created_step_id = Some(step_id);
 
-                    let btn = button.as_deref().unwrap_or("left");
+                    let btn = event.button.as_deref().unwrap_or("left");
                     let _ = sqlx::query(
                         "INSERT INTO step_mouse_clicks (step_id, x, y, button, click_type) VALUES ($1, $2, $3, $4, 'single')",
                     )
                     .bind(step_id)
-                    .bind(x.unwrap_or(0))
-                    .bind(y.unwrap_or(0))
+                    .bind(event.x.unwrap_or(0))
+                    .bind(event.y.unwrap_or(0))
                     .bind(btn)
                     .execute(&mut *tx)
                     .await;
 
-                    if let Some(ref key) = screenshot_object_key {
+                    if let Some(ref key) = event.screenshot_object_key {
                         let _ = sqlx::query(
                             "INSERT INTO step_screenshots (step_id, object_storage_key, width, height) VALUES ($1, $2, 1920, 1080) ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key",
                         )
@@ -632,19 +650,17 @@ pub async fn post_recording_convert_handler(
                 }
             }
             "key_press" => {
-                let step_row = sqlx::query(
+                if let Ok(step_id) = sqlx::query_scalar::<_, i64>(
                     "INSERT INTO automation_steps (automation_id, position, step_type, post_delay_ms) VALUES ($1, $2, 'key_press', 0) RETURNING id",
                 )
                 .bind(new_automation_id)
                 .bind(current_position)
                 .fetch_one(&mut *tx)
-                .await;
-
-                if let Ok(r) = step_row {
-                    let step_id: i64 = r.get("id");
+                .await
+                {
                     last_created_step_id = Some(step_id);
 
-                    let combo = key_combo.as_deref().unwrap_or("Enter");
+                    let combo = event.key_combo.as_deref().unwrap_or("Enter");
                     let _ = sqlx::query(
                         "INSERT INTO step_key_presses (step_id, key_combo) VALUES ($1, $2)",
                     )
@@ -653,7 +669,7 @@ pub async fn post_recording_convert_handler(
                     .execute(&mut *tx)
                     .await;
 
-                    if let Some(ref key) = screenshot_object_key {
+                    if let Some(ref key) = event.screenshot_object_key {
                         let _ = sqlx::query(
                             "INSERT INTO step_screenshots (step_id, object_storage_key, width, height) VALUES ($1, $2, 1920, 1080) ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key",
                         )
@@ -667,7 +683,7 @@ pub async fn post_recording_convert_handler(
                 }
             }
             "screenshot" => {
-                if let Some(ref key) = screenshot_object_key
+                if let Some(ref key) = event.screenshot_object_key
                     && let Some(step_id) = last_created_step_id
                 {
                     let _ = sqlx::query(
