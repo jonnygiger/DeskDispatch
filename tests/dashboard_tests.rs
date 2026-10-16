@@ -123,14 +123,14 @@ async fn test_dashboard_stats_tiles() {
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: LoginRateLimiter::default(),
-        task_queue_notifier: tx_notify,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        LoginRateLimiter::default(),
+        tx_notify,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = deskdispatch::build_router(state);
 

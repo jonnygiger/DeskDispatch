@@ -1,21 +1,14 @@
 use crate::AppState;
 use axum::{extract::State, http::header, middleware::Next, response::Response};
 
-/// Middleware to attach security hardening headers to all HTTP responses.
-pub async fn security_headers_middleware(
-    State(state): State<AppState>,
-    req: axum::extract::Request,
-    next: Next,
-) -> Response {
-    let mut response = next.run(req).await;
-    let headers = response.headers_mut();
-
+/// Builds a pre-computed Content Security Policy `HeaderValue` from app configuration.
+pub fn build_csp_header(config: &crate::config::Config) -> header::HeaderValue {
     let mut s3_origins = Vec::new();
-    if let Some(endpoint) = &state.config.s3_public_endpoint
+    if let Some(endpoint) = &config.s3_public_endpoint
         && !endpoint.trim().is_empty()
     {
         s3_origins.push(endpoint.trim());
-    } else if let Some(endpoint) = &state.config.s3_endpoint
+    } else if let Some(endpoint) = &config.s3_endpoint
         && !endpoint.trim().is_empty()
     {
         s3_origins.push(endpoint.trim());
@@ -32,9 +25,20 @@ pub async fn security_headers_middleware(
         extra_origins, extra_origins
     );
 
-    if let Ok(val) = header::HeaderValue::from_str(&csp) {
-        headers.insert(header::CONTENT_SECURITY_POLICY, val);
-    }
+    header::HeaderValue::from_str(&csp)
+        .unwrap_or_else(|_| header::HeaderValue::from_static("default-src 'self'; script-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';"))
+}
+
+/// Middleware to attach security hardening headers to all HTTP responses.
+pub async fn security_headers_middleware(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+
+    headers.insert(header::CONTENT_SECURITY_POLICY, state.csp_header.clone());
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         header::HeaderValue::from_static("nosniff"),
@@ -104,14 +108,14 @@ mod tests {
         let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
         let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
-        AppState {
-            db: pool,
+        AppState::new(
+            pool,
             s3_client,
             config,
-            rate_limiter: LoginRateLimiter::default(),
-            task_queue_notifier: tx_notify,
-            wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        }
+            LoginRateLimiter::default(),
+            tx_notify,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
     }
 
     #[tokio::test]

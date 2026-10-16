@@ -28,7 +28,6 @@ serde_json = "1.0"
 sqlx = { version = "0.9", features = ["postgres", "runtime-tokio", "tls-rustls", "macros", "uuid", "chrono"] }
 thiserror = "2.0"
 tokio = { version = "1", features = ["full"] }
-tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["compression-gzip", "compression-deflate", "compression-br", "trace", "request-id", "timeout", "catch-panic"] }
 rust-embed = "8.13"
 secrecy = "0.8"
@@ -42,4 +41,5 @@ zip = "2.2"
 [dev-dependencies]
 proptest = "1.11"
 reqwest = { version = "0.12", features = ["cookies", "multipart"] }
+tower = { version = "0.5", features = ["util"] }
 utoipa = { version = "5.5", features = ["axum_extras", "chrono"] }

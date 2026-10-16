@@ -262,14 +262,14 @@ async fn test_admin_workers_crud_and_rbac() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = deskdispatch::build_router(state);
 

@@ -69,14 +69,14 @@ async fn test_automations_crud_and_steps_ordering() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -309,14 +309,14 @@ async fn test_mouse_click_step_crud_and_validation() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -548,14 +548,14 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -780,14 +780,14 @@ async fn test_step_type_picker_interface() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -851,14 +851,14 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -1103,14 +1103,14 @@ async fn test_automation_parameters_crud_and_validation() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -1301,14 +1301,14 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
-        s3_client: s3_client.clone(),
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+    let state = AppState::new(
+        pool.clone(),
+        s3_client.clone(),
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(

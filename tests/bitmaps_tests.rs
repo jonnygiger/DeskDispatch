@@ -59,14 +59,14 @@ async fn test_bitmaps_list_routes() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
-        s3_client: s3_client.clone(),
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+    let state = AppState::new(
+        pool.clone(),
+        s3_client.clone(),
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route("/bitmaps", axum::routing::get(get_bitmaps_handler))
@@ -202,14 +202,14 @@ async fn test_bitmap_upload_flow() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
-        s3_client: s3_client.clone(),
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+    let state = AppState::new(
+        pool.clone(),
+        s3_client.clone(),
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -412,14 +412,14 @@ async fn test_bitmap_deletion_flow() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -612,14 +612,14 @@ async fn test_region_picker_top_left_flow() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(
@@ -708,14 +708,14 @@ async fn test_region_picker_confirm_crop_flow() {
         .build();
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tokio::sync::broadcast::channel::<()>(100).0,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route(

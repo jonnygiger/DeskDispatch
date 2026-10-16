@@ -75,14 +75,14 @@ fn build_test_app(pool: sqlx::PgPool, config: Config) -> Router {
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
-    let state = AppState {
-        db: pool,
+    let state = AppState::new(
+        pool,
         s3_client,
         config,
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tx_notify,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tx_notify,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     Router::new()
         .route(

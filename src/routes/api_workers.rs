@@ -172,6 +172,14 @@ struct AutomationMetaRow {
     status: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct AssignmentRow {
+    task_run_id: i64,
+    automation_id: i64,
+    dispatched_automation_json: Option<serde_json::Value>,
+    parameter_overrides: Option<serde_json::Value>,
+}
+
 #[tracing::instrument(skip(db))]
 pub async fn fetch_full_automation_json_with_overrides(
     db: &PgPool,
@@ -512,7 +520,7 @@ pub async fn get_next_assignment_handler(
             }));
         }
 
-        let select_res = sqlx::query(
+        let select_res = sqlx::query_as::<_, AssignmentRow>(
             r#"
             SELECT tr.id AS task_run_id, tr.automation_id, tr.dispatched_automation_json, tr.parameter_overrides
             FROM task_runs tr
@@ -535,11 +543,10 @@ pub async fn get_next_assignment_handler(
         .await?;
 
         if let Some(row) = select_res {
-            let task_run_id: i64 = row.get("task_run_id");
-            let automation_id: i64 = row.get("automation_id");
-            let existing_dispatched: Option<serde_json::Value> =
-                row.get("dispatched_automation_json");
-            let parameter_overrides: Option<serde_json::Value> = row.get("parameter_overrides");
+            let task_run_id = row.task_run_id;
+            let automation_id = row.automation_id;
+            let existing_dispatched = row.dispatched_automation_json;
+            let parameter_overrides = row.parameter_overrides;
 
             let automation_json = match existing_dispatched {
                 Some(json) => json,

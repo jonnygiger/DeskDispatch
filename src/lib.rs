@@ -38,9 +38,30 @@ pub struct AppState {
     pub rate_limiter: auth::LoginRateLimiter,
     pub task_queue_notifier: tokio::sync::broadcast::Sender<()>,
     pub wps_enabled: Arc<AtomicBool>,
+    pub csp_header: axum::http::HeaderValue,
 }
 
 impl AppState {
+    pub fn new(
+        db: PgPool,
+        s3_client: aws_sdk_s3::Client,
+        config: Config,
+        rate_limiter: auth::LoginRateLimiter,
+        task_queue_notifier: tokio::sync::broadcast::Sender<()>,
+        wps_enabled: Arc<AtomicBool>,
+    ) -> Self {
+        let csp_header = auth::security_headers::build_csp_header(&config);
+        Self {
+            db,
+            s3_client,
+            config,
+            rate_limiter,
+            task_queue_notifier,
+            wps_enabled,
+            csp_header,
+        }
+    }
+
     pub fn storage_service(&self) -> storage::StorageService {
         storage::StorageService::new(self.s3_client.clone(), &self.config.s3_bucket)
             .with_credentials(

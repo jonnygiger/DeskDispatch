@@ -244,14 +244,14 @@ async fn test_unauthenticated_redirect_to_login() {
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
-    let state = AppState {
-        db: pool,
+    let state = AppState::new(
+        pool,
         s3_client,
         config,
-        rate_limiter: LoginRateLimiter::default(),
-        task_queue_notifier: tx_notify,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        LoginRateLimiter::default(),
+        tx_notify,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route("/login", get(get_login_handler).post(post_login_handler))
@@ -308,14 +308,14 @@ async fn test_full_auth_and_password_workflow() {
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
-    let state = AppState {
-        db: pool.clone(),
+    let state = AppState::new(
+        pool.clone(),
         s3_client,
-        config: config.clone(),
-        rate_limiter: LoginRateLimiter::default(),
-        task_queue_notifier: tx_notify,
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        LoginRateLimiter::default(),
+        tx_notify,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let app = Router::new()
         .route("/login", get(get_login_handler).post(post_login_handler))

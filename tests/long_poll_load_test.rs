@@ -73,18 +73,18 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(500);
 
-    let state = AppState {
-        db: pool.clone(),
-        s3_client: aws_sdk_s3::Client::from_conf(
+    let state = AppState::new(
+        pool.clone(),
+        aws_sdk_s3::Client::from_conf(
             aws_sdk_s3::config::Builder::new()
                 .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
                 .build(),
         ),
         config,
-        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
-        task_queue_notifier: tx_notify.clone(),
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        deskdispatch::auth::LoginRateLimiter::default(),
+        tx_notify.clone(),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     // Create a dummy worker row in task_worker_pcs
     let worker_id: i64 = match sqlx::query_scalar(

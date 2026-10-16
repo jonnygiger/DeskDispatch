@@ -133,14 +133,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
-    let state = AppState {
-        db: pool,
+    let state = AppState::new(
+        pool,
         s3_client,
-        config: config.clone(),
-        rate_limiter: LoginRateLimiter::default(),
-        task_queue_notifier: tx_notify.clone(),
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    };
+        config.clone(),
+        LoginRateLimiter::default(),
+        tx_notify.clone(),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let mut tasks = tokio::task::JoinSet::new();
