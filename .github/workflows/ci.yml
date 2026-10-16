@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - name: Check formatting
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - name: Run clippy
@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: dtolnay/rust-toolchain@stable
       - name: Run unit tests
         run: cargo test --lib --ignore-rust-version
 
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: dtolnay/rust-toolchain@stable
       - name: Verify MSRV compilation
         run: cargo check --ignore-rust-version
 
@@ -64,3 +64,12 @@ jobs:
           file: ./Dockerfile
           push: false
           tags: deskdispatch:latest
+
+  docker-e2e:
+    name: Docker E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Docker E2E simulator workflow test
+        run: cargo test --test docker_e2e_tests test_docker_e2e_simulator_workflow_and_screenshot -- --nocapture
