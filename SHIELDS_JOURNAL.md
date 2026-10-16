@@ -31,3 +31,7 @@ Action: Test validation helper functions directly with boundary coordinates (-1,
 ## 2025-03-17 Static Assets MIME Type & Conditional ETag Caching Coverage
 Learning: Static asset handlers serving embedded `rust_embed::RustEmbed` assets construct SHA256 ETags and evaluate `If-None-Match` HTTP headers. Converting `static_asset_handler(...).await.into_response()` directly into `axum::response::Response` allows verifying `StatusCode::OK` vs `StatusCode::NOT_MODIFIED` vs `StatusCode::NOT_FOUND`, `Content-Type`, `Cache-Control`, and `ETag` headers at the unit test level without network listeners or database fixtures.
 Action: Test static asset handlers and MIME type resolution functions directly using `into_response()` assertions across case variations, missing/unknown extensions, multi-dot paths, and ETag header lists.
+
+## 2025-03-18 CSRF Origin Middleware Branch & Header Verification Coverage
+Learning: Testing `csrf_origin_middleware` using `axum::Router`, `tower::ServiceExt::oneshot`, and `AppState` with `PgPool::connect_lazy` allows verifying CSRF origin checks (safe HTTP methods, exempt `/login`/`/api/*` paths, `Sec-Fetch-Site: cross-site` rejection, matching `Origin`, `Host` fallback, and mismatched `Origin` rejection) directly at the unit test level without database connections or external network listeners.
+Action: Test web middleware handlers directly via `app.oneshot(req)` assertions in `src/auth/` without requiring live external dependencies.
