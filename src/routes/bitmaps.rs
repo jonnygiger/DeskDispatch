@@ -548,13 +548,9 @@ pub async fn probe_s3_bitmap_dimensions(
     state: &AppState,
     key: &str,
 ) -> Result<(i32, i32), (StatusCode, &'static str)> {
-    let res = state
-        .s3_client
-        .get_object()
-        .bucket(&state.config.s3_bucket)
-        .key(key)
-        .range("bytes=0-63")
-        .send()
+    let bytes = state
+        .storage_service()
+        .get_object_range(key, 0, 63)
         .await
         .map_err(|e| {
             tracing::error!(
@@ -567,16 +563,6 @@ pub async fn probe_s3_bitmap_dimensions(
                 "Invalid or missing image in storage",
             )
         })?;
-
-    let aggregated = res.body.collect().await.map_err(|e| {
-        tracing::error!("Failed to read S3 object body for key {}: {}", key, e);
-        (
-            StatusCode::BAD_REQUEST,
-            "Failed to read image data from storage",
-        )
-    })?;
-
-    let bytes = aggregated.into_bytes();
 
     let (w, h) = parse_png_dimensions(&bytes).ok_or((
         StatusCode::BAD_REQUEST,
@@ -742,14 +728,7 @@ async fn delete_bitmap_logic(
     let bitmap_name: String = bitmap_row.get("name");
     let object_key: String = bitmap_row.get("object_storage_key");
 
-    if let Err(e) = state
-        .s3_client
-        .delete_object()
-        .bucket(&state.config.s3_bucket)
-        .key(&object_key)
-        .send()
-        .await
-    {
+    if let Err(e) = state.storage_service().delete_object(&object_key).await {
         tracing::warn!("Failed to delete object key {} from S3: {}", object_key, e);
     }
 
@@ -1138,17 +1117,7 @@ async fn fetch_s3_object_by_id(
         .ok()??;
 
     let key: String = row.get("object_storage_key");
-    let res = state
-        .s3_client
-        .get_object()
-        .bucket(&state.config.s3_bucket)
-        .key(&key)
-        .send()
-        .await
-        .ok()?;
-
-    let data = res.body.collect().await.ok()?;
-    Some(data.into_bytes().to_vec())
+    state.storage_service().get_object(&key).await.ok()
 }
 
 async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<Vec<u8>> {
@@ -1287,11 +1256,11 @@ pub async fn confirm_region_crop_logic(
 
     let bitmap_name = form.name.as_deref().unwrap_or("").trim().to_string();
     if bitmap_name.is_empty() {
-        let redirect_path = match form.automation_id {
+        let redirect_url = match form.automation_id {
             Some(aid) => format!("/automations/{}/bitmaps", aid),
             None => "/bitmaps".to_string(),
         };
-        return Redirect::to(&redirect_path).into_response();
+        return Redirect::to(&redirect_url).into_response();
     }
 
     let object_key = format!("bitmaps/crop_{}.png", uuid::Uuid::new_v4());
@@ -1300,13 +1269,8 @@ pub async fn confirm_region_crop_logic(
         crop_image_region(state, &form.image_url, norm_tl_x, norm_tl_y, crop_w, crop_h).await;
 
     if let Err(e) = state
-        .s3_client
-        .put_object()
-        .bucket(&state.config.s3_bucket)
-        .key(&object_key)
-        .content_type("image/png")
-        .body(png_bytes.into())
-        .send()
+        .storage_service()
+        .put_object(&object_key, png_bytes, "image/png")
         .await
     {
         tracing::error!("Failed to upload cropped bitmap to S3: {}", e);

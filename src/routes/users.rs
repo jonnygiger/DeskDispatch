@@ -753,3 +753,82 @@ pub async fn post_reset_password_handler(
 
     Redirect::to("/users").into_response()
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_user_password_templates_accessibility_attributes() {
+        let user = AuthUser {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: UserRole::Admin,
+            session_id: uuid::Uuid::new_v4(),
+            csrf_token: "csrf_token_test".to_string(),
+            must_change_password: false,
+        };
+
+        let new_user_tmpl = NewUserTemplate {
+            user: user.clone(),
+            username: "jdoe".to_string(),
+            display_name: "John Doe".to_string(),
+            role: "editor".to_string(),
+            must_change_password: true,
+            error: None,
+        };
+
+        let rendered_new = new_user_tmpl
+            .render()
+            .expect("NewUserTemplate should render successfully");
+
+        assert!(
+            rendered_new.contains("autocomplete=\"new-password\""),
+            "Expected password inputs to specify autocomplete='new-password'"
+        );
+        assert!(
+            rendered_new.contains("minlength=\"8\""),
+            "Expected password inputs to specify minlength='8'"
+        );
+        assert!(
+            rendered_new.contains("aria-describedby=\"new-user-password-help\""),
+            "Expected password input to have aria-describedby='new-user-password-help'"
+        );
+        assert!(
+            rendered_new.contains("id=\"new-user-password-help\""),
+            "Expected helper text element to have matching id='new-user-password-help'"
+        );
+
+        let reset_pw_tmpl = ResetPasswordTemplate {
+            user,
+            target_user_id: 42,
+            target_username: "jdoe".to_string(),
+            target_display_name: "John Doe".to_string(),
+            must_change_password: true,
+            error: None,
+        };
+
+        let rendered_reset = reset_pw_tmpl
+            .render()
+            .expect("ResetPasswordTemplate should render successfully");
+
+        assert!(
+            rendered_reset.contains("autocomplete=\"new-password\""),
+            "Expected reset password inputs to specify autocomplete='new-password'"
+        );
+        assert!(
+            rendered_reset.contains("minlength=\"8\""),
+            "Expected reset password inputs to specify minlength='8'"
+        );
+        assert!(
+            rendered_reset.contains("aria-describedby=\"reset-user-password-help\""),
+            "Expected reset password input to have aria-describedby='reset-user-password-help'"
+        );
+        assert!(
+            rendered_reset.contains("id=\"reset-user-password-help\""),
+            "Expected helper text element to have matching id='reset-user-password-help'"
+        );
+    }
+}

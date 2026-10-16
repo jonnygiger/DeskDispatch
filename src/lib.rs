@@ -17,7 +17,6 @@ use std::sync::atomic::AtomicBool;
 
 use axum::{Router, middleware, routing::get};
 use config::Config;
-use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower_http::{
     catch_panic::CatchPanicLayer,
@@ -33,7 +32,7 @@ use routes::{dev_magnifier_verify_handler, livez_handler, not_found_handler, rea
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
-    pub s3_client: aws_sdk_s3::Client,
+    pub storage: storage::StorageService,
     pub config: Config,
     pub rate_limiter: auth::LoginRateLimiter,
     pub task_queue_notifier: tokio::sync::broadcast::Sender<()>,
@@ -42,14 +41,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn storage_service(&self) -> storage::StorageService {
-        storage::StorageService::new(self.s3_client.clone(), &self.config.s3_bucket)
-            .with_credentials(
-                &self.config.s3_access_key,
-                self.config.s3_secret_key.expose_secret(),
-                &self.config.s3_region,
-                self.config.s3_endpoint.as_deref(),
-            )
-            .with_public_endpoint(self.config.s3_public_endpoint.as_deref())
+        self.storage.clone()
     }
 }
 

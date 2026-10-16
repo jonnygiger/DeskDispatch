@@ -4,15 +4,22 @@ use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = dotenvy::dotenv();
+    let dotenv_vars = deskdispatch::config::parse_dotenv();
 
-    let database_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+    let get_var = |key: &str| -> Option<String> {
+        env::var(key)
+            .ok()
+            .or_else(|| dotenv_vars.get(key).cloned())
+            .filter(|v| !v.trim().is_empty())
+    };
+
+    let database_url = get_var("DATABASE_URL").unwrap_or_else(|| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
     });
 
-    let admin_username = env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string());
-    let admin_password = env::var("ADMIN_PASSWORD").unwrap_or_else(|_| "test".to_string());
-    let admin_display_name = env::var("ADMIN_DISPLAY_NAME").unwrap_or_else(|_| "Admin".to_string());
+    let admin_username = get_var("ADMIN_USERNAME").unwrap_or_else(|| "admin".to_string());
+    let admin_password = get_var("ADMIN_PASSWORD").unwrap_or_else(|| "test".to_string());
+    let admin_display_name = get_var("ADMIN_DISPLAY_NAME").unwrap_or_else(|| "Admin".to_string());
 
     println!("Connecting to database to seed admin user...");
 

@@ -1,5 +1,5 @@
-use aws_sdk_s3::Client;
-use chrono::{DateTime, Utc};
+use crate::storage::StorageService;
+use chrono::Utc;
 use sqlx::PgPool;
 use std::collections::HashSet;
 use tracing::{error, info, instrument};
@@ -75,11 +75,10 @@ struct OldScreenshot {
 }
 
 /// Prunes old screenshots from the DB first, then removes associated S3 objects.
-#[instrument(skip(pool, s3_client))]
+#[instrument(skip(pool, storage))]
 pub async fn prune_old_screenshots(
     pool: &PgPool,
-    s3_client: &Client,
-    bucket: &str,
+    storage: &StorageService,
     retention_days: u32,
 ) -> Result<(u64, u64), String> {
     let rows = sqlx::query(
@@ -117,13 +116,7 @@ pub async fn prune_old_screenshots(
             Ok(del) if del.rows_affected() > 0 => {
                 db_deleted += del.rows_affected();
                 // DB record deleted; now delete object from S3
-                match s3_client
-                    .delete_object()
-                    .bucket(bucket)
-                    .key(&item.object_storage_key)
-                    .send()
-                    .await
-                {
+                match storage.delete_object(&item.object_storage_key).await {
                     Ok(_) => {
                         s3_deleted += 1;
                     }
@@ -156,49 +149,30 @@ pub async fn prune_old_screenshots(
 }
 
 /// Cleans up abandoned `tmp/` uploads older than `max_age_hours`.
-#[instrument(skip(s3_client))]
+#[instrument(skip(storage))]
 pub async fn cleanup_abandoned_tmp_uploads(
-    s3_client: &Client,
-    bucket: &str,
+    storage: &StorageService,
     max_age_hours: u64,
 ) -> Result<u64, String> {
     let mut count = 0u64;
     let cutoff = Utc::now() - chrono::Duration::hours(max_age_hours as i64);
 
-    let list_res = s3_client
-        .list_objects_v2()
-        .bucket(bucket)
-        .prefix("tmp/")
-        .send()
+    let list_res = storage
+        .list_objects("tmp/")
         .await
         .map_err(|e| format!("Failed to list tmp/ objects in S3: {}", e))?;
 
-    if let Some(contents) = list_res.contents {
-        for obj in contents {
-            if let Some(key) = obj.key {
-                let should_delete = match obj.last_modified {
-                    Some(lm) => {
-                        let sec = lm.as_secs_f64();
-                        let obj_time =
-                            DateTime::from_timestamp(sec as i64, 0).unwrap_or(Utc::now());
-                        obj_time < cutoff
-                    }
-                    None => true,
-                };
+    for obj in list_res {
+        let should_delete = match obj.last_modified {
+            Some(obj_time) => obj_time < cutoff,
+            None => true,
+        };
 
-                if should_delete {
-                    if let Err(e) = s3_client
-                        .delete_object()
-                        .bucket(bucket)
-                        .key(&key)
-                        .send()
-                        .await
-                    {
-                        error!("Failed to delete abandoned tmp object '{}': {}", key, e);
-                    } else {
-                        count += 1;
-                    }
-                }
+        if should_delete {
+            if let Err(e) = storage.delete_object(&obj.key).await {
+                error!("Failed to delete abandoned tmp object '{}': {}", obj.key, e);
+            } else {
+                count += 1;
             }
         }
     }
@@ -214,12 +188,8 @@ pub async fn cleanup_abandoned_tmp_uploads(
 }
 
 /// Scans S3 `bitmaps/` and `screenshots/` prefixes and deletes orphan S3 objects not referenced in DB.
-#[instrument(skip(pool, s3_client))]
-pub async fn gc_orphan_s3_objects(
-    pool: &PgPool,
-    s3_client: &Client,
-    bucket: &str,
-) -> Result<u64, String> {
+#[instrument(skip(pool, storage))]
+pub async fn gc_orphan_s3_objects(pool: &PgPool, storage: &StorageService) -> Result<u64, String> {
     // 1. Fetch valid keys from DB
     let bitmap_keys: Vec<String> = sqlx::query_scalar("SELECT object_storage_key FROM bitmaps")
         .fetch_all(pool)
@@ -237,31 +207,18 @@ pub async fn gc_orphan_s3_objects(
     let mut deleted_count = 0u64;
 
     for prefix in &["bitmaps/", "screenshots/"] {
-        let list_res = s3_client
-            .list_objects_v2()
-            .bucket(bucket)
-            .prefix(*prefix)
-            .send()
+        let list_res = storage
+            .list_objects(prefix)
             .await
             .map_err(|e| format!("Failed to list '{}' objects in S3: {}", prefix, e))?;
 
-        if let Some(contents) = list_res.contents {
-            for obj in contents {
-                if let Some(key) = obj.key
-                    && !db_keys.contains(&key)
-                {
-                    info!("Found orphan S3 object '{}', deleting...", key);
-                    if let Err(e) = s3_client
-                        .delete_object()
-                        .bucket(bucket)
-                        .key(&key)
-                        .send()
-                        .await
-                    {
-                        error!("Failed to delete orphan S3 object '{}': {}", key, e);
-                    } else {
-                        deleted_count += 1;
-                    }
+        for obj in list_res {
+            if !db_keys.contains(&obj.key) {
+                info!("Found orphan S3 object '{}', deleting...", obj.key);
+                if let Err(e) = storage.delete_object(&obj.key).await {
+                    error!("Failed to delete orphan S3 object '{}': {}", obj.key, e);
+                } else {
+                    deleted_count += 1;
                 }
             }
         }
@@ -275,10 +232,10 @@ pub async fn gc_orphan_s3_objects(
 }
 
 /// Runs all retention and cleanup routines according to app configuration.
-#[instrument(skip(pool, s3_client))]
+#[instrument(skip(pool, storage))]
 pub async fn run_all_retention_jobs(
     pool: &PgPool,
-    s3_client: &Client,
+    storage: &StorageService,
     config: &crate::config::Config,
 ) {
     if let Err(e) = prune_sessions(pool, config.session_retention_days).await {
@@ -290,20 +247,13 @@ pub async fn run_all_retention_jobs(
     if let Err(e) = prune_task_run_steps(pool, config.task_run_step_retention_days).await {
         error!("Error pruning task run steps: {}", e);
     }
-    if let Err(e) = prune_old_screenshots(
-        pool,
-        s3_client,
-        &config.s3_bucket,
-        config.screenshot_retention_days,
-    )
-    .await
-    {
+    if let Err(e) = prune_old_screenshots(pool, storage, config.screenshot_retention_days).await {
         error!("Error pruning old screenshots: {}", e);
     }
-    if let Err(e) = cleanup_abandoned_tmp_uploads(s3_client, &config.s3_bucket, 24).await {
+    if let Err(e) = cleanup_abandoned_tmp_uploads(storage, 24).await {
         error!("Error cleaning up tmp uploads: {}", e);
     }
-    if let Err(e) = gc_orphan_s3_objects(pool, s3_client, &config.s3_bucket).await {
+    if let Err(e) = gc_orphan_s3_objects(pool, storage).await {
         error!("Error in orphan object GC: {}", e);
     }
 }

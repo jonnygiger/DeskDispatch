@@ -176,8 +176,76 @@ pub async fn csrf_origin_middleware(
 pub use csrf_origin_middleware as csrf_middleware;
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::{get, post},
+    };
+    use secrecy::SecretString;
+    use tower::ServiceExt;
+
+    fn create_test_state() -> AppState {
+        let config = crate::config::Config {
+            database_url: "postgres://postgres:postgres@localhost/deskdispatch".to_string(),
+            public_base_url: "http://localhost:3000".to_string(),
+            s3_endpoint: None,
+            s3_public_endpoint: None,
+            s3_bucket: "test-bucket".to_string(),
+            s3_access_key: "key".to_string(),
+            s3_secret_key: SecretString::from("secret".to_string()),
+            s3_region: "us-east-1".to_string(),
+            session_secret: SecretString::from("secret".to_string()),
+            bind_address: "127.0.0.1:3000".to_string(),
+            environment: "development".to_string(),
+            min_agent_version: None,
+            worker_poll_interval_secs: 5,
+            worker_heartbeat_interval_secs: 15,
+            trust_proxy_headers: false,
+            database_max_connections: 20,
+            database_acquire_timeout_secs: 5,
+            worker_long_poll_timeout_secs: 10,
+            session_retention_days: 7,
+            audit_log_retention_days: 90,
+            task_run_step_retention_days: 30,
+            screenshot_retention_days: 30,
+            metrics_bind_address: None,
+            unattended_registration_psk: SecretString::from(
+                "deskdispatch_wps_psk_secret".to_string(),
+            ),
+        };
+
+        let pool =
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/deskdispatch")
+                .unwrap();
+        let storage = crate::storage::StorageService::new(&config.s3_bucket);
+        let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
+
+        AppState {
+            db: pool,
+            storage,
+            config,
+            rate_limiter: crate::auth::LoginRateLimiter::default(),
+            task_queue_notifier: tx_notify,
+            wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn build_test_app(state: AppState) -> Router {
+        Router::new()
+            .route("/test", get(|| async { "OK" }).post(|| async { "OK" }))
+            .route("/login", post(|| async { "OK" }))
+            .route("/api/v1/workers", post(|| async { "OK" }))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                csrf_origin_middleware,
+            ))
+            .with_state(state)
+    }
 
     #[test]
     fn test_constant_time_csrf_validation() {
@@ -191,5 +259,123 @@ mod tests {
         assert!(!validate_csrf_token(&token, &wrong_token));
 
         assert!(!validate_csrf_token(&token, "short_invalid"));
+    }
+
+    #[tokio::test]
+    async fn test_csrf_origin_middleware_safe_methods() {
+        let state = create_test_state();
+        let app = build_test_app(state);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/test")
+            .header("Sec-Fetch-Site", "cross-site")
+            .header("Origin", "http://evil.com")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_csrf_origin_middleware_exempt_paths() {
+        let state = create_test_state();
+
+        for path in ["/login", "/api/v1/workers"] {
+            let app = build_test_app(state.clone());
+            let req = Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("Sec-Fetch-Site", "cross-site")
+                .header("Origin", "http://evil.com")
+                .body(Body::empty())
+                .unwrap();
+
+            let response = app.oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_csrf_origin_middleware_sec_fetch_site_cross_site_rejected() {
+        let state = create_test_state();
+        let app = build_test_app(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/test")
+            .header("Sec-Fetch-Site", "cross-site")
+            .header("Origin", "http://localhost:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_csrf_origin_middleware_matching_origin() {
+        let state = create_test_state();
+        let app = build_test_app(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/test")
+            .header("Origin", "http://localhost:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_csrf_origin_middleware_fallback_host_matching() {
+        let state = create_test_state();
+        let app = build_test_app(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/test")
+            .header("Origin", "http://app.internal:8080")
+            .header("Host", "app.internal:8080")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_csrf_origin_middleware_mismatched_origin_rejected() {
+        let state = create_test_state();
+        let app = build_test_app(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/test")
+            .header("Origin", "http://evil.com")
+            .header("Host", "localhost:3000")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_csrf_origin_middleware_no_origin_header() {
+        let state = create_test_state();
+        let app = build_test_app(state);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/test")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

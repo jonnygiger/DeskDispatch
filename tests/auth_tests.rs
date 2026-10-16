@@ -234,19 +234,18 @@ async fn test_unauthenticated_redirect_to_login() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
     let state = AppState {
         db: pool,
-        s3_client,
+        storage,
         config,
         rate_limiter: LoginRateLimiter::default(),
         task_queue_notifier: tx_notify,
@@ -298,19 +297,18 @@ async fn test_full_auth_and_password_workflow() {
     let user_id: i64 = user_row.get("id");
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        storage,
         config: config.clone(),
         rate_limiter: LoginRateLimiter::default(),
         task_queue_notifier: tx_notify,

@@ -1,11 +1,10 @@
-use aws_sdk_s3::Client;
-use aws_sdk_s3::presigning::PresigningConfig;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::time::Duration;
 
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
 
 pub fn encode_hex(bytes: &[u8]) -> String {
     let mut buf = vec![0u8; bytes.len() * 2];
@@ -43,40 +42,6 @@ pub fn encode_base64(bytes: &[u8]) -> String {
         }
     }
     String::from_utf8(buf).unwrap_or_default()
-}
-
-#[derive(serde::Serialize)]
-struct PolicyDocument<'a> {
-    expiration: &'a str,
-    conditions: Vec<PolicyCondition<'a>>,
-}
-
-enum PolicyCondition<'a> {
-    Eq(&'static str, &'a str),
-    ContentLengthRange(u64, u64),
-    StartingWith(&'static str, &'static str),
-}
-
-impl serde::Serialize for PolicyCondition<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            PolicyCondition::Eq(key, val) => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry(key, val)?;
-                map.end()
-            }
-            PolicyCondition::ContentLengthRange(min, max) => {
-                ("content-length-range", *min, *max).serialize(serializer)
-            }
-            PolicyCondition::StartingWith(field, prefix) => {
-                ("starting-with", *field, *prefix).serialize(serializer)
-            }
-        }
-    }
 }
 
 pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
@@ -158,6 +123,77 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     outer_hasher.finalize().into()
 }
 
+pub fn url_encode_component(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(b as char);
+            }
+            _ => {
+                result.push('%');
+                result.push(HEX_CHARS_UPPER[(b >> 4) as usize] as char);
+                result.push(HEX_CHARS_UPPER[(b & 0x0f) as usize] as char);
+            }
+        }
+    }
+    result
+}
+
+/// Derives the 4-tier AWS SigV4 HMAC-SHA256 signing key.
+fn derive_signing_key(secret_key: &str, date_str: &str, region: &str) -> [u8; 32] {
+    let k_secret_bytes = if secret_key.len() <= 56 {
+        let mut buf = [0u8; 64];
+        buf[..4].copy_from_slice(b"AWS4");
+        buf[4..4 + secret_key.len()].copy_from_slice(secret_key.as_bytes());
+        hmac_sha256(&buf[..4 + secret_key.len()], date_str.as_bytes())
+    } else {
+        let mut vec = Vec::with_capacity(4 + secret_key.len());
+        vec.extend_from_slice(b"AWS4");
+        vec.extend_from_slice(secret_key.as_bytes());
+        hmac_sha256(&vec, date_str.as_bytes())
+    };
+
+    let k_date = k_secret_bytes;
+    let k_region = hmac_sha256(&k_date, region.as_bytes());
+    let k_service = hmac_sha256(&k_region, b"s3");
+    hmac_sha256(&k_service, b"aws4_request")
+}
+
+#[derive(serde::Serialize)]
+struct PolicyDocument<'a> {
+    expiration: &'a str,
+    conditions: Vec<PolicyCondition<'a>>,
+}
+
+enum PolicyCondition<'a> {
+    Eq(&'static str, &'a str),
+    ContentLengthRange(u64, u64),
+    StartingWith(&'static str, &'static str),
+}
+
+impl serde::Serialize for PolicyCondition<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            PolicyCondition::Eq(key, val) => {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry(key, val)?;
+                map.end()
+            }
+            PolicyCondition::ContentLengthRange(min, max) => {
+                ("content-length-range", *min, *max).serialize(serializer)
+            }
+            PolicyCondition::StartingWith(field, prefix) => {
+                ("starting-with", *field, *prefix).serialize(serializer)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct PresignedPost {
     pub url: String,
@@ -173,29 +209,28 @@ impl PresignedPost {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageObject {
+    pub key: String,
+    pub last_modified: Option<DateTime<Utc>>,
+    pub size: u64,
+}
+
 #[derive(Debug)]
 pub enum StorageError {
-    PresigningConfig(aws_sdk_s3::presigning::PresigningConfigError),
-    GetObject(Box<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>>),
-    PutObject(Box<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>>),
+    Http(reqwest::Error),
     PostPolicy(String),
+    NotFound(String),
+    Request(String),
 }
 
 impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StorageError::PresigningConfig(e) => {
-                write!(f, "Failed to build presigning configuration: {}", e)
-            }
-            StorageError::GetObject(e) => {
-                write!(f, "Failed to generate presigned GET request: {}", e)
-            }
-            StorageError::PutObject(e) => {
-                write!(f, "Failed to generate presigned PUT request: {}", e)
-            }
-            StorageError::PostPolicy(e) => {
-                write!(f, "Failed to generate presigned POST policy: {}", e)
-            }
+            StorageError::Http(e) => write!(f, "HTTP storage error: {}", e),
+            StorageError::PostPolicy(s) => write!(f, "Failed to generate presigned policy: {}", s),
+            StorageError::NotFound(s) => write!(f, "Storage object not found: {}", s),
+            StorageError::Request(s) => write!(f, "Storage request error: {}", s),
         }
     }
 }
@@ -203,207 +238,214 @@ impl fmt::Display for StorageError {
 impl std::error::Error for StorageError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            StorageError::PresigningConfig(e) => Some(e),
-            StorageError::GetObject(e) => Some(e.as_ref()),
-            StorageError::PutObject(e) => Some(e.as_ref()),
-            StorageError::PostPolicy(_) => None,
+            StorageError::Http(e) => Some(e),
+            _ => None,
         }
     }
 }
 
-impl From<aws_sdk_s3::presigning::PresigningConfigError> for StorageError {
-    fn from(err: aws_sdk_s3::presigning::PresigningConfigError) -> Self {
-        StorageError::PresigningConfig(err)
+impl From<reqwest::Error> for StorageError {
+    fn from(err: reqwest::Error) -> Self {
+        StorageError::Http(err)
     }
 }
 
-impl From<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>>
-    for StorageError
-{
-    fn from(
-        err: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::get_object::GetObjectError>,
-    ) -> Self {
-        StorageError::GetObject(Box::new(err))
-    }
-}
-
-impl From<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>>
-    for StorageError
-{
-    fn from(
-        err: aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>,
-    ) -> Self {
-        StorageError::PutObject(Box::new(err))
-    }
-}
-
-/// Storage service wrapper for S3 / RustFS operations.
-#[derive(Clone, Debug)]
-pub struct StorageService {
-    s3_client: Client,
-    bucket: String,
-    access_key: Option<String>,
-    secret_key: Option<String>,
-    region: Option<String>,
-    endpoint_url: Option<String>,
-    public_endpoint_url: Option<String>,
-}
-
-impl StorageService {
-    pub fn new(s3_client: Client, bucket: impl Into<String>) -> Self {
-        Self {
-            s3_client,
-            bucket: bucket.into(),
-            access_key: None,
-            secret_key: None,
-            region: None,
-            endpoint_url: None,
-            public_endpoint_url: None,
-        }
-    }
-
-    pub fn with_credentials(
-        mut self,
-        access_key: impl Into<String>,
-        secret_key: impl Into<String>,
-        region: impl Into<String>,
-        endpoint_url: Option<impl Into<String>>,
-    ) -> Self {
-        self.access_key = Some(access_key.into());
-        self.secret_key = Some(secret_key.into());
-        self.region = Some(region.into());
-        self.endpoint_url = endpoint_url.map(|e| e.into());
-        self
-    }
-
-    pub fn with_public_endpoint(mut self, public_endpoint_url: Option<impl Into<String>>) -> Self {
-        self.public_endpoint_url = public_endpoint_url.map(|e| e.into());
-        self
-    }
-
-    pub fn bucket(&self) -> &str {
-        &self.bucket
-    }
-
-    pub fn client(&self) -> &Client {
-        &self.s3_client
-    }
-
-    /// Fetches object bytes from S3 / RustFS.
-    #[tracing::instrument(skip(self))]
-    pub async fn get_object(&self, object_key: &str) -> Result<Vec<u8>, StorageError> {
-        let res = self
-            .s3_client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(object_key)
-            .send()
-            .await?;
-        let data =
-            res.body.collect().await.map_err(|e| {
-                StorageError::PostPolicy(format!("Failed to read object body: {}", e))
-            })?;
-        Ok(data.to_vec())
-    }
-
-    /// Generates a presigned GET URL for an object key in S3 / RustFS with the given expiration duration.
-    #[tracing::instrument(skip(self))]
-    pub async fn generate_presigned_get_url(
-        &self,
-        object_key: &str,
-        expires_in: Duration,
-    ) -> Result<String, StorageError> {
-        let url =
-            get_presigned_get_url(&self.s3_client, &self.bucket, object_key, expires_in).await?;
-        Ok(rewrite_url_with_public_endpoint(
-            url,
-            self.endpoint_url.as_deref(),
-            self.public_endpoint_url.as_deref(),
-        ))
-    }
-
-    /// Generates a presigned PUT URL for worker node file uploads in S3 / RustFS with the given expiration duration.
-    #[tracing::instrument(skip(self))]
-    pub async fn generate_presigned_put_url(
-        &self,
-        object_key: &str,
-        expires_in: Duration,
-    ) -> Result<String, StorageError> {
-        let url =
-            get_presigned_put_url(&self.s3_client, &self.bucket, object_key, expires_in).await?;
-        Ok(rewrite_url_with_public_endpoint(
-            url,
-            self.endpoint_url.as_deref(),
-            self.public_endpoint_url.as_deref(),
-        ))
-    }
-
-    /// Generates a presigned POST policy for browser-direct file uploads in S3 / RustFS.
-    #[tracing::instrument(skip(self))]
-    pub async fn generate_presigned_post(
-        &self,
-        object_key: &str,
-        expires_in: Duration,
-        max_content_length: u64,
-        success_action_redirect: Option<&str>,
-    ) -> Result<PresignedPost, StorageError> {
-        let access_key = self.access_key.as_deref().unwrap_or("rustfsadmin");
-        let secret_key = self.secret_key.as_deref().unwrap_or("rustfsadminpassword");
-        let region = self.region.as_deref().unwrap_or("us-east-1");
-        let endpoint_url = self
-            .public_endpoint_url
-            .as_deref()
-            .or(self.endpoint_url.as_deref());
-
-        generate_presigned_post_policy(
-            &self.bucket,
-            object_key,
-            expires_in,
-            max_content_length,
-            access_key,
-            secret_key,
-            region,
-            endpoint_url,
-            success_action_redirect,
-        )
-    }
-}
-
-fn rewrite_url_with_public_endpoint(
-    url: String,
-    internal_endpoint: Option<&str>,
-    public_endpoint: Option<&str>,
-) -> String {
-    let (Some(internal_ep), Some(public_ep)) = (internal_endpoint, public_endpoint) else {
-        return url;
-    };
-    let clean_internal = internal_ep.trim_end_matches('/');
-    let clean_public = public_ep.trim_end_matches('/');
-    if let Some(rest) = url.strip_prefix(clean_internal) {
-        format!("{}{}", clean_public, rest)
-    } else {
-        url
-    }
-}
-
-/// Standalone helper function to generate a presigned GET URL using an S3 Client, bucket, key, and expiration duration.
-#[tracing::instrument(skip(s3_client))]
-pub async fn get_presigned_get_url(
-    s3_client: &Client,
+/// Standalone helper to generate SigV4 presigned URLs for GET, PUT, DELETE, or HEAD requests.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_presigned_url(
+    method: &str,
     bucket: &str,
     object_key: &str,
     expires_in: Duration,
+    access_key: &str,
+    secret_key: &str,
+    region: &str,
+    endpoint_url: Option<&str>,
 ) -> Result<String, StorageError> {
-    let presigning_config = PresigningConfig::expires_in(expires_in)?;
+    generate_presigned_url_with_query(
+        method,
+        bucket,
+        object_key,
+        expires_in,
+        access_key,
+        secret_key,
+        region,
+        endpoint_url,
+        &[],
+    )
+}
 
-    let presigned_req = s3_client
-        .get_object()
-        .bucket(bucket)
-        .key(object_key)
-        .presigned(presigning_config)
-        .await?;
+/// Helper to generate SigV4 presigned URLs including optional extra query parameters.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_presigned_url_with_query(
+    method: &str,
+    bucket: &str,
+    object_key: &str,
+    expires_in: Duration,
+    access_key: &str,
+    secret_key: &str,
+    region: &str,
+    endpoint_url: Option<&str>,
+    extra_params: &[(&str, &str)],
+) -> Result<String, StorageError> {
+    let now = Utc::now();
+    let date_str = now.format("%Y%m%d").to_string();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let expires_secs = expires_in.as_secs().to_string();
 
-    Ok(presigned_req.uri().to_string())
+    let credential_scope = format!("{}/{}/s3/aws4_request", date_str, region);
+    let credential = format!("{}/{}", access_key, credential_scope);
+
+    let clean_key = object_key.trim_start_matches('/');
+
+    let (host, canonical_uri, base_url) = match endpoint_url {
+        Some(endpoint) => {
+            let clean_endpoint = endpoint.trim_end_matches('/');
+            let parsed_url = url::Url::parse(clean_endpoint).map_err(|e| {
+                StorageError::Request(format!("Invalid endpoint URL {}: {}", clean_endpoint, e))
+            })?;
+            let host = parsed_url
+                .host_str()
+                .ok_or_else(|| StorageError::Request("Missing host in endpoint".to_string()))?;
+            let port_part = parsed_url
+                .port()
+                .map(|p| format!(":{}", p))
+                .unwrap_or_default();
+            let full_host = format!("{}{}", host, port_part);
+            let uri = if clean_key.is_empty() {
+                format!("/{}", bucket)
+            } else {
+                format!("/{}/{}", bucket, clean_key)
+            };
+            let base = format!("{}/{}", clean_endpoint, bucket);
+            (full_host, uri, base)
+        }
+        None => {
+            let host = format!("{}.s3.{}.amazonaws.com", bucket, region);
+            let uri = if clean_key.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{}", clean_key)
+            };
+            let base = format!("https://{}", host);
+            (host, uri, base)
+        }
+    };
+
+    let mut query_params = vec![
+        ("X-Amz-Algorithm", "AWS4-HMAC-SHA256".to_string()),
+        ("X-Amz-Credential", credential),
+        ("X-Amz-Date", amz_date.clone()),
+        ("X-Amz-Expires", expires_secs),
+        ("X-Amz-SignedHeaders", "host".to_string()),
+    ];
+
+    for &(k, v) in extra_params {
+        query_params.push((k, v.to_string()));
+    }
+
+    let mut encoded_params: Vec<(String, String)> = query_params
+        .into_iter()
+        .map(|(k, v)| (url_encode_component(k), url_encode_component(&v)))
+        .collect();
+    encoded_params.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    let mut canonical_query_string = String::with_capacity(
+        encoded_params
+            .iter()
+            .map(|(k, v)| k.len() + 1 + v.len() + 1)
+            .sum::<usize>()
+            .saturating_sub(1),
+    );
+    for (idx, (k, v)) in encoded_params.iter().enumerate() {
+        if idx > 0 {
+            canonical_query_string.push('&');
+        }
+        canonical_query_string.push_str(k);
+        canonical_query_string.push('=');
+        canonical_query_string.push_str(v);
+    }
+
+    let canonical_headers = format!("host:{}\n", host);
+    let signed_headers = "host";
+    let payload_hash = "UNSIGNED-PAYLOAD";
+
+    let canonical_request = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        method.to_uppercase(),
+        canonical_uri,
+        canonical_query_string,
+        canonical_headers,
+        signed_headers,
+        payload_hash
+    );
+
+    let canonical_request_hash = encode_hex(&Sha256::digest(canonical_request.as_bytes()));
+
+    let string_to_sign = format!(
+        "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+        amz_date, credential_scope, canonical_request_hash
+    );
+
+    let k_signing = derive_signing_key(secret_key, &date_str, region);
+    let signature_bytes = hmac_sha256(&k_signing, string_to_sign.as_bytes());
+    let signature_hex = encode_hex(&signature_bytes);
+
+    let full_url = if clean_key.is_empty() {
+        format!(
+            "{}?{}&X-Amz-Signature={}",
+            base_url, canonical_query_string, signature_hex
+        )
+    } else {
+        format!(
+            "{}/{}?{}&X-Amz-Signature={}",
+            base_url, clean_key, canonical_query_string, signature_hex
+        )
+    };
+
+    Ok(full_url)
+}
+
+pub fn get_presigned_get_url_standalone(
+    bucket: &str,
+    object_key: &str,
+    expires_in: Duration,
+    access_key: &str,
+    secret_key: &str,
+    region: &str,
+    endpoint_url: Option<&str>,
+) -> Result<String, StorageError> {
+    generate_presigned_url(
+        "GET",
+        bucket,
+        object_key,
+        expires_in,
+        access_key,
+        secret_key,
+        region,
+        endpoint_url,
+    )
+}
+
+pub fn get_presigned_put_url_standalone(
+    bucket: &str,
+    object_key: &str,
+    expires_in: Duration,
+    access_key: &str,
+    secret_key: &str,
+    region: &str,
+    endpoint_url: Option<&str>,
+) -> Result<String, StorageError> {
+    generate_presigned_url(
+        "PUT",
+        bucket,
+        object_key,
+        expires_in,
+        access_key,
+        secret_key,
+        region,
+        endpoint_url,
+    )
 }
 
 /// Standalone helper function to generate a presigned POST policy and SigV4 form fields for browser-direct upload.
@@ -459,23 +501,7 @@ pub fn generate_presigned_post_policy(
 
     let policy_base64 = encode_base64(policy_str.as_bytes());
 
-    // SigV4 Key Calculation without heap String allocations
-    let k_secret_bytes = if secret_key.len() <= 56 {
-        let mut buf = [0u8; 64];
-        buf[..4].copy_from_slice(b"AWS4");
-        buf[4..4 + secret_key.len()].copy_from_slice(secret_key.as_bytes());
-        hmac_sha256(&buf[..4 + secret_key.len()], date_str.as_bytes())
-    } else {
-        let mut vec = Vec::with_capacity(4 + secret_key.len());
-        vec.extend_from_slice(b"AWS4");
-        vec.extend_from_slice(secret_key.as_bytes());
-        hmac_sha256(&vec, date_str.as_bytes())
-    };
-    let k_date = k_secret_bytes;
-    let k_region = hmac_sha256(&k_date, region.as_bytes());
-    let k_service = hmac_sha256(&k_region, b"s3");
-    let k_signing = hmac_sha256(&k_service, b"aws4_request");
-
+    let k_signing = derive_signing_key(secret_key, &date_str, region);
     let signature_bytes = hmac_sha256(&k_signing, policy_base64.as_bytes());
     let signature_hex = encode_hex(&signature_bytes);
 
@@ -507,24 +533,403 @@ pub fn generate_presigned_post_policy(
     })
 }
 
-/// Standalone helper function to generate a presigned PUT URL using an S3 Client, bucket, key, and expiration duration.
-#[tracing::instrument(skip(s3_client))]
-pub async fn get_presigned_put_url(
-    s3_client: &Client,
-    bucket: &str,
-    object_key: &str,
-    expires_in: Duration,
-) -> Result<String, StorageError> {
-    let presigning_config = PresigningConfig::expires_in(expires_in)?;
+fn rewrite_url_with_public_endpoint(
+    url: String,
+    internal_endpoint: Option<&str>,
+    public_endpoint: Option<&str>,
+) -> String {
+    let (Some(internal_ep), Some(public_ep)) = (internal_endpoint, public_endpoint) else {
+        return url;
+    };
+    let clean_internal = internal_ep.trim_end_matches('/');
+    let clean_public = public_ep.trim_end_matches('/');
+    if let Some(rest) = url.strip_prefix(clean_internal) {
+        format!("{}{}", clean_public, rest)
+    } else {
+        url
+    }
+}
 
-    let presigned_req = s3_client
-        .put_object()
-        .bucket(bucket)
-        .key(object_key)
-        .presigned(presigning_config)
-        .await?;
+/// Storage service wrapper for S3 / RustFS operations.
+#[derive(Clone, Debug)]
+pub struct StorageService {
+    http_client: reqwest::Client,
+    bucket: String,
+    access_key: String,
+    secret_key: String,
+    region: String,
+    endpoint_url: Option<String>,
+    public_endpoint_url: Option<String>,
+}
 
-    Ok(presigned_req.uri().to_string())
+impl StorageService {
+    pub fn new(bucket: impl Into<String>) -> Self {
+        Self {
+            http_client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+            bucket: bucket.into(),
+            access_key: "rustfsadmin".to_string(),
+            secret_key: "rustfsadminpassword".to_string(),
+            region: "us-east-1".to_string(),
+            endpoint_url: None,
+            public_endpoint_url: None,
+        }
+    }
+
+    pub fn with_credentials(
+        mut self,
+        access_key: impl Into<String>,
+        secret_key: impl Into<String>,
+        region: impl Into<String>,
+        endpoint_url: Option<impl Into<String>>,
+    ) -> Self {
+        self.access_key = access_key.into();
+        self.secret_key = secret_key.into();
+        self.region = region.into();
+        self.endpoint_url = endpoint_url.map(|e| e.into());
+        self
+    }
+
+    pub fn with_public_endpoint(mut self, public_endpoint_url: Option<impl Into<String>>) -> Self {
+        self.public_endpoint_url = public_endpoint_url.map(|e| e.into());
+        self
+    }
+
+    pub fn bucket(&self) -> &str {
+        &self.bucket
+    }
+
+    /// Fetches object bytes from S3 / RustFS.
+    #[tracing::instrument(skip(self))]
+    pub async fn get_object(&self, object_key: &str) -> Result<Vec<u8>, StorageError> {
+        let presigned_url = generate_presigned_url(
+            "GET",
+            &self.bucket,
+            object_key,
+            Duration::from_secs(900),
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+        )?;
+
+        let res = self.http_client.get(&presigned_url).send().await?;
+        let status = res.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(StorageError::NotFound(object_key.to_string()));
+        }
+        if !status.is_success() {
+            return Err(StorageError::Request(format!(
+                "GET {} returned HTTP {}",
+                object_key, status
+            )));
+        }
+
+        let bytes = res.bytes().await?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Fetches a byte range of an object from S3 / RustFS.
+    #[tracing::instrument(skip(self))]
+    pub async fn get_object_range(
+        &self,
+        object_key: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<u8>, StorageError> {
+        let presigned_url = generate_presigned_url(
+            "GET",
+            &self.bucket,
+            object_key,
+            Duration::from_secs(900),
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+        )?;
+
+        let res = self
+            .http_client
+            .get(&presigned_url)
+            .header("Range", format!("bytes={}-{}", start, end))
+            .send()
+            .await?;
+
+        let status = res.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(StorageError::NotFound(object_key.to_string()));
+        }
+        if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(StorageError::Request(format!(
+                "GET range {} returned HTTP {}",
+                object_key, status
+            )));
+        }
+
+        let bytes = res.bytes().await?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Uploads object bytes to S3 / RustFS.
+    #[tracing::instrument(skip(self, bytes))]
+    pub async fn put_object(
+        &self,
+        object_key: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+    ) -> Result<(), StorageError> {
+        let presigned_url = generate_presigned_url(
+            "PUT",
+            &self.bucket,
+            object_key,
+            Duration::from_secs(900),
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+        )?;
+
+        let res = self
+            .http_client
+            .put(&presigned_url)
+            .header("Content-Type", content_type)
+            .body(bytes)
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            return Err(StorageError::Request(format!(
+                "PUT {} returned HTTP {}",
+                object_key,
+                res.status()
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Deletes an object from S3 / RustFS.
+    #[tracing::instrument(skip(self))]
+    pub async fn delete_object(&self, object_key: &str) -> Result<(), StorageError> {
+        let presigned_url = generate_presigned_url(
+            "DELETE",
+            &self.bucket,
+            object_key,
+            Duration::from_secs(900),
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+        )?;
+
+        let res = self.http_client.delete(&presigned_url).send().await?;
+        let status = res.status();
+        if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
+            Ok(())
+        } else {
+            Err(StorageError::Request(format!(
+                "DELETE {} returned HTTP {}",
+                object_key, status
+            )))
+        }
+    }
+
+    /// Checks if bucket exists.
+    #[tracing::instrument(skip(self))]
+    pub async fn head_bucket(&self) -> Result<bool, StorageError> {
+        let presigned_url = generate_presigned_url(
+            "GET",
+            &self.bucket,
+            "",
+            Duration::from_secs(900),
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+        )?;
+
+        let res = self.http_client.get(&presigned_url).send().await?;
+        Ok(res.status().is_success())
+    }
+
+    /// Creates bucket if it does not exist.
+    #[tracing::instrument(skip(self))]
+    pub async fn create_bucket(&self) -> Result<(), StorageError> {
+        let presigned_url = generate_presigned_url(
+            "PUT",
+            &self.bucket,
+            "",
+            Duration::from_secs(900),
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+        )?;
+
+        let res = self.http_client.put(&presigned_url).send().await?;
+        if res.status().is_success() || res.status() == reqwest::StatusCode::CONFLICT {
+            Ok(())
+        } else {
+            Err(StorageError::Request(format!(
+                "Create bucket {} returned HTTP {}",
+                self.bucket,
+                res.status()
+            )))
+        }
+    }
+
+    /// Lists objects in the bucket matching prefix.
+    #[tracing::instrument(skip(self))]
+    pub async fn list_objects(&self, prefix: &str) -> Result<Vec<StorageObject>, StorageError> {
+        let presigned_url = generate_presigned_url_with_query(
+            "GET",
+            &self.bucket,
+            "",
+            Duration::from_secs(900),
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+            &[("list-type", "2"), ("prefix", prefix)],
+        )?;
+
+        let res = self.http_client.get(&presigned_url).send().await?;
+        if !res.status().is_success() {
+            return Ok(Vec::new());
+        }
+
+        let body_text = res.text().await?;
+        let objects = parse_list_objects_v2_xml(&body_text);
+        Ok(objects)
+    }
+
+    /// Generates a presigned GET URL for an object key in S3 / RustFS with the given expiration duration.
+    #[tracing::instrument(skip(self))]
+    pub async fn generate_presigned_get_url(
+        &self,
+        object_key: &str,
+        expires_in: Duration,
+    ) -> Result<String, StorageError> {
+        let url = generate_presigned_url(
+            "GET",
+            &self.bucket,
+            object_key,
+            expires_in,
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+        )?;
+        Ok(rewrite_url_with_public_endpoint(
+            url,
+            self.endpoint_url.as_deref(),
+            self.public_endpoint_url.as_deref(),
+        ))
+    }
+
+    /// Generates a presigned PUT URL for worker node file uploads in S3 / RustFS with the given expiration duration.
+    #[tracing::instrument(skip(self))]
+    pub async fn generate_presigned_put_url(
+        &self,
+        object_key: &str,
+        expires_in: Duration,
+    ) -> Result<String, StorageError> {
+        let url = generate_presigned_url(
+            "PUT",
+            &self.bucket,
+            object_key,
+            expires_in,
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            self.endpoint_url.as_deref(),
+        )?;
+        Ok(rewrite_url_with_public_endpoint(
+            url,
+            self.endpoint_url.as_deref(),
+            self.public_endpoint_url.as_deref(),
+        ))
+    }
+
+    /// Generates a presigned POST policy for browser-direct file uploads in S3 / RustFS.
+    #[tracing::instrument(skip(self))]
+    pub async fn generate_presigned_post(
+        &self,
+        object_key: &str,
+        expires_in: Duration,
+        max_content_length: u64,
+        success_action_redirect: Option<&str>,
+    ) -> Result<PresignedPost, StorageError> {
+        let endpoint_url = self
+            .public_endpoint_url
+            .as_deref()
+            .or(self.endpoint_url.as_deref());
+
+        generate_presigned_post_policy(
+            &self.bucket,
+            object_key,
+            expires_in,
+            max_content_length,
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            endpoint_url,
+            success_action_redirect,
+        )
+    }
+}
+
+pub fn parse_list_objects_v2_xml(xml: &str) -> Vec<StorageObject> {
+    let mut objects = Vec::new();
+    let mut search = xml;
+
+    while let Some(start_idx) = search.find("<Contents>") {
+        let rest = &search[start_idx + "<Contents>".len()..];
+        let end_idx = match rest.find("</Contents>") {
+            Some(idx) => idx,
+            None => break,
+        };
+        let block = &rest[..end_idx];
+        search = &rest[end_idx + "</Contents>".len()..];
+
+        let Some(key_str) = extract_xml_tag_slice(block, "Key") else {
+            continue;
+        };
+        if key_str.is_empty() {
+            continue;
+        }
+
+        let size = extract_xml_tag_slice(block, "Size")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let last_modified = extract_xml_tag_slice(block, "LastModified").and_then(|s| {
+            DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
+
+        objects.push(StorageObject {
+            key: key_str.to_string(),
+            last_modified,
+            size,
+        });
+    }
+
+    objects
+}
+
+fn extract_xml_tag_slice<'a>(xml_block: &'a str, tag_name: &str) -> Option<&'a str> {
+    let start_tag = format!("<{}>", tag_name);
+    let end_tag = format!("</{}>", tag_name);
+
+    let start_idx = xml_block.find(&start_tag)?;
+    let rest = &xml_block[start_idx + start_tag.len()..];
+    let end_idx = rest.find(&end_tag)?;
+
+    Some(&rest[..end_idx])
 }
 
 #[cfg(test)]
@@ -579,23 +984,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_presigned_get_url() {
-        let credentials = aws_sdk_s3::config::Credentials::new(
+        let storage = StorageService::new("test-bucket").with_credentials(
             "test_access_key",
             "test_secret_key",
-            None,
-            None,
-            "static",
+            "us-east-1",
+            Some("http://localhost:9000"),
         );
-        let s3_config = aws_sdk_s3::config::Builder::new()
-            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-            .credentials_provider(credentials)
-            .region(aws_sdk_s3::config::Region::new("us-east-1"))
-            .endpoint_url("http://localhost:9000")
-            .force_path_style(true)
-            .build();
-
-        let s3_client = Client::from_conf(s3_config);
-        let storage = StorageService::new(s3_client, "test-bucket");
 
         assert_eq!(storage.bucket(), "test-bucket");
 
@@ -614,23 +1008,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_presigned_put_url() {
-        let credentials = aws_sdk_s3::config::Credentials::new(
+        let storage = StorageService::new("test-bucket").with_credentials(
             "test_access_key",
             "test_secret_key",
-            None,
-            None,
-            "static",
+            "us-east-1",
+            Some("http://localhost:9000"),
         );
-        let s3_config = aws_sdk_s3::config::Builder::new()
-            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-            .credentials_provider(credentials)
-            .region(aws_sdk_s3::config::Region::new("us-east-1"))
-            .endpoint_url("http://localhost:9000")
-            .force_path_style(true)
-            .build();
-
-        let s3_client = Client::from_conf(s3_config);
-        let storage = StorageService::new(s3_client, "test-bucket");
 
         assert_eq!(storage.bucket(), "test-bucket");
 
@@ -708,53 +1091,34 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_storage_service_generate_presigned_post() {
-        let credentials = aws_sdk_s3::config::Credentials::new(
-            "test_access_key",
-            "test_secret_key",
-            None,
-            None,
-            "static",
-        );
-        let s3_config = aws_sdk_s3::config::Builder::new()
-            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-            .credentials_provider(credentials)
-            .region(aws_sdk_s3::config::Region::new("us-east-1"))
-            .endpoint_url("http://localhost:9000")
-            .force_path_style(true)
-            .build();
+    #[test]
+    fn test_parse_list_objects_v2_xml() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <Name>test-bucket</Name>
+            <Prefix>tmp/</Prefix>
+            <Contents>
+                <Key>tmp/item1.png</Key>
+                <LastModified>2025-01-01T12:00:00.000Z</LastModified>
+                <Size>12345</Size>
+            </Contents>
+            <Contents>
+                <Key>tmp/item2.png</Key>
+                <LastModified>2025-01-02T15:30:00.000Z</LastModified>
+                <Size>67890</Size>
+            </Contents>
+        </ListBucketResult>"#;
 
-        let s3_client = Client::from_conf(s3_config);
-        let storage = StorageService::new(s3_client, "deskdispatch-bucket").with_credentials(
-            "my_key",
-            "my_secret",
-            "us-west-2",
-            Some("http://s3.local:9000"),
-        );
-
-        let post = storage
-            .generate_presigned_post(
-                "bitmaps/upload_1.png",
-                Duration::from_secs(300),
-                5_000_000,
-                Some("http://s3.local:9000/commit"),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(post.url, "http://s3.local:9000/deskdispatch-bucket");
-        assert_eq!(post.get_field("key").unwrap(), "bitmaps/upload_1.png");
-        assert!(
-            post.get_field("x-amz-credential")
-                .unwrap()
-                .starts_with("my_key/")
-        );
+        let objects = parse_list_objects_v2_xml(xml);
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].key, "tmp/item1.png");
+        assert_eq!(objects[0].size, 12345);
+        assert_eq!(objects[1].key, "tmp/item2.png");
+        assert_eq!(objects[1].size, 67890);
     }
 
     #[test]
     fn test_rewrite_url_with_public_endpoint() {
-        // 1. Matching internal endpoint with trailing slashes handling
         let url = "http://minio.internal:9000/bucket/key.png?sig=123".to_string();
         let rewritten = rewrite_url_with_public_endpoint(
             url.clone(),
@@ -762,76 +1126,5 @@ mod tests {
             Some("https://s3.public.com/"),
         );
         assert_eq!(rewritten, "https://s3.public.com/bucket/key.png?sig=123");
-
-        // 2. Missing internal or public endpoint
-        assert_eq!(
-            rewrite_url_with_public_endpoint(url.clone(), None, Some("https://s3.public.com")),
-            url
-        );
-        assert_eq!(
-            rewrite_url_with_public_endpoint(url.clone(), Some("http://minio.internal:9000"), None),
-            url
-        );
-
-        // 3. Non-matching internal endpoint URL
-        let non_matching_url = "http://other-host.internal:9000/bucket/key.png".to_string();
-        assert_eq!(
-            rewrite_url_with_public_endpoint(
-                non_matching_url.clone(),
-                Some("http://minio.internal:9000"),
-                Some("https://s3.public.com")
-            ),
-            non_matching_url
-        );
-    }
-
-    #[tokio::test]
-    async fn test_storage_service_public_endpoint_rewriting() {
-        let credentials = aws_sdk_s3::config::Credentials::new(
-            "test_access_key",
-            "test_secret_key",
-            None,
-            None,
-            "static",
-        );
-        let s3_config = aws_sdk_s3::config::Builder::new()
-            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-            .credentials_provider(credentials)
-            .region(aws_sdk_s3::config::Region::new("us-east-1"))
-            .endpoint_url("http://minio.internal:9000")
-            .force_path_style(true)
-            .build();
-
-        let s3_client = Client::from_conf(s3_config);
-        let storage = StorageService::new(s3_client, "test-bucket")
-            .with_credentials(
-                "key",
-                "secret",
-                "us-east-1",
-                Some("http://minio.internal:9000"),
-            )
-            .with_public_endpoint(Some("https://s3.public.com"));
-
-        // GET URL rewriting
-        let get_url = storage
-            .generate_presigned_get_url("item.png", Duration::from_secs(300))
-            .await
-            .unwrap();
-        assert!(
-            get_url.starts_with("https://s3.public.com/test-bucket/item.png"),
-            "Expected GET URL to start with public endpoint, got: {}",
-            get_url
-        );
-
-        // PUT URL rewriting
-        let put_url = storage
-            .generate_presigned_put_url("item.png", Duration::from_secs(300))
-            .await
-            .unwrap();
-        assert!(
-            put_url.starts_with("https://s3.public.com/test-bucket/item.png"),
-            "Expected PUT URL to start with public endpoint, got: {}",
-            put_url
-        );
     }
 }

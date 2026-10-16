@@ -66,7 +66,7 @@ mod tests {
             database_url: "postgres://postgres:postgres@localhost/deskdispatch".to_string(),
             public_base_url: "http://localhost:3000".to_string(),
             s3_endpoint: None,
-            s3_public_endpoint,
+            s3_public_endpoint: s3_public_endpoint.clone(),
             s3_bucket: "test-bucket".to_string(),
             s3_access_key: "key".to_string(),
             s3_secret_key: SecretString::from("secret".to_string()),
@@ -94,19 +94,14 @@ mod tests {
         let pool =
             sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/deskdispatch")
                 .unwrap();
-        let s3_credentials =
-            aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-        let s3_config = aws_sdk_s3::config::Builder::new()
-            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-            .credentials_provider(s3_credentials)
-            .region(aws_sdk_s3::config::Region::new("us-east-1"))
-            .build();
-        let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+        let storage = crate::storage::StorageService::new(&config.s3_bucket)
+            .with_credentials("key", "secret", "us-east-1", None::<String>)
+            .with_public_endpoint(s3_public_endpoint);
         let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
         AppState {
             db: pool,
-            s3_client,
+            storage,
             config,
             rate_limiter: LoginRateLimiter::default(),
             task_queue_notifier: tx_notify,
