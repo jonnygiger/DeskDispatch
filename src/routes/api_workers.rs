@@ -623,6 +623,13 @@ pub fn is_valid_step_result(result: &str) -> bool {
     result.parse::<StepResultStatus>().is_ok()
 }
 
+#[derive(sqlx::FromRow)]
+struct StepResultValidationRow {
+    automation_id: i64,
+    step_count: i64,
+    step_valid: bool,
+}
+
 #[tracing::instrument(skip(worker, state, payload))]
 pub async fn post_step_result_handler(
     worker: AuthWorker,
@@ -636,20 +643,28 @@ pub async fn post_step_result_handler(
             payload.result
         ))
     })?;
-    let result_str = result_status.to_string();
 
     let mut tx = state.db.begin().await?;
 
-    let run_info: Option<(i64, String, i64)> = sqlx::query_as(
-        "SELECT id, status, automation_id FROM task_runs WHERE id = $1 AND worker_id = $2 AND status IN ('running', 'cancelling')",
+    // Consolidated validation query: validates run ownership/status, checks step count limit,
+    // and asserts step membership in automation in a single database round-trip.
+    let validation: Option<StepResultValidationRow> = sqlx::query_as(
+        r#"
+        SELECT tr.automation_id,
+               (SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = tr.id) AS step_count,
+               EXISTS(SELECT 1 FROM automation_steps WHERE id = $3 AND automation_id = tr.automation_id) AS step_valid
+        FROM task_runs tr
+        WHERE tr.id = $1 AND tr.worker_id = $2 AND tr.status IN ('running', 'cancelling')
+        "#,
     )
     .bind(task_run_id)
     .bind(worker.id)
+    .bind(payload.step_id)
     .fetch_optional(&mut *tx)
     .await?;
 
-    let (_run_id, _status, automation_id) = match run_info {
-        Some(info) => info,
+    let val = match validation {
+        Some(v) => v,
         None => {
             return Err(AppError::NotFound(format!(
                 "Running task run {} not found for this worker",
@@ -658,13 +673,7 @@ pub async fn post_step_result_handler(
         }
     };
 
-    let step_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM task_run_steps WHERE task_run_id = $1")
-            .bind(task_run_id)
-            .fetch_one(&mut *tx)
-            .await?;
-
-    if step_count >= 1000 {
+    if val.step_count >= 1000 {
         sqlx::query(
             "UPDATE task_runs SET status = 'failed', completed_at = now(), error_message = $1 WHERE id = $2",
         )
@@ -673,8 +682,6 @@ pub async fn post_step_result_handler(
         .execute(&mut *tx)
         .await?;
 
-        // Upsert into step_screenshots so each automation step is connected to a screenshot
-        // from the first time it is run (or updated if missing).
         if let Some(ref key) = payload.screenshot_object_key
             && let Err(e) = sqlx::query(
                 r#"
@@ -700,7 +707,7 @@ pub async fn post_step_result_handler(
         tracing::warn!(
             worker_id = worker.id,
             task_run_id = task_run_id,
-            step_count = step_count,
+            step_count = val.step_count,
             "Failing task run due to exceeding max step count limit (1000 steps)"
         );
 
@@ -709,35 +716,42 @@ pub async fn post_step_result_handler(
         ));
     }
 
-    let step_valid: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM automation_steps WHERE id = $1 AND automation_id = $2")
-            .bind(payload.step_id)
-            .bind(automation_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-
-    if step_valid.is_none() {
+    if !val.step_valid {
         return Err(AppError::BadRequest(format!(
             "Step {} does not belong to automation {}",
-            payload.step_id, automation_id
+            payload.step_id, val.automation_id
         )));
     }
 
-    if let Some(ref updates) = payload.variable_updates {
-        for item in updates {
-            let var_valid: Option<i64> = sqlx::query_scalar(
-                "SELECT id FROM automation_variables WHERE id = $1 AND automation_id = $2",
-            )
-            .bind(item.variable_id)
-            .bind(automation_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    // Batch validate variable membership in a single ANY($1) query
+    if let Some(ref updates) = payload.variable_updates
+        && !updates.is_empty()
+    {
+        let var_ids: Vec<i64> = updates.iter().map(|u| u.variable_id).collect();
+        let valid_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(DISTINCT id) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
+        )
+        .bind(&var_ids)
+        .bind(val.automation_id)
+        .fetch_one(&mut *tx)
+        .await?;
 
-            if var_valid.is_none() {
-                return Err(AppError::BadRequest(format!(
-                    "Variable {} does not belong to automation {}",
-                    item.variable_id, automation_id
-                )));
+        if valid_count < var_ids.iter().collect::<std::collections::HashSet<_>>().len() as i64 {
+            for item in updates {
+                let is_valid: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM automation_variables WHERE id = $1 AND automation_id = $2)",
+                )
+                .bind(item.variable_id)
+                .bind(val.automation_id)
+                .fetch_one(&mut *tx)
+                .await?;
+
+                if !is_valid {
+                    return Err(AppError::BadRequest(format!(
+                        "Variable {} does not belong to automation {}",
+                        item.variable_id, val.automation_id
+                    )));
+                }
             }
         }
     }
@@ -794,7 +808,7 @@ pub async fn post_step_result_handler(
     .bind(payload.step_id)
     .bind(started_at)
     .bind(completed_at)
-    .bind(&result_str)
+    .bind(result_status.as_str())
     .bind(captured_r)
     .bind(captured_g)
     .bind(captured_b)
@@ -842,11 +856,11 @@ pub async fn post_step_result_handler(
         && !updates.is_empty()
     {
         let var_ids: Vec<i64> = updates.iter().map(|u| u.variable_id).collect();
-        let var_vals: Vec<String> = updates
+        let var_vals: Vec<std::borrow::Cow<'_, str>> = updates
             .iter()
             .map(|u| match &u.value {
-                serde_json::Value::String(s) => s.clone(),
-                v => v.to_string(),
+                serde_json::Value::String(s) => std::borrow::Cow::Borrowed(s.as_str()),
+                v => std::borrow::Cow::Owned(v.to_string()),
             })
             .collect();
 

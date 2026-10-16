@@ -349,14 +349,21 @@ pub enum StepResultStatus {
     BranchNotMatched,
 }
 
+impl StepResultStatus {
+    #[inline]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StepResultStatus::Success => "success",
+            StepResultStatus::Failed => "failed",
+            StepResultStatus::BranchMatched => "branch_matched",
+            StepResultStatus::BranchNotMatched => "branch_not_matched",
+        }
+    }
+}
+
 impl fmt::Display for StepResultStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StepResultStatus::Success => write!(f, "success"),
-            StepResultStatus::Failed => write!(f, "failed"),
-            StepResultStatus::BranchMatched => write!(f, "branch_matched"),
-            StepResultStatus::BranchNotMatched => write!(f, "branch_not_matched"),
-        }
+        f.write_str(self.as_str())
     }
 }
 

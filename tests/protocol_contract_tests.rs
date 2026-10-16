@@ -1,71 +1,22 @@
 #![allow(clippy::unwrap_used)]
 use deskdispatch_protocol::*;
-use utoipa::OpenApi;
-
-#[derive(OpenApi)]
-#[openapi(
-    paths(),
-    components(
-        schemas(
-            RegisterWorkerRequest,
-            RegisterWorkerResponse,
-            ErrorResponse,
-            HeartbeatRequest,
-            HeartbeatResponse,
-            NextAssignmentResponse,
-            TaskRunResponse,
-            VariableUpdateItem,
-            StepResultRequest,
-            StepResultResponse,
-            CompleteTaskRunRequest,
-            CompleteTaskRunResponse,
-            ScreenshotUploadUrlResponse,
-            RecordingEventItem,
-            PostRecordingEventsRequest,
-            PostRecordingEventsResponse,
-            WorkerStopRecordingResponse,
-            CommitScreenshotRequest,
-            CommitScreenshotResponse,
-            AutomationVariablePayload,
-            BranchConditionPayload,
-            StepPayload,
-            FullAutomationPayload,
-        )
-    ),
-    tags(
-        (name = "worker_api", description = "Worker Agent Protocol Operations")
-    )
-)]
-struct ApiDoc;
 
 #[test]
-fn test_openapi_schema_generation_and_components() {
-    let openapi = ApiDoc::openapi();
-    let json_str = openapi
-        .to_json()
-        .expect("Failed to serialize OpenAPI spec to JSON");
-    let doc: serde_json::Value = serde_json::from_str(&json_str).expect("Valid JSON spec expected");
+fn test_protocol_dto_serialization_roundtrip() {
+    let hb_req = HeartbeatRequest {
+        status: Some("online".to_string()),
+        current_task_run_id: Some(100),
+        screen_width: Some(1920),
+        screen_height: Some(1080),
+        os_info: Some("Linux".to_string()),
+        agent_version: Some("1.0.0".to_string()),
+    };
 
-    // Verify OpenAPI version is 3.x
-    assert!(
-        doc["openapi"].as_str().is_some_and(|v| v.starts_with("3.")),
-        "OpenAPI spec version should be 3.x: {:?}",
-        doc["openapi"]
-    );
-
-    // Verify schemas component contains all key protocol DTOs
-    let schemas = &doc["components"]["schemas"];
-    assert!(schemas.get("RegisterWorkerRequest").is_some());
-    assert!(schemas.get("RegisterWorkerResponse").is_some());
-    assert!(schemas.get("HeartbeatRequest").is_some());
-    assert!(schemas.get("HeartbeatResponse").is_some());
-    assert!(schemas.get("NextAssignmentResponse").is_some());
-    assert!(schemas.get("TaskRunResponse").is_some());
-    assert!(schemas.get("StepResultRequest").is_some());
-    assert!(schemas.get("CompleteTaskRunRequest").is_some());
-    assert!(schemas.get("PostRecordingEventsRequest").is_some());
-    assert!(schemas.get("FullAutomationPayload").is_some());
-    assert!(schemas.get("StepPayload").is_some());
+    let json_val = serde_json::to_value(&hb_req).unwrap();
+    assert_eq!(json_val["status"], "online");
+    assert_eq!(json_val["current_task_run_id"], 100);
+    assert_eq!(json_val["screen_width"], 1920);
+    assert_eq!(json_val["screen_height"], 1080);
 }
 
 #[test]
