@@ -4,6 +4,7 @@ use std::fmt;
 use std::time::Duration;
 
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
 
 pub fn encode_hex(bytes: &[u8]) -> String {
     let mut buf = vec![0u8; bytes.len() * 2];
@@ -130,12 +131,33 @@ pub fn url_encode_component(s: &str) -> String {
                 result.push(b as char);
             }
             _ => {
-                use std::fmt::Write;
-                let _ = write!(result, "%{:02X}", b);
+                result.push('%');
+                result.push(HEX_CHARS_UPPER[(b >> 4) as usize] as char);
+                result.push(HEX_CHARS_UPPER[(b & 0x0f) as usize] as char);
             }
         }
     }
     result
+}
+
+/// Derives the 4-tier AWS SigV4 HMAC-SHA256 signing key.
+fn derive_signing_key(secret_key: &str, date_str: &str, region: &str) -> [u8; 32] {
+    let k_secret_bytes = if secret_key.len() <= 56 {
+        let mut buf = [0u8; 64];
+        buf[..4].copy_from_slice(b"AWS4");
+        buf[4..4 + secret_key.len()].copy_from_slice(secret_key.as_bytes());
+        hmac_sha256(&buf[..4 + secret_key.len()], date_str.as_bytes())
+    } else {
+        let mut vec = Vec::with_capacity(4 + secret_key.len());
+        vec.extend_from_slice(b"AWS4");
+        vec.extend_from_slice(secret_key.as_bytes());
+        hmac_sha256(&vec, date_str.as_bytes())
+    };
+
+    let k_date = k_secret_bytes;
+    let k_region = hmac_sha256(&k_date, region.as_bytes());
+    let k_service = hmac_sha256(&k_region, b"s3");
+    hmac_sha256(&k_service, b"aws4_request")
 }
 
 #[derive(serde::Serialize)]
@@ -328,11 +350,21 @@ pub fn generate_presigned_url_with_query(
         .collect();
     encoded_params.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
-    let canonical_query_string = encoded_params
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect::<Vec<_>>()
-        .join("&");
+    let mut canonical_query_string = String::with_capacity(
+        encoded_params
+            .iter()
+            .map(|(k, v)| k.len() + 1 + v.len() + 1)
+            .sum::<usize>()
+            .saturating_sub(1),
+    );
+    for (idx, (k, v)) in encoded_params.iter().enumerate() {
+        if idx > 0 {
+            canonical_query_string.push('&');
+        }
+        canonical_query_string.push_str(k);
+        canonical_query_string.push('=');
+        canonical_query_string.push_str(v);
+    }
 
     let canonical_headers = format!("host:{}\n", host);
     let signed_headers = "host";
@@ -355,23 +387,7 @@ pub fn generate_presigned_url_with_query(
         amz_date, credential_scope, canonical_request_hash
     );
 
-    let k_secret_bytes = if secret_key.len() <= 56 {
-        let mut buf = [0u8; 64];
-        buf[..4].copy_from_slice(b"AWS4");
-        buf[4..4 + secret_key.len()].copy_from_slice(secret_key.as_bytes());
-        hmac_sha256(&buf[..4 + secret_key.len()], date_str.as_bytes())
-    } else {
-        let mut vec = Vec::with_capacity(4 + secret_key.len());
-        vec.extend_from_slice(b"AWS4");
-        vec.extend_from_slice(secret_key.as_bytes());
-        hmac_sha256(&vec, date_str.as_bytes())
-    };
-
-    let k_date = k_secret_bytes;
-    let k_region = hmac_sha256(&k_date, region.as_bytes());
-    let k_service = hmac_sha256(&k_region, b"s3");
-    let k_signing = hmac_sha256(&k_service, b"aws4_request");
-
+    let k_signing = derive_signing_key(secret_key, &date_str, region);
     let signature_bytes = hmac_sha256(&k_signing, string_to_sign.as_bytes());
     let signature_hex = encode_hex(&signature_bytes);
 
@@ -485,22 +501,7 @@ pub fn generate_presigned_post_policy(
 
     let policy_base64 = encode_base64(policy_str.as_bytes());
 
-    let k_secret_bytes = if secret_key.len() <= 56 {
-        let mut buf = [0u8; 64];
-        buf[..4].copy_from_slice(b"AWS4");
-        buf[4..4 + secret_key.len()].copy_from_slice(secret_key.as_bytes());
-        hmac_sha256(&buf[..4 + secret_key.len()], date_str.as_bytes())
-    } else {
-        let mut vec = Vec::with_capacity(4 + secret_key.len());
-        vec.extend_from_slice(b"AWS4");
-        vec.extend_from_slice(secret_key.as_bytes());
-        hmac_sha256(&vec, date_str.as_bytes())
-    };
-    let k_date = k_secret_bytes;
-    let k_region = hmac_sha256(&k_date, region.as_bytes());
-    let k_service = hmac_sha256(&k_region, b"s3");
-    let k_signing = hmac_sha256(&k_service, b"aws4_request");
-
+    let k_signing = derive_signing_key(secret_key, &date_str, region);
     let signature_bytes = hmac_sha256(&k_signing, policy_base64.as_bytes());
     let signature_hex = encode_hex(&signature_bytes);
 
@@ -893,23 +894,25 @@ pub fn parse_list_objects_v2_xml(xml: &str) -> Vec<StorageObject> {
         let block = &rest[..end_idx];
         search = &rest[end_idx + "</Contents>".len()..];
 
-        let key = extract_xml_tag(block, "Key").unwrap_or_default();
-        if key.is_empty() {
+        let Some(key_str) = extract_xml_tag_slice(block, "Key") else {
+            continue;
+        };
+        if key_str.is_empty() {
             continue;
         }
 
-        let size = extract_xml_tag(block, "Size")
+        let size = extract_xml_tag_slice(block, "Size")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
 
-        let last_modified = extract_xml_tag(block, "LastModified").and_then(|s| {
-            DateTime::parse_from_rfc3339(&s)
+        let last_modified = extract_xml_tag_slice(block, "LastModified").and_then(|s| {
+            DateTime::parse_from_rfc3339(s)
                 .ok()
                 .map(|dt| dt.with_timezone(&Utc))
         });
 
         objects.push(StorageObject {
-            key,
+            key: key_str.to_string(),
             last_modified,
             size,
         });
@@ -918,7 +921,7 @@ pub fn parse_list_objects_v2_xml(xml: &str) -> Vec<StorageObject> {
     objects
 }
 
-fn extract_xml_tag(xml_block: &str, tag_name: &str) -> Option<String> {
+fn extract_xml_tag_slice<'a>(xml_block: &'a str, tag_name: &str) -> Option<&'a str> {
     let start_tag = format!("<{}>", tag_name);
     let end_tag = format!("</{}>", tag_name);
 
@@ -926,7 +929,7 @@ fn extract_xml_tag(xml_block: &str, tag_name: &str) -> Option<String> {
     let rest = &xml_block[start_idx + start_tag.len()..];
     let end_idx = rest.find(&end_tag)?;
 
-    Some(rest[..end_idx].to_string())
+    Some(&rest[..end_idx])
 }
 
 #[cfg(test)]

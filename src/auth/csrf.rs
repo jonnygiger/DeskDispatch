@@ -180,11 +180,11 @@ pub use csrf_origin_middleware as csrf_middleware;
 mod tests {
     use super::*;
     use axum::{
+        Router,
         body::Body,
         http::{Request, StatusCode},
         middleware,
         routing::{get, post},
-        Router,
     };
     use secrecy::SecretString;
     use tower::ServiceExt;
