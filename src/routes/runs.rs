@@ -744,15 +744,127 @@ pub async fn get_run_detail_handler(
     .into_response()
 }
 
+/// Pre-calculated ISO 3309 CRC32 lookup table (polynomial 0xEDB88320).
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB8_8320;
+            } else {
+                crc >>= 1;
+            }
+            j += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+/// Calculates standard ISO 3309 CRC32 checksum over a byte slice using a 256-entry lookup table.
+pub fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in data {
+        let idx = ((crc as u8) ^ byte) as usize;
+        crc = (crc >> 8) ^ CRC32_TABLE[idx];
+    }
+    !crc
+}
+
+/// Zero-dependency ZIP STORE writer.
+///
+/// Designed specifically for screenshot download archives. Screenshots in DeskDispatch are pre-compressed PNG files.
+/// Storing PNG files in uncompressed STORE format avoids redundant double DEFLATE re-compression, significantly
+/// reducing CPU overhead during download generation while maintaining standard ZIP archive compatibility.
+#[derive(Default)]
+pub struct ZipWriter {
+    buf: Vec<u8>,
+    entries: Vec<(String, u32, u32, u32)>,
+}
+
+impl ZipWriter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_file(&mut self, filename: &str, data: &[u8]) {
+        let offset = self.buf.len() as u32;
+        let crc = crc32(data);
+        let size = data.len() as u32;
+        let filename_bytes = filename.as_bytes();
+        let filename_len = filename_bytes.len() as u16;
+
+        self.buf.extend_from_slice(&0x04034b50u32.to_le_bytes());
+        self.buf.extend_from_slice(&20u16.to_le_bytes());
+        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        self.buf.extend_from_slice(&crc.to_le_bytes());
+        self.buf.extend_from_slice(&size.to_le_bytes());
+        self.buf.extend_from_slice(&size.to_le_bytes());
+        self.buf.extend_from_slice(&filename_len.to_le_bytes());
+        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        self.buf.extend_from_slice(filename_bytes);
+        self.buf.extend_from_slice(data);
+
+        self.entries.push((filename.to_string(), crc, size, offset));
+    }
+
+    pub fn finish(mut self) -> Vec<u8> {
+        let cd_offset = self.buf.len() as u32;
+
+        for (filename, crc, size, offset) in &self.entries {
+            let filename_bytes = filename.as_bytes();
+            let filename_len = filename_bytes.len() as u16;
+
+            self.buf.extend_from_slice(&0x02014b50u32.to_le_bytes());
+            self.buf.extend_from_slice(&20u16.to_le_bytes());
+            self.buf.extend_from_slice(&20u16.to_le_bytes());
+            self.buf.extend_from_slice(&0u16.to_le_bytes());
+            self.buf.extend_from_slice(&0u16.to_le_bytes());
+            self.buf.extend_from_slice(&0u16.to_le_bytes());
+            self.buf.extend_from_slice(&0u16.to_le_bytes());
+            self.buf.extend_from_slice(&crc.to_le_bytes());
+            self.buf.extend_from_slice(&size.to_le_bytes());
+            self.buf.extend_from_slice(&size.to_le_bytes());
+            self.buf.extend_from_slice(&filename_len.to_le_bytes());
+            self.buf.extend_from_slice(&0u16.to_le_bytes());
+            self.buf.extend_from_slice(&0u16.to_le_bytes());
+            self.buf.extend_from_slice(&0u16.to_le_bytes());
+            self.buf.extend_from_slice(&0u16.to_le_bytes());
+            self.buf
+                .extend_from_slice(&(0o100644u32 << 16).to_le_bytes());
+            self.buf.extend_from_slice(&offset.to_le_bytes());
+            self.buf.extend_from_slice(filename_bytes);
+        }
+
+        let cd_size = (self.buf.len() as u32) - cd_offset;
+        let num_entries = self.entries.len() as u16;
+
+        self.buf.extend_from_slice(&0x06054b50u32.to_le_bytes());
+        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        self.buf.extend_from_slice(&num_entries.to_le_bytes());
+        self.buf.extend_from_slice(&num_entries.to_le_bytes());
+        self.buf.extend_from_slice(&cd_size.to_le_bytes());
+        self.buf.extend_from_slice(&cd_offset.to_le_bytes());
+        self.buf.extend_from_slice(&0u16.to_le_bytes());
+
+        self.buf
+    }
+}
+
 #[tracing::instrument(skip(state, _user))]
 pub async fn get_run_screenshots_zip_handler(
     State(state): State<AppState>,
     _user: AuthUser,
     Path(id): Path<i64>,
 ) -> Response {
-    use std::io::Write;
-    use zip::write::SimpleFileOptions;
-
     let run_exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_runs WHERE id = $1)")
             .bind(id)
@@ -791,57 +903,41 @@ pub async fn get_run_screenshots_zip_handler(
         }
     };
 
-    let mut buf = Vec::new();
-    {
-        let mut zip_writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .unix_permissions(0o644);
+    let mut zip_writer = ZipWriter::new();
+    let storage = state.storage_service();
+    let mut count = 0;
 
-        let storage = state.storage_service();
-        let mut count = 0;
+    for (idx, row) in step_rows.into_iter().enumerate() {
+        let screenshot_key: Option<String> = row
+            .get::<Option<String>, _>("screenshot_object_key")
+            .or_else(|| row.get("step_screenshot_key"));
 
-        for (idx, row) in step_rows.into_iter().enumerate() {
-            let screenshot_key: Option<String> = row
-                .get::<Option<String>, _>("screenshot_object_key")
-                .or_else(|| row.get("step_screenshot_key"));
+        if let Some(key) = screenshot_key
+            && let Ok(bytes) = storage.get_object(&key).await
+        {
+            let seq: Option<i32> = row.get("seq");
+            let step_id: i64 = row.get("step_id");
+            let filename = format!(
+                "step_{:03}_seq_{}_step_{}.png",
+                idx + 1,
+                seq.unwrap_or((idx + 1) as i32),
+                step_id
+            );
 
-            if let Some(key) = screenshot_key
-                && let Ok(bytes) = storage.get_object(&key).await
-            {
-                let seq: Option<i32> = row.get("seq");
-                let step_id: i64 = row.get("step_id");
-                let filename = format!(
-                    "step_{:03}_seq_{}_step_{}.png",
-                    idx + 1,
-                    seq.unwrap_or((idx + 1) as i32),
-                    step_id
-                );
-
-                if zip_writer.start_file(filename, options).is_ok() {
-                    let _ = zip_writer.write_all(&bytes);
-                    count += 1;
-                }
-            }
-        }
-
-        if count == 0 {
-            return (
-                StatusCode::NOT_FOUND,
-                "No screenshots found for this task run",
-            )
-                .into_response();
-        }
-
-        if zip_writer.finish().is_err() {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to generate ZIP archive",
-            )
-                .into_response();
+            zip_writer.add_file(&filename, &bytes);
+            count += 1;
         }
     }
 
+    if count == 0 {
+        return (
+            StatusCode::NOT_FOUND,
+            "No screenshots found for this task run",
+        )
+            .into_response();
+    }
+
+    let buf = zip_writer.finish();
     let filename = format!("run-{}-screenshots.zip", id);
     (
         [
@@ -966,6 +1062,25 @@ mod tests {
             step_item.captured_xy_display(),
             Some("(824, 391)".to_string())
         );
+    }
+
+    #[test]
+    fn test_crc32_and_zip_writer() {
+        // Standard ASCII string CRC32 check
+        let data = b"123456789";
+        assert_eq!(crc32(data), 0xCBF43926);
+
+        let mut writer = ZipWriter::new();
+        writer.add_file("hello.txt", b"Hello World!");
+        writer.add_file(
+            "test.png",
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
+        );
+
+        let zip_bytes = writer.finish();
+        assert!(!zip_bytes.is_empty());
+        // Verify Local File Header Signature
+        assert_eq!(&zip_bytes[0..4], &[0x50, 0x4B, 0x03, 0x04]);
     }
 
     #[test]
