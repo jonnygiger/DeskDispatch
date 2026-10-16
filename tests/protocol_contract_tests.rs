@@ -2,6 +2,24 @@
 use deskdispatch_protocol::*;
 
 #[test]
+fn test_protocol_dto_serialization_roundtrip() {
+    let hb_req = HeartbeatRequest {
+        status: Some("online".to_string()),
+        current_task_run_id: Some(100),
+        screen_width: Some(1920),
+        screen_height: Some(1080),
+        os_info: Some("Linux".to_string()),
+        agent_version: Some("1.0.0".to_string()),
+    };
+
+    let json_val = serde_json::to_value(&hb_req).unwrap();
+    assert_eq!(json_val["status"], "online");
+    assert_eq!(json_val["current_task_run_id"], 100);
+    assert_eq!(json_val["screen_width"], 1920);
+    assert_eq!(json_val["screen_height"], 1080);
+}
+
+#[test]
 fn test_next_assignment_response_contract() {
     // 1. None assignment
     let resp_none = NextAssignmentResponse::None;
