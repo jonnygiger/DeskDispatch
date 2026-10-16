@@ -36,7 +36,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.28", features = ["v4", "serde"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 url = "2.5"
-zip = "2.2"
 
 [dev-dependencies]
 proptest = "1.11"
