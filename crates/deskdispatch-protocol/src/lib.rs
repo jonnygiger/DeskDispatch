@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterWorkerRequest {
     pub registration_token: Option<String>,
     pub token: Option<String>,
@@ -12,7 +11,7 @@ pub struct RegisterWorkerRequest {
     pub mac_address: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterWorkerResponse {
     pub status: String,
     pub worker_id: i64,
@@ -21,12 +20,12 @@ pub struct RegisterWorkerResponse {
     pub api_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HeartbeatRequest {
     pub status: Option<String>,
     pub current_task_run_id: Option<i64>,
@@ -36,7 +35,7 @@ pub struct HeartbeatRequest {
     pub agent_version: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeartbeatResponse {
     pub status: String,
     pub cancel_requested: bool,
@@ -44,13 +43,12 @@ pub struct HeartbeatResponse {
     pub heartbeat_interval_secs: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NextAssignmentResponse {
     None,
     ExecuteAutomation {
         task_run_id: i64,
-        #[schema(value_type = Object)]
         automation: serde_json::Value,
     },
     StartRecording {
@@ -58,22 +56,20 @@ pub enum NextAssignmentResponse {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskRunResponse {
     pub task_run_id: i64,
     pub status: String,
-    #[schema(value_type = Object)]
     pub automation: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VariableUpdateItem {
     pub variable_id: i64,
-    #[schema(value_type = Object)]
     pub value: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StepResultRequest {
     pub seq: Option<i32>,
     pub step_id: i64,
@@ -93,30 +89,30 @@ pub struct StepResultRequest {
     pub variable_updates: Option<Vec<VariableUpdateItem>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StepResultResponse {
     pub status: String,
     pub step_result_id: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CompleteTaskRunRequest {
     pub status: String,
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompleteTaskRunResponse {
     pub status: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScreenshotUploadUrlResponse {
     pub upload_url: String,
     pub object_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RecordingEventItem {
     pub sequence_number: i32,
     pub event_type: String,
@@ -128,24 +124,24 @@ pub struct RecordingEventItem {
     pub captured_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PostRecordingEventsRequest {
     pub events: Vec<RecordingEventItem>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PostRecordingEventsResponse {
     pub status: String,
     pub count: usize,
     pub stop_requested: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkerStopRecordingResponse {
     pub status: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CommitScreenshotRequest {
     pub step_id: Option<i64>,
     pub object_key: Option<String>,
@@ -153,13 +149,13 @@ pub struct CommitScreenshotRequest {
     pub height: Option<i32>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommitScreenshotResponse {
     pub status: String,
     pub object_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CommitBitmapRequest {
     pub automation_id: Option<i64>,
     pub name: String,
@@ -168,14 +164,14 @@ pub struct CommitBitmapRequest {
     pub height: Option<i32>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommitBitmapResponse {
     pub status: String,
     pub bitmap_id: i64,
     pub object_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AutomationVariablePayload {
     pub id: i64,
     pub name: String,
@@ -183,7 +179,7 @@ pub struct AutomationVariablePayload {
     pub description: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BranchConditionPayload {
     PixelRgb {
@@ -210,7 +206,7 @@ pub enum BranchConditionPayload {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StepPayload {
     MouseClick {
@@ -271,13 +267,12 @@ pub enum StepPayload {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FullAutomationPayload {
     pub id: i64,
     pub name: String,
     pub description: String,
     pub status: String,
-    #[schema(value_type = Object)]
     pub parameters: std::collections::HashMap<String, serde_json::Value>,
     pub variables: Vec<AutomationVariablePayload>,
     pub steps: Vec<StepPayload>,
