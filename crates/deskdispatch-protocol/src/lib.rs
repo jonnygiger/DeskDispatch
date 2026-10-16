@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RegisterWorkerRequest {
     pub registration_token: Option<String>,
     pub token: Option<String>,
@@ -11,7 +11,7 @@ pub struct RegisterWorkerRequest {
     pub mac_address: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RegisterWorkerResponse {
     pub status: String,
     pub worker_id: i64,
@@ -20,12 +20,12 @@ pub struct RegisterWorkerResponse {
     pub api_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeartbeatRequest {
     pub status: Option<String>,
     pub current_task_run_id: Option<i64>,
@@ -63,13 +63,13 @@ pub struct TaskRunResponse {
     pub automation: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VariableUpdateItem {
     pub variable_id: i64,
     pub value: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StepResultRequest {
     pub seq: Option<i32>,
     pub step_id: i64,
@@ -95,7 +95,7 @@ pub struct StepResultResponse {
     pub step_result_id: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompleteTaskRunRequest {
     pub status: String,
     pub error_message: Option<String>,
@@ -112,7 +112,7 @@ pub struct ScreenshotUploadUrlResponse {
     pub object_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecordingEventItem {
     pub sequence_number: i32,
     pub event_type: String,
@@ -124,7 +124,7 @@ pub struct RecordingEventItem {
     pub captured_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PostRecordingEventsRequest {
     pub events: Vec<RecordingEventItem>,
 }
@@ -141,7 +141,7 @@ pub struct WorkerStopRecordingResponse {
     pub status: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommitScreenshotRequest {
     pub step_id: Option<i64>,
     pub object_key: Option<String>,
@@ -155,7 +155,7 @@ pub struct CommitScreenshotResponse {
     pub object_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommitBitmapRequest {
     pub automation_id: Option<i64>,
     pub name: String,
