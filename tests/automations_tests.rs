@@ -61,17 +61,16 @@ async fn test_automations_crud_and_steps_ordering() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        storage,
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
@@ -135,7 +134,7 @@ async fn test_automations_crud_and_steps_ordering() {
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
-        .with_state(state);
+        .with_state(state.clone());
 
     let (_admin_id, admin_session) = create_test_user(
         &pool,
@@ -301,17 +300,16 @@ async fn test_mouse_click_step_crud_and_validation() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        storage,
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
@@ -347,7 +345,7 @@ async fn test_mouse_click_step_crud_and_validation() {
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
-        .with_state(state);
+        .with_state(state.clone());
 
     let (_admin_id, admin_session) = create_test_user(
         &pool,
@@ -540,17 +538,16 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        storage,
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
@@ -586,7 +583,7 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
-        .with_state(state);
+        .with_state(state.clone());
 
     let (_admin_id, admin_session) = create_test_user(
         &pool,
@@ -772,17 +769,16 @@ async fn test_step_type_picker_interface() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        storage,
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
@@ -798,7 +794,7 @@ async fn test_step_type_picker_interface() {
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
-        .with_state(state);
+        .with_state(state.clone());
 
     let (_admin_id, admin_session) = create_test_user(
         &pool,
@@ -843,17 +839,16 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        storage,
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
@@ -889,7 +884,7 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
-        .with_state(state);
+        .with_state(state.clone());
 
     let (_admin_id, admin_session) = create_test_user(
         &pool,
@@ -1095,17 +1090,16 @@ async fn test_automation_parameters_crud_and_validation() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        storage,
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
@@ -1134,7 +1128,7 @@ async fn test_automation_parameters_crud_and_validation() {
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
-        .with_state(state);
+        .with_state(state.clone());
 
     let (_admin_id, admin_session) = create_test_user(
         &pool,
@@ -1291,19 +1285,16 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .endpoint_url("http://localhost:9000")
-        .force_path_style(true)
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        Some("http://localhost:9000"),
+    );
 
     let state = AppState {
         db: pool.clone(),
-        s3_client: s3_client.clone(),
+        storage,
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
@@ -1355,7 +1346,7 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
-        .with_state(state);
+        .with_state(state.clone());
 
     // 1. Seed admin user
     let username = format!("admin_e2e_{}", uuid::Uuid::new_v4().simple());
@@ -1474,13 +1465,9 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         .write_to(&mut png_bytes, image::ImageFormat::Png)
         .unwrap();
 
-    let _ = s3_client
-        .put_object()
-        .bucket(&config.s3_bucket)
-        .key(&bitmap_key)
-        .content_type("image/png")
-        .body(png_bytes.into_inner().into())
-        .send()
+    let _ = state
+        .storage_service()
+        .put_object(&bitmap_key, png_bytes.into_inner(), "image/png")
         .await;
 
     // Commit reference bitmap via POST /bitmaps/commit

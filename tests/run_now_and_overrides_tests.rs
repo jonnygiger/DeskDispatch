@@ -51,17 +51,16 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
     };
 
     let config = Config::from_env().unwrap();
-    let credentials = aws_sdk_s3::config::Credentials::new("key", "secret", None, None, "static");
-    let s3_config = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new("us-east-1"))
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
 
     let state = AppState {
         db: pool.clone(),
-        s3_client,
+        storage,
         config: config.clone(),
         rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
         task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,

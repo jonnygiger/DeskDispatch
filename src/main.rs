@@ -35,8 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("init-s3") => {
             info!("Ensuring S3 bucket exists...");
-            let s3_client = build_s3_client(&config);
-            ensure_s3_bucket(&s3_client, &config.s3_bucket).await?;
+            let storage = build_storage_service(&config);
+            ensure_s3_bucket(&storage, &config.s3_bucket).await?;
             info!("S3 bucket initialization completed successfully.");
             return Ok(());
         }
@@ -82,10 +82,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             create_admin_user(&pool).await?;
 
-            let s3_client = build_s3_client(&config);
+            let storage = build_storage_service(&config);
             let mut s3_retries = 5;
             loop {
-                match ensure_s3_bucket(&s3_client, &config.s3_bucket).await {
+                match ensure_s3_bucket(&storage, &config.s3_bucket).await {
                     Ok(()) => break,
                     Err(e) if s3_retries > 0 => {
                         error!(
@@ -129,13 +129,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = connect_db(&config).await?;
     run_migrations(&pool).await?;
     verify_database_schema(&pool).await?;
-    let s3_client = build_s3_client(&config);
+    let storage = build_storage_service(&config);
 
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
     let state = AppState {
         db: pool,
-        s3_client,
+        storage: storage.clone(),
         config: config.clone(),
         rate_limiter: LoginRateLimiter::default(),
         task_queue_notifier: tx_notify.clone(),
@@ -200,7 +200,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let db_pool = state.db.clone();
-    let retention_s3_client = state.s3_client.clone();
+    let retention_storage = state.storage_service();
     let retention_config = config.clone();
     let mut periodic_cancel = shutdown_rx.clone();
     tasks.spawn(async move {
@@ -240,7 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             std::time::Duration::from_secs(60),
                             deskdispatch::retention::run_all_retention_jobs(
                                 &db_pool,
-                                &retention_s3_client,
+                                &retention_storage,
                                 &retention_config,
                             )
                         ).await;
@@ -475,82 +475,29 @@ async fn create_admin_user(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn build_s3_client(config: &Config) -> aws_sdk_s3::Client {
-    let credentials = aws_sdk_s3::config::Credentials::new(
-        &config.s3_access_key,
-        config.s3_secret_key.expose_secret(),
-        None,
-        None,
-        "static",
-    );
-
-    let mut s3_config_builder = aws_sdk_s3::config::Builder::new()
-        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
-        .credentials_provider(credentials)
-        .region(aws_sdk_s3::config::Region::new(config.s3_region.clone()));
-
-    if let Some(endpoint) = &config.s3_endpoint {
-        s3_config_builder = s3_config_builder
-            .endpoint_url(endpoint)
-            .force_path_style(true);
-    }
-
-    aws_sdk_s3::Client::from_conf(s3_config_builder.build())
+fn build_storage_service(config: &Config) -> deskdispatch::storage::StorageService {
+    deskdispatch::storage::StorageService::new(&config.s3_bucket)
+        .with_credentials(
+            &config.s3_access_key,
+            config.s3_secret_key.expose_secret(),
+            &config.s3_region,
+            config.s3_endpoint.as_deref(),
+        )
+        .with_public_endpoint(config.s3_public_endpoint.as_deref())
 }
 
 async fn ensure_s3_bucket(
-    s3_client: &aws_sdk_s3::Client,
+    storage: &deskdispatch::storage::StorageService,
     bucket_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match s3_client.head_bucket().bucket(bucket_name).send().await {
-        Ok(_) => {
+    match storage.head_bucket().await {
+        Ok(true) => {
             info!("S3 bucket '{}' already exists.", bucket_name);
         }
-        Err(_) => {
+        _ => {
             info!("S3 bucket '{}' not found, creating...", bucket_name);
-            s3_client.create_bucket().bucket(bucket_name).send().await?;
+            storage.create_bucket().await?;
             info!("S3 bucket '{}' created successfully.", bucket_name);
-        }
-    }
-
-    // Set lifecycle rule to auto-expire tmp/ uploads after 1 day
-    let filter = aws_sdk_s3::types::LifecycleRuleFilter::builder()
-        .prefix("tmp/")
-        .build();
-    let rule = aws_sdk_s3::types::LifecycleRule::builder()
-        .id("expire-tmp-uploads")
-        .filter(filter)
-        .status(aws_sdk_s3::types::ExpirationStatus::Enabled)
-        .expiration(
-            aws_sdk_s3::types::LifecycleExpiration::builder()
-                .days(1)
-                .build(),
-        )
-        .build();
-
-    if let Ok(rule) = rule {
-        let lifecycle_config = aws_sdk_s3::types::BucketLifecycleConfiguration::builder()
-            .rules(rule)
-            .build();
-
-        if let Ok(lifecycle_config) = lifecycle_config {
-            if let Err(e) = s3_client
-                .put_bucket_lifecycle_configuration()
-                .bucket(bucket_name)
-                .lifecycle_configuration(lifecycle_config)
-                .send()
-                .await
-            {
-                tracing::warn!(
-                    "Failed to set S3 bucket lifecycle policy (may be unsupported by mock/RustFS): {}",
-                    e
-                );
-            } else {
-                info!(
-                    "S3 lifecycle configuration set for 'tmp/' prefix on bucket '{}'",
-                    bucket_name
-                );
-            }
         }
     }
 
