@@ -612,7 +612,9 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
             let abs_pos = search_idx + pos + pattern.len();
             if let Some(end) = new_fp_html[abs_pos..].find('"') {
                 let val = &new_fp_html[abs_pos..abs_pos + end];
-                if val != "" && val != "0" {
+                let tag_end = new_fp_html[abs_pos..].find("</option>").map(|p| abs_pos + p).unwrap_or(abs_pos);
+                let option_text = &new_fp_html[abs_pos..tag_end];
+                if val != "" && val != "0" && option_text.contains("pixel_color") {
                     found = Some(val.to_string());
                     break;
                 }
@@ -688,11 +690,17 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
         .and_then(|h| h.to_str().ok())
         .expect("Missing Location header in run-now redirect");
 
+    assert!(
+        run_location.starts_with("/runs/"),
+        "Expected run-now redirect to /runs/{{id}}, but got redirect location: {}",
+        run_location
+    );
+
     let run_id_str = run_location.trim_start_matches("/runs/");
     let clean_run_id_str = run_id_str.split('?').next().unwrap_or(run_id_str);
     let task_run_id: i64 = clean_run_id_str
         .parse()
-        .expect("Failed to parse task_run_id from redirect");
+        .unwrap_or_else(|e| panic!("Failed to parse task_run_id from redirect location '{}': {}", run_location, e));
 
     // 6. Poll task run status until completed by containerized simulator service
     let run_detail_url = format!("{}/runs/{}", base_url, task_run_id);
