@@ -144,39 +144,6 @@ fn validate_branch_form(form: &MouseClickStepForm, condition_type: &str) -> Opti
     }
 }
 
-fn validate_find_bitmap_output_vars(
-    form: &MouseClickStepForm,
-    variables: &[VariableOption],
-) -> Result<i64, &'static str> {
-    let ref_bitmap_id = match form.reference_bitmap_id {
-        Some(id) if id > 0 => id,
-        _ => return Err("Please select a reference bitmap."),
-    };
-
-    if let Some(var_id) = form.output_found_variable_id
-        && !variables.iter().any(|v| v.id == var_id)
-    {
-        return Err("Selected 'Is Found' output variable is invalid for this automation.");
-    }
-    if let Some(var_id) = form.output_x_variable_id
-        && !variables.iter().any(|v| v.id == var_id)
-    {
-        return Err("Selected 'Found X' output variable is invalid for this automation.");
-    }
-    if let Some(var_id) = form.output_y_variable_id
-        && !variables.iter().any(|v| v.id == var_id)
-    {
-        return Err("Selected 'Found Y' output variable is invalid for this automation.");
-    }
-    if let Some(var_id) = form.output_region_variable_id
-        && !variables.iter().any(|v| v.id == var_id)
-    {
-        return Err("Selected 'Found Region' output variable is invalid for this automation.");
-    }
-
-    Ok(ref_bitmap_id)
-}
-
 #[inline]
 pub fn sanitize_label(label: Option<&str>) -> Option<String> {
     label
@@ -998,83 +965,78 @@ async fn save_step_details(
     match step_type {
         "branch" => {
             let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb");
-            if condition_type == "pixel_rgb" {
-                sqlx::query(
-                    r#"
-                    INSERT INTO step_branches
-                        (step_id, automation_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
-                         reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
-                         on_match_step_id, on_no_match_step_id)
-                    VALUES ($1, $2, 'pixel_rgb', $3, $4, $5, $6, $7, $8, NULL, NULL, NULL, NULL, NULL, NULL, $9, $10)
-                    ON CONFLICT (step_id) DO UPDATE SET
-                        condition_type = 'pixel_rgb',
-                        x = EXCLUDED.x,
-                        y = EXCLUDED.y,
-                        expected_r = EXCLUDED.expected_r,
-                        expected_g = EXCLUDED.expected_g,
-                        expected_b = EXCLUDED.expected_b,
-                        tolerance = EXCLUDED.tolerance,
-                        reference_bitmap_id = NULL,
-                        search_x = NULL,
-                        search_y = NULL,
-                        search_width = NULL,
-                        search_height = NULL,
-                        match_threshold = NULL,
-                        on_match_step_id = EXCLUDED.on_match_step_id,
-                        on_no_match_step_id = EXCLUDED.on_no_match_step_id
-                    "#,
+            let is_pixel = condition_type == "pixel_rgb";
+
+            let (x, y, r, g, b, tol) = if is_pixel {
+                (
+                    form.x,
+                    form.y,
+                    form.expected_r,
+                    form.expected_g,
+                    form.expected_b,
+                    form.tolerance,
                 )
-                .bind(step_id)
-                .bind(automation_id)
-                .bind(form.x.unwrap_or(0))
-                .bind(form.y.unwrap_or(0))
-                .bind(form.expected_r.unwrap_or(0))
-                .bind(form.expected_g.unwrap_or(0))
-                .bind(form.expected_b.unwrap_or(0))
-                .bind(form.tolerance.unwrap_or(0))
-                .bind(form.on_match_step_id.filter(|&sid| sid > 0))
-                .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
-                .execute(&mut **tx)
-                .await?;
             } else {
-                sqlx::query(
-                    r#"
-                    INSERT INTO step_branches
-                        (step_id, automation_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
-                         reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
-                         on_match_step_id, on_no_match_step_id)
-                    VALUES ($1, $2, 'bitmap', NULL, NULL, NULL, NULL, NULL, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
-                    ON CONFLICT (step_id) DO UPDATE SET
-                        condition_type = 'bitmap',
-                        x = NULL,
-                        y = NULL,
-                        expected_r = NULL,
-                        expected_g = NULL,
-                        expected_b = NULL,
-                        tolerance = NULL,
-                        reference_bitmap_id = EXCLUDED.reference_bitmap_id,
-                        search_x = EXCLUDED.search_x,
-                        search_y = EXCLUDED.search_y,
-                        search_width = EXCLUDED.search_width,
-                        search_height = EXCLUDED.search_height,
-                        match_threshold = EXCLUDED.match_threshold,
-                        on_match_step_id = EXCLUDED.on_match_step_id,
-                        on_no_match_step_id = EXCLUDED.on_no_match_step_id
-                    "#,
+                (None, None, None, None, None, None)
+            };
+
+            let (ref_bm_id, sx, sy, sw, sh, m_thresh) = if !is_pixel {
+                (
+                    form.reference_bitmap_id,
+                    form.search_x,
+                    form.search_y,
+                    form.search_width,
+                    form.search_height,
+                    Some(form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0)),
                 )
-                .bind(step_id)
-                .bind(automation_id)
-                .bind(form.reference_bitmap_id)
-                .bind(form.search_x)
-                .bind(form.search_y)
-                .bind(form.search_width)
-                .bind(form.search_height)
-                .bind(form.match_threshold.unwrap_or(0.95).clamp(0.0, 1.0))
-                .bind(form.on_match_step_id.filter(|&sid| sid > 0))
-                .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
-                .execute(&mut **tx)
-                .await?;
-            }
+            } else {
+                (None, None, None, None, None, None)
+            };
+
+            sqlx::query(
+                r#"
+                INSERT INTO step_branches
+                    (step_id, automation_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                     reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                     on_match_step_id, on_no_match_step_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    condition_type = EXCLUDED.condition_type,
+                    x = EXCLUDED.x,
+                    y = EXCLUDED.y,
+                    expected_r = EXCLUDED.expected_r,
+                    expected_g = EXCLUDED.expected_g,
+                    expected_b = EXCLUDED.expected_b,
+                    tolerance = EXCLUDED.tolerance,
+                    reference_bitmap_id = EXCLUDED.reference_bitmap_id,
+                    search_x = EXCLUDED.search_x,
+                    search_y = EXCLUDED.search_y,
+                    search_width = EXCLUDED.search_width,
+                    search_height = EXCLUDED.search_height,
+                    match_threshold = EXCLUDED.match_threshold,
+                    on_match_step_id = EXCLUDED.on_match_step_id,
+                    on_no_match_step_id = EXCLUDED.on_no_match_step_id
+                "#,
+            )
+            .bind(step_id)
+            .bind(automation_id)
+            .bind(if is_pixel { "pixel_rgb" } else { "bitmap" })
+            .bind(x)
+            .bind(y)
+            .bind(r)
+            .bind(g)
+            .bind(b)
+            .bind(tol)
+            .bind(ref_bm_id)
+            .bind(sx)
+            .bind(sy)
+            .bind(sw)
+            .bind(sh)
+            .bind(m_thresh)
+            .bind(form.on_match_step_id.filter(|&sid| sid > 0))
+            .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .execute(&mut **tx)
+            .await?;
         }
         "key_press" => {
             let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
@@ -1395,8 +1357,16 @@ async fn validate_step_form(
                 return Err("Please provide valid X and Y coordinates.".to_string());
             }
             if let Some(var_id) = form.output_variable_id {
-                let vars = fetch_automation_variables(db, automation_id).await;
-                if !vars.iter().any(|v| v.id == var_id) {
+                let exists = sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM automation_variables WHERE id = $1 AND automation_id = $2)",
+                )
+                .bind(var_id)
+                .bind(automation_id)
+                .fetch_one(db)
+                .await
+                .unwrap_or(false);
+
+                if !exists {
                     return Err(
                         "Selected output variable is invalid for this automation.".to_string()
                     );
@@ -1404,10 +1374,42 @@ async fn validate_step_form(
             }
         }
         "find_bitmap" => {
-            let vars = fetch_automation_variables(db, automation_id).await;
-            if let Err(err) = validate_find_bitmap_output_vars(form, &vars) {
-                return Err(err.to_string());
+            let ref_bitmap_id = match form.reference_bitmap_id {
+                Some(id) if id > 0 => id,
+                _ => return Err("Please select a reference bitmap.".to_string()),
+            };
+
+            let mut out_vars: Vec<i64> = [
+                form.output_found_variable_id,
+                form.output_x_variable_id,
+                form.output_y_variable_id,
+                form.output_region_variable_id,
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+
+            if !out_vars.is_empty() {
+                out_vars.sort_unstable();
+                out_vars.dedup();
+
+                let count = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
+                )
+                .bind(&out_vars)
+                .bind(automation_id)
+                .fetch_one(db)
+                .await
+                .unwrap_or(0);
+
+                if count != out_vars.len() as i64 {
+                    return Err(
+                        "Selected output variable is invalid for this automation.".to_string()
+                    );
+                }
             }
+
+            let _ = ref_bitmap_id;
         }
         _ => return Err("Invalid step type.".to_string()),
     }
