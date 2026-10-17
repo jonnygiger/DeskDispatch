@@ -76,19 +76,12 @@ fn test_internal_server_error_template_rendering() {
     assert!(html_custom.contains("Admin User"));
 }
 
-async fn get_test_pool() -> Option<sqlx::PgPool> {
+#[tokio::test]
+async fn test_fallback_404_route() {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
     });
-    sqlx::PgPool::connect(&db_url).await.ok()
-}
-
-#[tokio::test]
-async fn test_fallback_404_route() {
-    let Some(pool) = get_test_pool().await else {
-        println!("Database not available, skipping integration test");
-        return;
-    };
+    let pool = sqlx::PgPool::connect_lazy(&db_url).expect("create lazy pool");
 
     let config = Config::from_env().unwrap();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
