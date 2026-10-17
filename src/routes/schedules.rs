@@ -53,6 +53,49 @@ pub struct ScheduleItem {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct ScheduleEditRow {
+    pub id: i64,
+    pub automation_id: i64,
+    pub name: String,
+    pub cron_expression: String,
+    pub timezone: String,
+    pub worker_group_id: Option<i64>,
+    pub overlap_policy: String,
+    pub max_queue_age_secs: Option<i32>,
+    pub wol_enabled: bool,
+    pub wol_warmup_secs: i32,
+    pub is_enabled: bool,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct ScheduleToggleRow {
+    pub is_enabled: bool,
+    pub cron_expression: String,
+    pub timezone: String,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct WolScheduleRow {
+    pub id: i64,
+    pub worker_group_id: Option<i64>,
+    pub next_run_at: DateTime<Utc>,
+    pub wol_warmup_secs: i32,
+    pub last_wol_sent_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct DueScheduleRow {
+    pub id: i64,
+    pub automation_id: i64,
+    pub cron_expression: String,
+    pub timezone: String,
+    pub worker_group_id: Option<i64>,
+    pub overlap_policy: String,
+    pub max_queue_age_secs: Option<i32>,
+    pub next_run_at: DateTime<Utc>,
+}
+
 impl ScheduleItem {
     pub fn formatted_next_run(&self) -> String {
         match self.next_run_at {
@@ -686,7 +729,10 @@ pub async fn post_toggle_schedule_handler(
         }
     };
 
-    let new_enabled = !row.is_enabled;
+    let current_enabled = row.is_enabled;
+    let cron_expr = row.cron_expression;
+    let timezone = row.timezone;
+    let new_enabled = !current_enabled;
 
     let now = Utc::now();
     let next_run_at = if new_enabled {

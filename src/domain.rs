@@ -11,6 +11,15 @@ pub enum WorkerStatus {
 }
 
 impl WorkerStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkerStatus::Offline => "offline",
+            WorkerStatus::Online => "online",
+            WorkerStatus::Busy => "busy",
+            WorkerStatus::Error => "error",
+        }
+    }
+
     pub fn can_transition_to(&self, target: WorkerStatus) -> bool {
         if *self == target {
             return true;
@@ -32,12 +41,7 @@ impl WorkerStatus {
 
 impl fmt::Display for WorkerStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            WorkerStatus::Offline => write!(f, "offline"),
-            WorkerStatus::Online => write!(f, "online"),
-            WorkerStatus::Busy => write!(f, "busy"),
-            WorkerStatus::Error => write!(f, "error"),
-        }
+        f.write_str(self.as_str())
     }
 }
 
