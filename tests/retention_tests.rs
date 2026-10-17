@@ -170,7 +170,7 @@ async fn test_prune_task_run_steps() {
         }
     };
 
-    // Insert dummy automation
+    // Insert dummy automation step and automation
     let auto_id: i64 = match sqlx::query_scalar(
         "INSERT INTO automations (name, created_at) VALUES ('Retention Test Auto', NOW()) RETURNING id",
     )
@@ -182,6 +182,14 @@ async fn test_prune_task_run_steps() {
             return;
         }
     };
+
+    let step_id: i64 = sqlx::query_scalar(
+        "INSERT INTO automation_steps (automation_id, position, step_type, label) VALUES ($1, 10.0, 'key_press', 'Step 1') RETURNING id",
+    )
+    .bind(auto_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     // Insert old completed task run and recent completed task run
     let old_run_id: i64 = sqlx::query_scalar(
@@ -208,20 +216,30 @@ async fn test_prune_task_run_steps() {
     .await
     .unwrap();
 
-    // Insert steps into task_run_steps
-    let _ = sqlx::query(
-        "INSERT INTO task_run_steps (task_run_id, step_name, status) VALUES ($1, 'Old Step', 'succeeded')",
+    // Insert valid step execution logs into task_run_steps matching real schema
+    sqlx::query(
+        r#"
+        INSERT INTO task_run_steps (task_run_id, step_id, seq, result, started_at, completed_at)
+        VALUES ($1, $2, 1, 'success', NOW() - INTERVAL '40 days', NOW() - INTERVAL '40 days')
+        "#,
     )
     .bind(old_run_id)
+    .bind(step_id)
     .execute(&pool)
-    .await;
+    .await
+    .unwrap();
 
-    let _ = sqlx::query(
-        "INSERT INTO task_run_steps (task_run_id, step_name, status) VALUES ($1, 'Recent Step', 'succeeded')",
+    sqlx::query(
+        r#"
+        INSERT INTO task_run_steps (task_run_id, step_id, seq, result, started_at, completed_at)
+        VALUES ($1, $2, 1, 'success', NOW(), NOW())
+        "#,
     )
     .bind(recent_run_id)
+    .bind(step_id)
     .execute(&pool)
-    .await;
+    .await
+    .unwrap();
 
     // Prune task run steps (>30 days)
     let pruned = prune_task_run_steps(&pool, 30)
@@ -246,14 +264,6 @@ async fn test_prune_task_run_steps() {
     assert_eq!(recent_steps_count, 1);
 
     // Cleanup
-    let _ = sqlx::query("DELETE FROM task_run_steps WHERE task_run_id = $1")
-        .bind(recent_run_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1")
-        .bind(auto_id)
-        .execute(&pool)
-        .await;
     let _ = sqlx::query("DELETE FROM automations WHERE id = $1")
         .bind(auto_id)
         .execute(&pool)
