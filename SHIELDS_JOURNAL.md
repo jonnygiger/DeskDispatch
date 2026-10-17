@@ -35,3 +35,7 @@ Action: Test static asset handlers and MIME type resolution functions directly u
 ## 2025-03-18 CSRF Origin Middleware Branch & Header Verification Coverage
 Learning: Testing `csrf_origin_middleware` using `axum::Router`, `tower::ServiceExt::oneshot`, and `AppState` with `PgPool::connect_lazy` allows verifying CSRF origin checks (safe HTTP methods, exempt `/login`/`/api/*` paths, `Sec-Fetch-Site: cross-site` rejection, matching `Origin`, `Host` fallback, and mismatched `Origin` rejection) directly at the unit test level without database connections or external network listeners.
 Action: Test web middleware handlers directly via `app.oneshot(req)` assertions in `src/auth/` without requiring live external dependencies.
+
+## 2025-03-19 Login Rate Limiter Case Insensitivity, Clear & Eviction Coverage
+Learning: `LoginRateLimiter` normalizes usernames to lowercase when storing and looking up attempts in its `HashMap<(IpAddr, String), Vec<Instant>>`, and opportunistically triggers an eviction sweep (`sweep_expired`) inside `record_failure` when the combined length of `user_attempts` and `ip_attempts` exceeds `EVICTION_THRESHOLD` (256 entries).
+Action: Test username case insensitivity, selective user attempt resetting (`clear`), and `EVICTION_THRESHOLD` sweep triggering directly in `src/auth/rate_limit.rs` using short `Duration` windows and simulated attempt volumes.

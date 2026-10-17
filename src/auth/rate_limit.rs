@@ -196,4 +196,42 @@ mod tests {
         assert_eq!(user_count, 0);
         assert_eq!(ip_count, 0);
     }
+
+    #[test]
+    fn test_login_rate_limiter_case_insensitivity_clear_and_eviction() {
+        let limiter = LoginRateLimiter::new_with_ip_limit(2, 100, Duration::from_millis(50));
+        let ip1: IpAddr = "10.0.0.1".parse().unwrap();
+        let ip2: IpAddr = "10.0.0.2".parse().unwrap();
+
+        // 1. Case-insensitivity: "Admin", "ADMIN", "admin" share same bucket
+        limiter.record_failure(ip1, "Admin");
+        limiter.record_failure(ip1, "ADMIN");
+        let err = limiter.check_rate_limit(ip1, "admin").unwrap_err();
+        assert_eq!(err, ERR_USER_RATE_LIMIT);
+
+        // 2. Clear user attempts for ip1 and "admin"
+        limiter.clear(ip1, "ADMIN");
+        assert!(limiter.check_rate_limit(ip1, "admin").is_ok());
+
+        // 3. Eviction threshold: Fill past EVICTION_THRESHOLD (256) with expired entries
+        let fast_limiter = LoginRateLimiter::new_with_ip_limit(10, 10, Duration::from_millis(10));
+        for i in 0..150 {
+            let ip: IpAddr = format!("172.16.{}.{}", i / 250, i % 250).parse().unwrap();
+            fast_limiter.record_failure(ip, &format!("user{}", i));
+        }
+        // Total entries: 150 user + 150 ip = 300 entries > 256 threshold
+        let (u_before, ip_before) = fast_limiter.entry_counts();
+        assert!(u_before > 0 && ip_before > 0);
+
+        // Sleep to let all previous entries expire
+        std::thread::sleep(Duration::from_millis(15));
+
+        // Next failure triggers sweep_expired inside record_failure because count > 256
+        fast_limiter.record_failure(ip2, "fresh_user");
+
+        // The old 150 expired entries should have been swept, leaving only fresh_user
+        let (u_after, ip_after) = fast_limiter.entry_counts();
+        assert_eq!(u_after, 1);
+        assert_eq!(ip_after, 1);
+    }
 }
