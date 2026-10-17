@@ -920,12 +920,25 @@ mod tests {
         let review_tmpl = RecordingReviewTemplate {
             user,
             session,
-            events: vec![],
+            events: vec![RecordingEventDetail {
+                id: 101,
+                recording_session_id: 42,
+                sequence_number: 1,
+                event_type: "mouse_click".to_string(),
+                x: Some(100),
+                y: Some(200),
+                button: Some("left".to_string()),
+                key_combo: None,
+                screenshot_object_key: None,
+                captured_at: Utc::now(),
+                magnifier: None,
+            }],
             default_automation_name: "Recorded Automation - 2025".to_string(),
             error: None,
         };
         let review_html = review_tmpl.render().expect("Review template should render");
         assert!(review_html.contains("Recorded Automation - 2025"));
         assert!(review_html.contains("Convert to Draft Automation"));
+        assert!(review_html.contains("aria-label=\"Exclude event #1 (mouse_click)\""));
     }
 }
