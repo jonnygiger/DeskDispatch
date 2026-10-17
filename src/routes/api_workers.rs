@@ -732,12 +732,14 @@ pub async fn post_step_result_handler(
         .fetch_one(&mut *tx)
         .await?;
 
-        if valid_count
-            < var_ids
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len() as i64
-        {
+        let unique_count = {
+            let mut ids = var_ids.clone();
+            ids.sort_unstable();
+            ids.dedup();
+            ids.len() as i64
+        };
+
+        if valid_count < unique_count {
             for item in updates {
                 let is_valid: bool = sqlx::query_scalar(
                     "SELECT EXISTS(SELECT 1 FROM automation_variables WHERE id = $1 AND automation_id = $2)",

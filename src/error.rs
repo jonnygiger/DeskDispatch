@@ -4,33 +4,48 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use deskdispatch_protocol::ErrorResponse;
-use thiserror::Error;
+use std::fmt;
 
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum AppError {
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
-
-    #[error("Bad request: {0}")]
+    Database(sqlx::Error),
     BadRequest(String),
-
-    #[error("Not found: {0}")]
     NotFound(String),
-
-    #[error("Unauthorized: {0}")]
     Unauthorized(String),
-
-    #[error("Forbidden: {0}")]
     Forbidden(String),
-
-    #[error("Conflict: {0}")]
     Conflict(String),
-
-    #[error("Upgrade required: {0}")]
     UpgradeRequired(String),
-
-    #[error("Internal server error: {0}")]
     Internal(String),
+}
+
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AppError::Database(e) => write!(f, "Database error: {e}"),
+            AppError::BadRequest(msg) => write!(f, "Bad request: {msg}"),
+            AppError::NotFound(msg) => write!(f, "Not found: {msg}"),
+            AppError::Unauthorized(msg) => write!(f, "Unauthorized: {msg}"),
+            AppError::Forbidden(msg) => write!(f, "Forbidden: {msg}"),
+            AppError::Conflict(msg) => write!(f, "Conflict: {msg}"),
+            AppError::UpgradeRequired(msg) => write!(f, "Upgrade required: {msg}"),
+            AppError::Internal(msg) => write!(f, "Internal server error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for AppError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            AppError::Database(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        AppError::Database(err)
+    }
 }
 
 impl IntoResponse for AppError {

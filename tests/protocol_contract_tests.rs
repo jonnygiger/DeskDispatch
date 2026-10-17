@@ -82,7 +82,8 @@ fn test_protocol_dto_serialization_roundtrip() {
         error_message: None,
     };
     let complete_req_str = serde_json::to_string(&complete_req).unwrap();
-    let complete_req_roundtrip: CompleteTaskRunRequest = serde_json::from_str(&complete_req_str).unwrap();
+    let complete_req_roundtrip: CompleteTaskRunRequest =
+        serde_json::from_str(&complete_req_str).unwrap();
     assert_eq!(complete_req_roundtrip, complete_req);
 
     // 5. CommitScreenshotRequest & CommitBitmapRequest roundtrips
@@ -93,7 +94,8 @@ fn test_protocol_dto_serialization_roundtrip() {
         height: Some(1080),
     };
     let commit_ss_str = serde_json::to_string(&commit_ss_req).unwrap();
-    let commit_ss_roundtrip: CommitScreenshotRequest = serde_json::from_str(&commit_ss_str).unwrap();
+    let commit_ss_roundtrip: CommitScreenshotRequest =
+        serde_json::from_str(&commit_ss_str).unwrap();
     assert_eq!(commit_ss_roundtrip, commit_ss_req);
 
     let commit_bm_req = CommitBitmapRequest {
@@ -121,7 +123,8 @@ fn test_protocol_dto_serialization_roundtrip() {
         }],
     };
     let post_rec_str = serde_json::to_string(&post_rec_req).unwrap();
-    let post_rec_roundtrip: PostRecordingEventsRequest = serde_json::from_str(&post_rec_str).unwrap();
+    let post_rec_roundtrip: PostRecordingEventsRequest =
+        serde_json::from_str(&post_rec_str).unwrap();
     assert_eq!(post_rec_roundtrip, post_rec_req);
 
     // 7. FullAutomationPayload roundtrip
