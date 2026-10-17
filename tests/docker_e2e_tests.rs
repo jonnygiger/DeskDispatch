@@ -572,6 +572,56 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
 
     assert_eq!(add_step_resp.status(), reqwest::StatusCode::SEE_OTHER);
 
+    // Create a color variable for find_pixel_rgb step output
+    let create_var_url = format!("{}/automations/{}/variables", base_url, automation_id);
+    let mut create_var_form = HashMap::new();
+    create_var_form.insert("csrf_token", csrf_token.as_str());
+    create_var_form.insert("name", "pixel_color");
+    create_var_form.insert("var_type", "color");
+    create_var_form.insert("description", "Pixel color output");
+
+    let create_var_resp = client
+        .post(&create_var_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .form(&create_var_form)
+        .send()
+        .await
+        .expect("Failed to create pixel_color variable");
+
+    assert_eq!(create_var_resp.status(), reqwest::StatusCode::SEE_OTHER);
+
+    // Fetch new step find_pixel_rgb page to extract variable ID from dropdown HTML
+    let new_fp_url = format!("{}/automations/{}/steps/new/find_pixel_rgb", base_url, automation_id);
+    let new_fp_resp = client
+        .get(&new_fp_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .send()
+        .await
+        .expect("Failed to GET /automations/{id}/steps/new/find_pixel_rgb");
+
+    let new_fp_html = new_fp_resp
+        .text()
+        .await
+        .expect("Failed to read find_pixel_rgb form HTML");
+
+    let var_id_opt = {
+        let pattern = "<option value=\"";
+        let mut found = None;
+        let mut search_idx = 0;
+        while let Some(pos) = new_fp_html[search_idx..].find(pattern) {
+            let abs_pos = search_idx + pos + pattern.len();
+            if let Some(end) = new_fp_html[abs_pos..].find('"') {
+                let val = &new_fp_html[abs_pos..abs_pos + end];
+                if val != "" && val != "0" {
+                    found = Some(val.to_string());
+                    break;
+                }
+            }
+            search_idx = abs_pos;
+        }
+        found
+    };
+
     // Add Step 2: find_pixel_rgb
     let mut pixel_step_form = HashMap::new();
     pixel_step_form.insert("csrf_token", csrf_token.as_str());
@@ -580,6 +630,9 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     pixel_step_form.insert("x", "500");
     pixel_step_form.insert("y", "300");
     pixel_step_form.insert("post_delay_seconds", "0.2");
+    if let Some(ref vid) = var_id_opt {
+        pixel_step_form.insert("output_variable_id", vid.as_str());
+    }
 
     let add_pixel_resp = client
         .post(&steps_url)
