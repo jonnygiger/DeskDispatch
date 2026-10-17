@@ -7,7 +7,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use croner::Cron;
 use serde::Deserialize;
-use sqlx::{FromRow, Row};
+use sqlx::FromRow;
 use std::str::FromStr;
 
 use super::auth::HtmlTemplate;
@@ -31,7 +31,7 @@ pub fn router() -> Router<AppState> {
         .route("/schedules/{id}/delete", post(post_delete_schedule_handler))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, FromRow)]
 pub struct ScheduleItem {
     pub id: i64,
     pub automation_id: i64,
@@ -87,6 +87,45 @@ impl ScheduleItem {
 pub struct ScheduleAutomationOption {
     pub id: i64,
     pub name: String,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct EditScheduleRow {
+    automation_id: i64,
+    name: String,
+    cron_expression: String,
+    timezone: String,
+    worker_group_id: Option<i64>,
+    overlap_policy: String,
+    max_queue_age_secs: Option<i32>,
+    wol_enabled: bool,
+    wol_warmup_secs: i32,
+    is_enabled: bool,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct ToggleScheduleRow {
+    is_enabled: bool,
+    cron_expression: String,
+    timezone: String,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct WolScheduleRow {
+    id: i64,
+    worker_group_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct DueScheduleRow {
+    id: i64,
+    automation_id: i64,
+    cron_expression: String,
+    timezone: String,
+    worker_group_id: Option<i64>,
+    overlap_policy: String,
+    max_queue_age_secs: Option<i32>,
+    next_run_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -191,7 +230,7 @@ pub async fn get_schedules_handler(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> impl IntoResponse {
-    let rows = match sqlx::query(
+    let schedules = match sqlx::query_as::<_, ScheduleItem>(
         r#"
         SELECT
             s.id, s.automation_id, a.name AS automation_name,
@@ -210,7 +249,7 @@ pub async fn get_schedules_handler(
     .fetch_all(&state.db)
     .await
     {
-        Ok(rows) => rows,
+        Ok(schedules) => schedules,
         Err(e) => {
             tracing::error!("Failed to fetch schedules: {}", e);
             return (
@@ -220,30 +259,6 @@ pub async fn get_schedules_handler(
                 .into_response();
         }
     };
-
-    let schedules = rows
-        .into_iter()
-        .map(|r| ScheduleItem {
-            id: r.get("id"),
-            automation_id: r.get("automation_id"),
-            automation_name: r.get("automation_name"),
-            name: r.get("name"),
-            cron_expression: r.get("cron_expression"),
-            timezone: r.get("timezone"),
-            worker_group_id: r.get("worker_group_id"),
-            worker_group_name: r.get("worker_group_name"),
-            overlap_policy: r.get("overlap_policy"),
-            max_queue_age_secs: r.get("max_queue_age_secs"),
-            wol_enabled: r.get("wol_enabled"),
-            wol_warmup_secs: r.get("wol_warmup_secs"),
-            last_wol_sent_at: r.get("last_wol_sent_at"),
-            is_enabled: r.get("is_enabled"),
-            next_run_at: r.get("next_run_at"),
-            last_run_at: r.get("last_run_at"),
-            created_by: r.get("created_by"),
-            created_at: r.get("created_at"),
-        })
-        .collect();
 
     HtmlTemplate(SchedulesIndexTemplate { user, schedules }).into_response()
 }
@@ -370,7 +385,7 @@ pub async fn post_create_schedule_handler(
         None
     };
 
-    let row_res = sqlx::query(
+    let row_res = sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO schedules (
             automation_id, name, cron_expression, timezone,
@@ -398,7 +413,7 @@ pub async fn post_create_schedule_handler(
     .await;
 
     let schedule_id: i64 = match row_res {
-        Ok(r) => r.get("id"),
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create schedule: {}", e);
             return HtmlTemplate(ScheduleFormTemplate {
@@ -452,9 +467,9 @@ pub async fn get_edit_schedule_handler(
     // Bolt Optimization: Run schedule row query and schedule option queries (automations and worker groups)
     // concurrently using `tokio::join!`. This reduces DB round-trips from 2 to 1 (~50% latency reduction).
     let (schedule_res, automations_res, worker_groups_res) = tokio::join!(
-        sqlx::query(
+        sqlx::query_as::<_, EditScheduleRow>(
             r#"
-            SELECT id, automation_id, name, cron_expression, timezone, worker_group_id,
+            SELECT automation_id, name, cron_expression, timezone, worker_group_id,
                    overlap_policy, max_queue_age_secs, wol_enabled, wol_warmup_secs, is_enabled
             FROM schedules
             WHERE id = $1
@@ -488,16 +503,16 @@ pub async fn get_edit_schedule_handler(
         user,
         is_edit: true,
         schedule_id: Some(id),
-        automation_id: Some(row.get("automation_id")),
-        name: row.get("name"),
-        cron_expression: row.get("cron_expression"),
-        timezone: row.get("timezone"),
-        worker_group_id: row.get("worker_group_id"),
-        overlap_policy: row.get("overlap_policy"),
-        max_queue_age_secs: row.get("max_queue_age_secs"),
-        wol_enabled: row.get("wol_enabled"),
-        wol_warmup_secs: row.get("wol_warmup_secs"),
-        is_enabled: row.get("is_enabled"),
+        automation_id: Some(row.automation_id),
+        name: row.name,
+        cron_expression: row.cron_expression,
+        timezone: row.timezone,
+        worker_group_id: row.worker_group_id,
+        overlap_policy: row.overlap_policy,
+        max_queue_age_secs: row.max_queue_age_secs,
+        wol_enabled: row.wol_enabled,
+        wol_warmup_secs: row.wol_warmup_secs,
+        is_enabled: row.is_enabled,
         automations,
         worker_groups,
         error: None,
@@ -656,7 +671,7 @@ pub async fn post_toggle_schedule_handler(
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    let row = match sqlx::query(
+    let row = match sqlx::query_as::<_, ToggleScheduleRow>(
         "SELECT is_enabled, cron_expression, timezone FROM schedules WHERE id = $1",
     )
     .bind(id)
@@ -671,14 +686,11 @@ pub async fn post_toggle_schedule_handler(
         }
     };
 
-    let current_enabled: bool = row.get("is_enabled");
-    let cron_expr: String = row.get("cron_expression");
-    let timezone: String = row.get("timezone");
-    let new_enabled = !current_enabled;
+    let new_enabled = !row.is_enabled;
 
     let now = Utc::now();
     let next_run_at = if new_enabled {
-        compute_next_run_at(&cron_expr, &timezone, &now).ok()
+        compute_next_run_at(&row.cron_expression, &row.timezone, &now).ok()
     } else {
         None
     };
@@ -751,9 +763,9 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     let mut tx = pool.begin().await?;
 
     // Phase 1: Send Wake-on-LAN magic packets for schedules entering their warm-up window
-    let wol_due_schedules = sqlx::query(
+    let wol_due_schedules = sqlx::query_as::<_, WolScheduleRow>(
         r#"
-        SELECT id, worker_group_id, next_run_at, wol_warmup_secs, last_wol_sent_at
+        SELECT id, worker_group_id
         FROM schedules
         WHERE is_enabled = true
           AND wol_enabled = true
@@ -767,8 +779,8 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     .await?;
 
     for sched in wol_due_schedules {
-        let schedule_id: i64 = sched.get("id");
-        let worker_group_id: Option<i64> = sched.get("worker_group_id");
+        let schedule_id = sched.id;
+        let worker_group_id = sched.worker_group_id;
 
         let target_macs: Vec<String> = match worker_group_id {
             Some(group_id) => {
@@ -824,7 +836,7 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     }
 
     // Phase 2: Process due task runs
-    let due_schedules = sqlx::query(
+    let due_schedules = sqlx::query_as::<_, DueScheduleRow>(
         r#"
         SELECT id, automation_id, cron_expression, timezone, worker_group_id,
                overlap_policy, max_queue_age_secs, next_run_at
@@ -841,14 +853,14 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     let mut queued_count = 0u64;
 
     for sched in due_schedules {
-        let schedule_id: i64 = sched.get("id");
-        let automation_id: i64 = sched.get("automation_id");
-        let cron_expr: String = sched.get("cron_expression");
-        let timezone: String = sched.get("timezone");
-        let worker_group_id: Option<i64> = sched.get("worker_group_id");
-        let overlap_policy: String = sched.get("overlap_policy");
-        let max_queue_age_secs: Option<i32> = sched.get("max_queue_age_secs");
-        let scheduled_run_at: DateTime<Utc> = sched.get("next_run_at");
+        let schedule_id = sched.id;
+        let automation_id = sched.automation_id;
+        let cron_expr = sched.cron_expression;
+        let timezone = sched.timezone;
+        let worker_group_id = sched.worker_group_id;
+        let overlap_policy = sched.overlap_policy;
+        let max_queue_age_secs = sched.max_queue_age_secs;
+        let scheduled_run_at = sched.next_run_at;
 
         let now = Utc::now();
         let mut should_queue = true;
