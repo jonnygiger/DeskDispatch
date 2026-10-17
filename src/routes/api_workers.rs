@@ -6,7 +6,7 @@ use axum::{
     response::IntoResponse,
 };
 pub use deskdispatch_protocol::*;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use axum::Router;
@@ -166,6 +166,29 @@ struct AutomationMetaRow {
     name: String,
     description: String,
     status: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct AssignmentRow {
+    task_run_id: i64,
+    automation_id: i64,
+    dispatched_automation_json: Option<serde_json::Value>,
+    parameter_overrides: Option<serde_json::Value>,
+}
+
+#[derive(sqlx::FromRow)]
+struct TaskRunDetailApiRow {
+    id: i64,
+    automation_id: i64,
+    status: String,
+    dispatched_automation_json: Option<serde_json::Value>,
+}
+
+#[derive(sqlx::FromRow)]
+struct WorkerRegisterRow {
+    id: i64,
+    hostname: String,
+    display_name: String,
 }
 
 #[tracing::instrument(skip(db))]
@@ -508,7 +531,7 @@ pub async fn get_next_assignment_handler(
             }));
         }
 
-        let select_res = sqlx::query(
+        let select_res = sqlx::query_as::<_, AssignmentRow>(
             r#"
             SELECT tr.id AS task_run_id, tr.automation_id, tr.dispatched_automation_json, tr.parameter_overrides
             FROM task_runs tr
@@ -531,11 +554,10 @@ pub async fn get_next_assignment_handler(
         .await?;
 
         if let Some(row) = select_res {
-            let task_run_id: i64 = row.get("task_run_id");
-            let automation_id: i64 = row.get("automation_id");
-            let existing_dispatched: Option<serde_json::Value> =
-                row.get("dispatched_automation_json");
-            let parameter_overrides: Option<serde_json::Value> = row.get("parameter_overrides");
+            let task_run_id = row.task_run_id;
+            let automation_id = row.automation_id;
+            let existing_dispatched = row.dispatched_automation_json;
+            let parameter_overrides = row.parameter_overrides;
 
             let automation_json = match existing_dispatched {
                 Some(json) => json,
@@ -740,16 +762,17 @@ pub async fn post_step_result_handler(
         };
 
         if valid_count < unique_count {
-            for item in updates {
-                let is_valid: bool = sqlx::query_scalar(
-                    "SELECT EXISTS(SELECT 1 FROM automation_variables WHERE id = $1 AND automation_id = $2)",
-                )
-                .bind(item.variable_id)
-                .bind(val.automation_id)
-                .fetch_one(&mut *tx)
-                .await?;
+            let valid_ids: Vec<i64> = sqlx::query_scalar(
+                "SELECT id FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
+            )
+            .bind(&var_ids)
+            .bind(val.automation_id)
+            .fetch_all(&mut *tx)
+            .await?;
 
-                if !is_valid {
+            let valid_set: std::collections::HashSet<i64> = valid_ids.into_iter().collect();
+            for item in updates {
+                if !valid_set.contains(&item.variable_id) {
                     return Err(AppError::BadRequest(format!(
                         "Variable {} does not belong to automation {}",
                         item.variable_id, val.automation_id
@@ -1260,7 +1283,7 @@ pub async fn post_bitmap_commit_handler(
     let width = req.width.unwrap_or(100);
     let height = req.height.unwrap_or(100);
 
-    let row = sqlx::query(
+    let bitmap_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height)
         VALUES ($1, $2, $3, $4, $5)
@@ -1275,8 +1298,6 @@ pub async fn post_bitmap_commit_handler(
     .fetch_one(&state.db)
     .await
     .map_err(|e| AppError::Internal(format!("Failed to record bitmap: {}", e)))?;
-
-    let bitmap_id: i64 = row.get("id");
 
     Ok(Json(CommitBitmapResponse {
         status: "success".to_string(),
@@ -1404,7 +1425,7 @@ pub async fn get_task_run_handler(
 ) -> Result<impl IntoResponse, AppError> {
     let mut conn = state.db.acquire().await?;
 
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, TaskRunDetailApiRow>(
         "SELECT id, automation_id, status, dispatched_automation_json FROM task_runs WHERE id = $1",
     )
     .bind(task_run_id)
@@ -1413,19 +1434,14 @@ pub async fn get_task_run_handler(
 
     match row {
         Some(row) => {
-            let id: i64 = row.get("id");
-            let automation_id: i64 = row.get("automation_id");
-            let status: String = row.get("status");
-            let dispatched_json: Option<serde_json::Value> = row.get("dispatched_automation_json");
-
-            let automation_json = match dispatched_json {
+            let automation_json = match row.dispatched_automation_json {
                 Some(json) => json,
-                None => fetch_full_automation_json(&state.db, automation_id).await?,
+                None => fetch_full_automation_json(&state.db, row.automation_id).await?,
             };
 
             Ok(Json(TaskRunResponse {
-                task_run_id: id,
-                status,
+                task_run_id: row.id,
+                status: row.status,
                 automation: automation_json,
             }))
         }
@@ -1483,20 +1499,18 @@ pub async fn post_heartbeat_handler(
         )));
     }
 
-    let new_status = if let Some(ref status_str) = payload.status {
+    let new_status: &str = if let Some(ref status_str) = payload.status {
         let status: WorkerStatus = status_str.trim().parse().map_err(|_| {
             AppError::BadRequest(format!(
                 "Invalid status '{}'. Expected one of: offline, online, busy, error",
                 status_str
             ))
         })?;
-        status.to_string()
+        status.as_str()
+    } else if is_valid_worker_status(&worker.status) {
+        &worker.status
     } else {
-        if is_valid_worker_status(&worker.status) {
-            worker.status.clone()
-        } else {
-            WorkerStatus::Online.to_string()
-        }
+        WorkerStatus::Online.as_str()
     };
 
     sqlx::query(
@@ -1512,7 +1526,7 @@ pub async fn post_heartbeat_handler(
         WHERE id = $6
         "#,
     )
-    .bind(&new_status)
+    .bind(new_status)
     .bind(payload.screen_width)
     .bind(payload.screen_height)
     .bind(payload.os_info.as_deref())
@@ -1606,7 +1620,7 @@ pub async fn post_register_worker_handler(
         let api_key = generate_worker_api_key();
         let api_key_hash = hash_token(&api_key);
 
-        let row = sqlx::query(
+        let row = sqlx::query_as::<_, WorkerRegisterRow>(
             r#"
             INSERT INTO task_worker_pcs (hostname, display_name, mac_address, api_key_hash, status)
             VALUES ($1, $2, $3, $4, 'offline')
@@ -1620,9 +1634,9 @@ pub async fn post_register_worker_handler(
         .fetch_one(&state.db)
         .await?;
 
-        let worker_id: i64 = row.get("id");
-        let hostname: String = row.get("hostname");
-        let display_name: String = row.get("display_name");
+        let worker_id = row.id;
+        let hostname = row.hostname;
+        let display_name = row.display_name;
 
         tracing::info!(
             worker_id = worker_id,
@@ -1655,7 +1669,7 @@ pub async fn post_register_worker_handler(
     let api_key = generate_worker_api_key();
     let api_key_hash = hash_token(&api_key);
 
-    let row_result = sqlx::query(
+    let row_result = sqlx::query_as::<_, WorkerRegisterRow>(
         r#"
         UPDATE task_worker_pcs
         SET api_key_hash = $1,
@@ -1673,9 +1687,9 @@ pub async fn post_register_worker_handler(
 
     match row_result {
         Some(row) => {
-            let worker_id: i64 = row.get("id");
-            let hostname: String = row.get("hostname");
-            let display_name: String = row.get("display_name");
+            let worker_id = row.id;
+            let hostname = row.hostname;
+            let display_name = row.display_name;
 
             tracing::info!(
                 worker_id = worker_id,
