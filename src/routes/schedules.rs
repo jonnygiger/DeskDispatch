@@ -133,6 +133,45 @@ pub struct ScheduleAutomationOption {
 }
 
 #[derive(Debug, Clone, FromRow)]
+struct EditScheduleRow {
+    automation_id: i64,
+    name: String,
+    cron_expression: String,
+    timezone: String,
+    worker_group_id: Option<i64>,
+    overlap_policy: String,
+    max_queue_age_secs: Option<i32>,
+    wol_enabled: bool,
+    wol_warmup_secs: i32,
+    is_enabled: bool,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct ToggleScheduleRow {
+    is_enabled: bool,
+    cron_expression: String,
+    timezone: String,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct WolScheduleRow {
+    id: i64,
+    worker_group_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct DueScheduleRow {
+    id: i64,
+    automation_id: i64,
+    cron_expression: String,
+    timezone: String,
+    worker_group_id: Option<i64>,
+    overlap_policy: String,
+    max_queue_age_secs: Option<i32>,
+    next_run_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
 pub struct ScheduleWorkerGroupOption {
     pub id: i64,
     pub name: String,
@@ -471,9 +510,9 @@ pub async fn get_edit_schedule_handler(
     // Bolt Optimization: Run schedule row query and schedule option queries (automations and worker groups)
     // concurrently using `tokio::join!`. This reduces DB round-trips from 2 to 1 (~50% latency reduction).
     let (schedule_res, automations_res, worker_groups_res) = tokio::join!(
-        sqlx::query_as::<_, ScheduleEditRow>(
+        sqlx::query_as::<_, EditScheduleRow>(
             r#"
-            SELECT id, automation_id, name, cron_expression, timezone, worker_group_id,
+            SELECT automation_id, name, cron_expression, timezone, worker_group_id,
                    overlap_policy, max_queue_age_secs, wol_enabled, wol_warmup_secs, is_enabled
             FROM schedules
             WHERE id = $1
@@ -675,7 +714,7 @@ pub async fn post_toggle_schedule_handler(
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    let row = match sqlx::query_as::<_, ScheduleToggleRow>(
+    let row = match sqlx::query_as::<_, ToggleScheduleRow>(
         "SELECT is_enabled, cron_expression, timezone FROM schedules WHERE id = $1",
     )
     .bind(id)
@@ -697,7 +736,7 @@ pub async fn post_toggle_schedule_handler(
 
     let now = Utc::now();
     let next_run_at = if new_enabled {
-        compute_next_run_at(&cron_expr, &timezone, &now).ok()
+        compute_next_run_at(&row.cron_expression, &row.timezone, &now).ok()
     } else {
         None
     };
@@ -772,7 +811,7 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     // Phase 1: Send Wake-on-LAN magic packets for schedules entering their warm-up window
     let wol_due_schedules = sqlx::query_as::<_, WolScheduleRow>(
         r#"
-        SELECT id, worker_group_id, next_run_at, wol_warmup_secs, last_wol_sent_at
+        SELECT id, worker_group_id
         FROM schedules
         WHERE is_enabled = true
           AND wol_enabled = true
