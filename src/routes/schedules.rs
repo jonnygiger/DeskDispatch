@@ -54,8 +54,7 @@ pub struct ScheduleItem {
 }
 
 #[derive(Debug, Clone, FromRow)]
-pub struct ScheduleEditRow {
-    pub id: i64,
+pub struct EditScheduleRow {
     pub automation_id: i64,
     pub name: String,
     pub cron_expression: String,
@@ -69,7 +68,7 @@ pub struct ScheduleEditRow {
 }
 
 #[derive(Debug, Clone, FromRow)]
-pub struct ScheduleToggleRow {
+pub struct ToggleScheduleRow {
     pub is_enabled: bool,
     pub cron_expression: String,
     pub timezone: String,
@@ -79,9 +78,6 @@ pub struct ScheduleToggleRow {
 pub struct WolScheduleRow {
     pub id: i64,
     pub worker_group_id: Option<i64>,
-    pub next_run_at: DateTime<Utc>,
-    pub wol_warmup_secs: i32,
-    pub last_wol_sent_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -130,45 +126,6 @@ impl ScheduleItem {
 pub struct ScheduleAutomationOption {
     pub id: i64,
     pub name: String,
-}
-
-#[derive(Debug, Clone, FromRow)]
-struct EditScheduleRow {
-    automation_id: i64,
-    name: String,
-    cron_expression: String,
-    timezone: String,
-    worker_group_id: Option<i64>,
-    overlap_policy: String,
-    max_queue_age_secs: Option<i32>,
-    wol_enabled: bool,
-    wol_warmup_secs: i32,
-    is_enabled: bool,
-}
-
-#[derive(Debug, Clone, FromRow)]
-struct ToggleScheduleRow {
-    is_enabled: bool,
-    cron_expression: String,
-    timezone: String,
-}
-
-#[derive(Debug, Clone, FromRow)]
-struct WolScheduleRow {
-    id: i64,
-    worker_group_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, FromRow)]
-struct DueScheduleRow {
-    id: i64,
-    automation_id: i64,
-    cron_expression: String,
-    timezone: String,
-    worker_group_id: Option<i64>,
-    overlap_policy: String,
-    max_queue_age_secs: Option<i32>,
-    next_run_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -736,7 +693,7 @@ pub async fn post_toggle_schedule_handler(
 
     let now = Utc::now();
     let next_run_at = if new_enabled {
-        compute_next_run_at(&row.cron_expression, &row.timezone, &now).ok()
+        compute_next_run_at(&cron_expr, &timezone, &now).ok()
     } else {
         None
     };
