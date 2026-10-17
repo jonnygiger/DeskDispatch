@@ -15,9 +15,13 @@ async fn get_test_pool() -> Option<sqlx::PgPool> {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
     });
+    let connect_opts = db_url
+        .parse::<sqlx::postgres::PgConnectOptions>()
+        .ok()?
+        .options([("connect_timeout", "1")]);
     sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_millis(500))
-        .connect(&db_url)
+        .connect_with(connect_opts)
         .await
         .ok()
 }

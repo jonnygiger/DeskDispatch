@@ -5,12 +5,12 @@ use std::env;
 use std::time::Duration;
 
 async fn get_test_pool() -> Option<sqlx::PgPool> {
-    let db_url = env::var("DATABASE_URL")
-        .ok()
-        .filter(|v| !v.trim().is_empty())?;
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+    });
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .acquire_timeout(Duration::from_secs(5))
+        .acquire_timeout(Duration::from_millis(500))
         .connect(&db_url)
         .await
         .ok()?;
