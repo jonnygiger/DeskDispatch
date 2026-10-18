@@ -357,10 +357,7 @@ SINGLE_CHAR_QUOTED="x"
             map.get("MULTIPLE_EQUALS").map(String::as_str),
             Some("postgres://user:pass@localhost:5432/db?ssl=true&mode=1")
         );
-        assert_eq!(
-            map.get("SINGLE_CHAR_QUOTED").map(String::as_str),
-            Some("x")
-        );
+        assert_eq!(map.get("SINGLE_CHAR_QUOTED").map(String::as_str), Some("x"));
         assert!(!map.contains_key("NO_EQUALS_LINE"));
     }
 }

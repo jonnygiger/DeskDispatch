@@ -336,42 +336,43 @@ pub fn generate_mouse_click_summary(
     click_type: &str,
 ) -> String {
     use std::fmt::Write;
-    let mut summary = String::with_capacity(64);
+    let mut buf = String::with_capacity(64);
     if let Some(rname) = region_var_name.map(str::trim).filter(|n| !n.is_empty()) {
         let _ = write!(
-            summary,
-            "Click center of region «{}» [{}, {}]",
-            rname, button, click_type
+            buf,
+            "Click center of region «{rname}» [{button}, {click_type}]"
         );
-        return summary;
+        return buf;
     }
 
-    summary.push_str("Click (");
-
-    fn fmt_coord(coord: Option<i32>, var_name: Option<&str>, buf: &mut String) {
-        if let Some(name) = var_name.map(str::trim).filter(|s| !s.is_empty()) {
-            let _ = write!(buf, "«{}»", name);
-        } else if let Some(val) = coord {
-            let _ = write!(buf, "{}", val);
-        } else {
-            buf.push_str("variable");
-        }
+    buf.push_str("Click (");
+    if let Some(name) = x_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+        let _ = write!(buf, "«{name}»");
+    } else if let Some(val) = x {
+        let _ = write!(buf, "{val}");
+    } else {
+        buf.push_str("variable");
     }
 
-    fmt_coord(x, x_var_name, &mut summary);
-    summary.push_str(", ");
-    fmt_coord(y, y_var_name, &mut summary);
-    let _ = write!(summary, ") [{}, {}]", button, click_type);
+    buf.push_str(", ");
+    if let Some(name) = y_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+        let _ = write!(buf, "«{name}»");
+    } else if let Some(val) = y {
+        let _ = write!(buf, "{val}");
+    } else {
+        buf.push_str("variable");
+    }
 
-    summary
+    let _ = write!(buf, ") [{button}, {click_type}]");
+    buf
 }
 
 pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&str>) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
-    let _ = write!(buf, "Read pixel at ({}, {})", x, y);
+    let _ = write!(buf, "Read pixel at ({x}, {y})");
     if let Some(name) = output_var_name.map(str::trim).filter(|n| !n.is_empty()) {
-        let _ = write!(buf, " → store as «{}»", name);
+        let _ = write!(buf, " → store as «{name}»");
     }
     buf
 }
@@ -382,12 +383,12 @@ pub fn generate_find_bitmap_summary(
 ) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
-    let _ = write!(buf, "Search for «{}» on screen", bitmap_name);
+    let _ = write!(buf, "Search for «{bitmap_name}» on screen");
     if let Some(name) = output_found_var_name
         .map(str::trim)
         .filter(|n| !n.is_empty())
     {
-        let _ = write!(buf, " → store as «{}»", name);
+        let _ = write!(buf, " → store as «{name}»");
     }
     buf
 }
@@ -413,23 +414,19 @@ pub fn generate_branch_summary(
     if condition_type == "pixel_rgb" {
         let _ = write!(
             buf,
-            "BRANCH: if pixel at ({}, {}) ≈ RGB({},{},{}) ±{} → go to {}, else → go to {}",
+            "BRANCH: if pixel at ({}, {}) ≈ RGB({},{},{}) ±{} → go to {match_str}, else → go to {no_match_str}",
             x.unwrap_or(0),
             y.unwrap_or(0),
             expected_r.unwrap_or(0),
             expected_g.unwrap_or(0),
             expected_b.unwrap_or(0),
             tolerance.unwrap_or(0),
-            match_str,
-            no_match_str
         );
     } else {
+        let bm_name = bitmap_name.unwrap_or("bitmap");
         let _ = write!(
             buf,
-            "BRANCH: if bitmap «{}» found → go to {}, else → go to {}",
-            bitmap_name.unwrap_or("bitmap"),
-            match_str,
-            no_match_str
+            "BRANCH: if bitmap «{bm_name}» found → go to {match_str}, else → go to {no_match_str}"
         );
     }
     buf
@@ -616,8 +613,9 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         Branch(BranchViewRow),
     }
 
-    let mut details_map: std::collections::HashMap<i64, StepDetailView> =
-        std::collections::HashMap::with_capacity(raw_steps.len());
+    use std::collections::HashMap;
+
+    let mut details_map: HashMap<i64, StepDetailView> = HashMap::with_capacity(raw_steps.len());
     let mut has_branch = false;
 
     for r in kp_rows {
@@ -637,27 +635,26 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         details_map.insert(r.step_id, StepDetailView::Branch(r));
     }
 
-    let mut step_screenshot_map: std::collections::HashMap<i64, String> =
-        std::collections::HashMap::with_capacity(ss_rows.len());
+    let mut step_screenshot_map: HashMap<i64, String> = HashMap::with_capacity(ss_rows.len());
     for r in ss_rows {
         step_screenshot_map.insert(r.step_id, r.object_storage_key);
     }
 
     let step_target_map = if has_branch {
-        let mut target_map = std::collections::HashMap::with_capacity(raw_steps.len());
+        let mut target_map = HashMap::with_capacity(raw_steps.len());
         for (idx, row) in raw_steps.iter().enumerate() {
             let step_num = idx + 1;
             let target_str = match &row.label {
                 Some(lbl) if !lbl.trim().is_empty() => {
-                    format!("Step {} ({})", step_num, lbl.trim())
+                    format!("Step {step_num} ({})", lbl.trim())
                 }
-                _ => format!("Step {} ({})", step_num, row.step_type),
+                _ => format!("Step {step_num} ({})", row.step_type),
             };
             target_map.insert(row.id, target_str);
         }
         target_map
     } else {
-        std::collections::HashMap::new()
+        HashMap::new()
     };
 
     let mut steps = Vec::with_capacity(raw_steps.len());
@@ -699,12 +696,12 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                 let match_target_str = r
                     .on_match_step_id
                     .and_then(|m_id| step_target_map.get(&m_id))
-                    .map(|s| s.as_str());
+                    .map(String::as_str);
 
                 let no_match_target_str = r
                     .on_no_match_step_id
                     .and_then(|n_id| step_target_map.get(&n_id))
-                    .map(|s| s.as_str());
+                    .map(String::as_str);
 
                 let summary = generate_branch_summary(
                     &r.condition_type,
@@ -734,7 +731,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             ),
         };
 
-        let screenshot_key = step_screenshot_map.get(&step_id).cloned();
+        let screenshot_key = step_screenshot_map.remove(&step_id);
 
         steps.push(StepViewItem {
             id: step_id,
@@ -1164,38 +1161,35 @@ async fn save_step_details(
     Ok(())
 }
 
-struct StepErrorCtx<'a> {
-    db: &'a PgPool,
+#[allow(clippy::too_many_arguments)]
+async fn render_step_error(
+    db: &PgPool,
     user: AuthUser,
     csrf_token: String,
     automation_id: i64,
     step_id: Option<i64>,
-    step_type: &'a str,
-}
-
-async fn render_step_error(
-    ctx: StepErrorCtx<'_>,
+    step_type: &str,
     form: MouseClickStepForm,
     error: String,
 ) -> axum::response::Response {
-    let is_edit = ctx.step_id.is_some();
+    let is_edit = step_id.is_some();
     let label = form.label.unwrap_or_default();
     let post_delay_seconds = form.post_delay_seconds.unwrap_or(0.0);
 
-    let html_body = match ctx.step_type {
+    let html_body = match step_type {
         "branch" => {
             let condition_type = form
                 .condition_type
                 .unwrap_or_else(|| "pixel_rgb".to_string());
             let (steps, bitmaps) = tokio::join!(
-                fetch_automation_step_options(ctx.db, ctx.automation_id, ctx.step_id),
-                fetch_available_bitmaps(ctx.db, ctx.automation_id)
+                fetch_automation_step_options(db, automation_id, step_id),
+                fetch_available_bitmaps(db, automation_id)
             );
             HtmlTemplate(StepBranchTemplate {
-                user: ctx.user,
-                csrf_token: ctx.csrf_token,
-                automation_id: ctx.automation_id,
-                step_id: ctx.step_id,
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
                 label,
                 post_delay_seconds,
                 condition_type,
@@ -1221,10 +1215,10 @@ async fn render_step_error(
             .into_response()
         }
         "key_press" => HtmlTemplate(StepKeyPressTemplate {
-            user: ctx.user,
-            csrf_token: ctx.csrf_token,
-            automation_id: ctx.automation_id,
-            step_id: ctx.step_id,
+            user,
+            csrf_token,
+            automation_id,
+            step_id,
             label,
             post_delay_seconds,
             key_combo: form.key_combo.unwrap_or_default(),
@@ -1233,12 +1227,12 @@ async fn render_step_error(
         })
         .into_response(),
         "mouse_click" => {
-            let variables = fetch_automation_variables(ctx.db, ctx.automation_id).await;
+            let variables = fetch_automation_variables(db, automation_id).await;
             HtmlTemplate(StepMouseClickTemplate {
-                user: ctx.user,
-                csrf_token: ctx.csrf_token,
-                automation_id: ctx.automation_id,
-                step_id: ctx.step_id,
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
                 label,
                 post_delay_seconds,
                 x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
@@ -1258,12 +1252,12 @@ async fn render_step_error(
             .into_response()
         }
         "find_pixel_rgb" => {
-            let variables = fetch_automation_variables(ctx.db, ctx.automation_id).await;
+            let variables = fetch_automation_variables(db, automation_id).await;
             HtmlTemplate(StepFindPixelRgbTemplate {
-                user: ctx.user,
-                csrf_token: ctx.csrf_token,
-                automation_id: ctx.automation_id,
-                step_id: ctx.step_id,
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
                 label,
                 post_delay_seconds,
                 x: form.x,
@@ -1277,14 +1271,14 @@ async fn render_step_error(
         }
         "find_bitmap" => {
             let (variables, bitmaps) = tokio::join!(
-                fetch_automation_variables(ctx.db, ctx.automation_id),
-                fetch_available_bitmaps(ctx.db, ctx.automation_id)
+                fetch_automation_variables(db, automation_id),
+                fetch_available_bitmaps(db, automation_id)
             );
             HtmlTemplate(StepFindBitmapTemplate {
-                user: ctx.user,
-                csrf_token: ctx.csrf_token,
-                automation_id: ctx.automation_id,
-                step_id: ctx.step_id,
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
                 label,
                 post_delay_seconds,
                 reference_bitmap_id: form.reference_bitmap_id,
@@ -1304,7 +1298,7 @@ async fn render_step_error(
             })
             .into_response()
         }
-        _ => return Redirect::to(&format!("/automations/{}", ctx.automation_id)).into_response(),
+        _ => return Redirect::to(&format!("/automations/{}", automation_id)).into_response(),
     };
 
     (StatusCode::BAD_REQUEST, html_body).into_response()
@@ -1374,10 +1368,9 @@ async fn validate_step_form(
             }
         }
         "find_bitmap" => {
-            let ref_bitmap_id = match form.reference_bitmap_id {
-                Some(id) if id > 0 => id,
-                _ => return Err("Please select a reference bitmap.".to_string()),
-            };
+            if form.reference_bitmap_id.unwrap_or(0) <= 0 {
+                return Err("Please select a reference bitmap.".to_string());
+            }
 
             let mut out_vars: Vec<i64> = [
                 form.output_found_variable_id,
@@ -1408,8 +1401,6 @@ async fn validate_step_form(
                     );
                 }
             }
-
-            let _ = ref_bitmap_id;
         }
         _ => return Err("Invalid step type.".to_string()),
     }
@@ -1427,15 +1418,17 @@ async fn process_save_step(
     let csrf_token = user.csrf_token.clone();
 
     if let Err(err_msg) = validate_step_form(&state.db, automation_id, step_type, &form).await {
-        let ctx = StepErrorCtx {
-            db: &state.db,
-            user: user.clone(),
+        return render_step_error(
+            &state.db,
+            user.clone(),
             csrf_token,
             automation_id,
             step_id,
             step_type,
-        };
-        return render_step_error(ctx, form, err_msg).await;
+            form,
+            err_msg,
+        )
+        .await;
     }
 
     let mut tx = match state.db.begin().await {
