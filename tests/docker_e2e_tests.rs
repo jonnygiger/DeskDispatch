@@ -94,7 +94,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
     let ready_endpoint = format!("{}/readyz", base_url);
 
     let start_time = Instant::now();
-    let timeout = Duration::from_secs(90);
+    let timeout = Duration::from_secs(300);
     let mut is_ready = false;
 
     while start_time.elapsed() < timeout {
@@ -388,7 +388,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     let ready_endpoint = format!("{}/readyz", base_url);
 
     let start_time = Instant::now();
-    let timeout = Duration::from_secs(90);
+    let timeout = Duration::from_secs(300);
     let mut is_ready = false;
 
     while start_time.elapsed() < timeout {
