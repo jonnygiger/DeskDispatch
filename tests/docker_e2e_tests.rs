@@ -322,7 +322,8 @@ async fn test_docker_e2e_bitmap_upload_flow() {
     if presigned_post_url.starts_with('/') {
         presigned_post_url = format!("http://localhost:9000{}", presigned_post_url);
     } else if presigned_post_url.contains("http://rustfs:9000") {
-        presigned_post_url = presigned_post_url.replace("http://rustfs:9000", "http://localhost:9000");
+        presigned_post_url =
+            presigned_post_url.replace("http://rustfs:9000", "http://localhost:9000");
     }
 
     assert!(
