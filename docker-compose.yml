@@ -25,6 +25,7 @@ services:
       S3_SECRET_KEY: deskdispatch_s3_prod_secret_4712
       S3_REGION: us-east-1
       SESSION_SECRET: deskdispatch_session_prod_secret_8832
+      UNATTENDED_REGISTRATION_PSK: deskdispatch_psk_prod_secret_1234
       BIND_ADDRESS: 0.0.0.0:3000
       APP_ENV: production
     healthcheck:
@@ -110,6 +111,28 @@ services:
       ADMIN_DISPLAY_NAME: Admin
       APP_ENV: production
     entrypoint: ["/bin/sh", "-c", "sleep 2 && /app/deskdispatch setup && sleep 1"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deskdispatch-simulator
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVER_URL: http://app:3000
+      DATABASE_URL: postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch
+      UNATTENDED_REGISTRATION_PSK: deskdispatch_psk_prod_secret_1234
+    entrypoint: ["/app/worker-simulator", "--server-url", "http://app:3000", "--database-url", "postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch", "-c", "2"]
     logging:
       driver: "json-file"
       options:
