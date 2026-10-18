@@ -39,3 +39,7 @@ Action: Test web middleware handlers directly via `app.oneshot(req)` assertions 
 ## 2025-03-19 Login Rate Limiter Case Insensitivity, Clear & Eviction Coverage
 Learning: `LoginRateLimiter` normalizes usernames to lowercase when storing and looking up attempts in its `HashMap<(IpAddr, String), Vec<Instant>>`, and opportunistically triggers an eviction sweep (`sweep_expired`) inside `record_failure` when the combined length of `user_attempts` and `ip_attempts` exceeds `EVICTION_THRESHOLD` (256 entries).
 Action: Test username case insensitivity, selective user attempt resetting (`clear`), and `EVICTION_THRESHOLD` sweep triggering directly in `src/auth/rate_limit.rs` using short `Duration` windows and simulated attempt volumes.
+
+## 2025-03-20 Dotenv Line Parsing Edge Cases Coverage
+Learning: Zero-dependency `.env` parsing (`parse_dotenv_content`) handles complex string inputs (comments with leading whitespace, key/value surrounding whitespace, empty values, single/double empty quotes, mismatched quotes, single character quotes, and values with multiple equals signs).
+Action: Test `.env` line parsing edge cases directly with multi-line string fixtures in `src/config.rs` unit tests without touching disk or process environment variables.
