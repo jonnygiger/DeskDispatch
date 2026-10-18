@@ -679,6 +679,50 @@ fn check_coord_bounds(
     }
 }
 
+fn check_var_type(
+    step_ctx: (i64, usize),
+    var_id: i64,
+    label: &str,
+    expected_type: &str,
+    is_output: bool,
+    vars_map: &HashMap<i64, VarMeta>,
+    errors: &mut Vec<AutomationLintError>,
+) {
+    let (sid, step_num) = step_ctx;
+    let Some(v) = vars_map.get(&var_id) else {
+        if !is_output {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: format!(
+                    "Referenced {} variable ID {} does not exist.",
+                    label, var_id
+                ),
+            });
+        }
+        return;
+    };
+
+    if v.var_type != expected_type {
+        let message = if is_output {
+            format!(
+                "{} output variable '{}' is of type '{}', expected '{}'.",
+                label, v.name, v.var_type, expected_type
+            )
+        } else {
+            format!(
+                "Variable '{}' used for {} is of type '{}', expected '{}'.",
+                v.name, label, v.var_type, expected_type
+            )
+        };
+        errors.push(AutomationLintError {
+            step_id: Some(sid),
+            step_number: Some(step_num),
+            message,
+        });
+    }
+}
+
 fn validate_mouse_click(
     sid: i64,
     step_num: usize,
@@ -686,96 +730,25 @@ fn validate_mouse_click(
     vars_map: &HashMap<i64, VarMeta>,
     errors: &mut Vec<AutomationLintError>,
 ) {
-    if let Some(x) = mc.x
-        && !(0..=10000).contains(&x)
-    {
-        errors.push(AutomationLintError {
-            step_id: Some(sid),
-            step_number: Some(step_num),
-            message: format!(
-                "Mouse click X coordinate {} is outside valid bounds (0..10000).",
-                x
-            ),
-        });
-    }
-    if let Some(y) = mc.y
-        && !(0..=10000).contains(&y)
-    {
-        errors.push(AutomationLintError {
-            step_id: Some(sid),
-            step_number: Some(step_num),
-            message: format!(
-                "Mouse click Y coordinate {} is outside valid bounds (0..10000).",
-                y
-            ),
-        });
-    }
+    check_coord_bounds(mc.x, "Mouse click X coordinate", sid, step_num, errors);
+    check_coord_bounds(mc.y, "Mouse click Y coordinate", sid, step_num, errors);
 
-    if let Some(x_vid) = mc.x_var_id {
-        validate_var_ref(
-            sid,
-            step_num,
-            x_vid,
-            "X coordinate",
-            "int",
-            vars_map,
-            errors,
-        );
-    }
-    if let Some(y_vid) = mc.y_var_id {
-        validate_var_ref(
-            sid,
-            step_num,
-            y_vid,
-            "Y coordinate",
-            "int",
-            vars_map,
-            errors,
-        );
-    }
-    if let Some(r_vid) = mc.region_var_id {
-        validate_var_ref(
-            sid,
-            step_num,
-            r_vid,
-            "region click",
-            "region",
-            vars_map,
-            errors,
-        );
-    }
-}
-
-fn validate_var_ref(
-    sid: i64,
-    step_num: usize,
-    var_id: i64,
-    usage_label: &str,
-    expected_type: &str,
-    vars_map: &HashMap<i64, VarMeta>,
-    errors: &mut Vec<AutomationLintError>,
-) {
-    let Some(v) = vars_map.get(&var_id) else {
-        errors.push(AutomationLintError {
-            step_id: Some(sid),
-            step_number: Some(step_num),
-            message: format!(
-                "Referenced {} variable ID {} does not exist.",
-                usage_label, var_id
-            ),
-        });
-        return;
-    };
-
-    if v.var_type != expected_type {
-        errors.push(AutomationLintError {
-            step_id: Some(sid),
-            step_number: Some(step_num),
-            message: format!(
-                "Variable '{}' used for {} is of type '{}', expected '{}'.",
-                v.name, usage_label, v.var_type, expected_type
-            ),
-        });
+    for (var_id, label, expected_type) in [
+        (mc.x_var_id, "X coordinate", "int"),
+        (mc.y_var_id, "Y coordinate", "int"),
+        (mc.region_var_id, "region click", "region"),
+    ] {
+        if let Some(vid) = var_id {
+            check_var_type(
+                (sid, step_num),
+                vid,
+                label,
+                expected_type,
+                false,
+                vars_map,
+                errors,
+            );
+        }
     }
 }
 
@@ -847,48 +820,23 @@ fn validate_find_bitmap(
     check_coord_bounds(fb.search_x, "Search X coordinate", sid, step_num, errors);
     check_coord_bounds(fb.search_y, "Search Y coordinate", sid, step_num, errors);
 
-    if let Some(f_vid) = fb.output_found_var_id {
-        validate_output_var(sid, step_num, f_vid, "'Found'", "bool", vars_map, errors);
-    }
-    if let Some(x_vid) = fb.output_x_var_id {
-        validate_output_var(sid, step_num, x_vid, "'Found X'", "int", vars_map, errors);
-    }
-    if let Some(y_vid) = fb.output_y_var_id {
-        validate_output_var(sid, step_num, y_vid, "'Found Y'", "int", vars_map, errors);
-    }
-    if let Some(r_vid) = fb.output_region_var_id {
-        validate_output_var(
-            sid,
-            step_num,
-            r_vid,
-            "'Found Region'",
-            "region",
-            vars_map,
-            errors,
-        );
-    }
-}
-
-fn validate_output_var(
-    sid: i64,
-    step_num: usize,
-    var_id: i64,
-    output_name: &str,
-    expected_type: &str,
-    vars_map: &HashMap<i64, VarMeta>,
-    errors: &mut Vec<AutomationLintError>,
-) {
-    if let Some(v) = vars_map.get(&var_id)
-        && v.var_type != expected_type
-    {
-        errors.push(AutomationLintError {
-            step_id: Some(sid),
-            step_number: Some(step_num),
-            message: format!(
-                "{} output variable '{}' is of type '{}', expected '{}'.",
-                output_name, v.name, v.var_type, expected_type
-            ),
-        });
+    for (var_id, label, expected_type) in [
+        (fb.output_found_var_id, "'Found'", "bool"),
+        (fb.output_x_var_id, "'Found X'", "int"),
+        (fb.output_y_var_id, "'Found Y'", "int"),
+        (fb.output_region_var_id, "'Found Region'", "region"),
+    ] {
+        if let Some(vid) = var_id {
+            check_var_type(
+                (sid, step_num),
+                vid,
+                label,
+                expected_type,
+                true,
+                vars_map,
+                errors,
+            );
+        }
     }
 }
 
@@ -900,46 +848,30 @@ fn validate_branch(
     existing_bitmaps: &HashSet<i64>,
     errors: &mut Vec<AutomationLintError>,
 ) {
-    match b.on_match_step_id {
-        Some(target_id) if !step_id_to_idx.contains_key(&target_id) => {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: format!(
-                    "Branch 'On Match' target step ID {} is invalid or deleted.",
-                    target_id
-                ),
-            });
+    for (target_opt, label) in [
+        (b.on_match_step_id, "'On Match'"),
+        (b.on_no_match_step_id, "'On No Match'"),
+    ] {
+        match target_opt {
+            Some(target_id) if !step_id_to_idx.contains_key(&target_id) => {
+                errors.push(AutomationLintError {
+                    step_id: Some(sid),
+                    step_number: Some(step_num),
+                    message: format!(
+                        "Branch {} target step ID {} is invalid or deleted.",
+                        label, target_id
+                    ),
+                });
+            }
+            None => {
+                errors.push(AutomationLintError {
+                    step_id: Some(sid),
+                    step_number: Some(step_num),
+                    message: format!("Branch step is missing {} target step.", label),
+                });
+            }
+            _ => {}
         }
-        None => {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: "Branch step is missing 'On Match' target step.".to_string(),
-            });
-        }
-        _ => {}
-    }
-
-    match b.on_no_match_step_id {
-        Some(target_id) if !step_id_to_idx.contains_key(&target_id) => {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: format!(
-                    "Branch 'On No Match' target step ID {} is invalid or deleted.",
-                    target_id
-                ),
-            });
-        }
-        None => {
-            errors.push(AutomationLintError {
-                step_id: Some(sid),
-                step_number: Some(step_num),
-                message: "Branch step is missing 'On No Match' target step.".to_string(),
-            });
-        }
-        _ => {}
     }
 
     if b.condition_type == "bitmap" {
