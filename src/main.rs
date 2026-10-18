@@ -526,7 +526,7 @@ async fn check_health(addr: &SocketAddr) -> Result<(), Box<dyn std::error::Error
 
     let mut stream = TcpStream::connect(addr).await?;
     let request = format!(
-        "GET /livez HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        "GET /readyz HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
         addr
     );
     stream.write_all(request.as_bytes()).await?;

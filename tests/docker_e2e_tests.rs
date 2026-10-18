@@ -78,6 +78,7 @@ fn create_sample_png_bytes(width: u32, height: u32) -> Vec<u8> {
     png_bytes.into_inner()
 }
 
+#[allow(dead_code)]
 fn dump_docker_logs() {
     println!("\n=================== DOCKER LOGS DUMP START ===================");
     let output = Command::new("docker")
@@ -98,38 +99,8 @@ fn dump_docker_logs() {
     println!("=================== DOCKER LOGS DUMP END ===================\n");
 }
 
-#[tokio::test]
-async fn test_docker_e2e_bitmap_upload_flow() {
-    println!("[E2E Bitmap Test] Step 1: Building Docker images...");
-    let build_status = Command::new("docker")
-        .args(["compose", "build"])
-        .status()
-        .expect("Failed to execute docker compose build");
-    assert!(build_status.success(), "docker compose build failed");
-
-    println!("[E2E Bitmap Test] Waiting 10s after image build...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
-    println!("[E2E Bitmap Test] Step 2: Starting Docker container stack...");
-    let up_status = Command::new("docker")
-        .args(["compose", "up", "-d"])
-        .status()
-        .expect("Failed to execute docker compose up -d");
-    assert!(up_status.success(), "docker compose up -d failed");
-
-    println!("[E2E Bitmap Test] Waiting 10s after container startup...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
-    println!("[E2E Bitmap Test] Step 3: Polling /readyz health check endpoint...");
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("Failed to build reqwest HTTP client");
-
-    let base_url = "http://localhost:3000";
+async fn wait_for_stack_ready(client: &reqwest::Client, base_url: &str) {
     let ready_endpoint = format!("{}/readyz", base_url);
-
     let start_time = Instant::now();
     let timeout = Duration::from_secs(300);
     let mut is_ready = false;
@@ -142,30 +113,27 @@ async fn test_docker_e2e_bitmap_upload_flow() {
             && resp.status().is_success()
         {
             println!(
-                "[E2E Bitmap Test] /readyz reported healthy status on attempt {}!",
+                "[E2E TEST] /readyz reported healthy status on attempt {}!",
                 poll_attempts
             );
             is_ready = true;
             break;
         }
-        println!(
-            "[E2E Bitmap Test] Polling /readyz (attempt {})...",
-            poll_attempts
-        );
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        println!("[E2E TEST] Polling /readyz (attempt {})...", poll_attempts);
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     assert!(
         is_ready,
         "Docker container stack failed to report healthy readyz status within timeout"
     );
-    println!("[E2E TEST] Stack ready after {:.1}s", start_time.elapsed().as_secs_f64());
+    println!(
+        "[E2E TEST] Stack ready after {:.1}s",
+        start_time.elapsed().as_secs_f64()
+    );
+}
 
-    println!("[E2E Bitmap Test] Waiting 10s after application ready status...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
-    // 1. Authenticate via POST /login with seeded credentials
-    println!("[E2E Bitmap Test] Step 4: Authenticating as admin...");
+async fn login_as_admin(client: &reqwest::Client, base_url: &str) -> String {
     let login_url = format!("{}/login", base_url);
 
     let mut login_resp = client
@@ -173,21 +141,18 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         .form(&[("username", "admin"), ("password", "NewAdminPassword123!")])
         .send()
         .await
-        .expect("Failed to submit login request");
+        .expect("Failed to submit login request with updated password");
 
     if login_resp.status() == reqwest::StatusCode::UNAUTHORIZED {
         println!(
-            "[E2E Bitmap Test] Initial credentials rejected, trying default password 'test'..."
+            "[E2E Auth] Credentials 'NewAdminPassword123!' rejected, logging in with initial default password 'test'..."
         );
-        let mut login_params = HashMap::new();
-        login_params.insert("username", "admin");
-        login_params.insert("password", "test");
         login_resp = client
             .post(&login_url)
-            .form(&login_params)
+            .form(&[("username", "admin"), ("password", "test")])
             .send()
             .await
-            .expect("Failed to submit login request with initial password");
+            .expect("Failed to submit login request with default password");
     }
 
     assert_eq!(
@@ -197,7 +162,6 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         login_resp.status()
     );
 
-    // Extract session cookie from login response set-cookie headers
     let cookie_header = login_resp
         .headers()
         .get_all(reqwest::header::SET_COOKIE)
@@ -211,7 +175,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         .expect("Invalid cookie format")
         .to_string();
 
-    // 2. Handle initial forced password change if redirected to /account/password
+    // Check if redirected to forced password change page
     let password_url = format!("{}/account/password", base_url);
     let pwd_page_resp = client
         .get(&password_url)
@@ -221,7 +185,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         .expect("Failed to GET /account/password");
 
     if pwd_page_resp.status() == reqwest::StatusCode::OK {
-        println!("[E2E Bitmap Test] Password change required. Submitting new admin password...");
+        println!("[E2E Auth] Forced password change active. Updating admin password...");
         let pwd_page_html = pwd_page_resp
             .text()
             .await
@@ -242,6 +206,13 @@ async fn test_docker_e2e_bitmap_upload_flow() {
                 .await
                 .expect("Failed to submit password change form");
 
+            assert!(
+                change_pwd_resp.status().is_success()
+                    || change_pwd_resp.status() == reqwest::StatusCode::SEE_OTHER,
+                "Password change submission expected 200 OK or 303 Redirect, got: {}",
+                change_pwd_resp.status()
+            );
+
             if let Some(new_cookie_header) = change_pwd_resp
                 .headers()
                 .get_all(reqwest::header::SET_COOKIE)
@@ -257,10 +228,42 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         }
     }
 
-    println!("[E2E Bitmap Test] Waiting 10s after authentication...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    println!("[E2E Auth] Admin authentication completed successfully.");
+    session_cookie
+}
 
-    // 3. GET /bitmaps to obtain session CSRF token from HTML
+#[tokio::test]
+async fn test_docker_e2e_bitmap_upload_flow() {
+    println!("[E2E Bitmap Test] Step 1: Building Docker images...");
+    let build_status = Command::new("docker")
+        .args(["compose", "build"])
+        .status()
+        .expect("Failed to execute docker compose build");
+    assert!(build_status.success(), "docker compose build failed");
+
+    println!("[E2E Bitmap Test] Step 2: Starting Docker container stack...");
+    let up_status = Command::new("docker")
+        .args(["compose", "up", "-d"])
+        .status()
+        .expect("Failed to execute docker compose up -d");
+    assert!(up_status.success(), "docker compose up -d failed");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("Failed to build reqwest HTTP client");
+
+    let base_url = "http://localhost:3000";
+
+    println!("[E2E Bitmap Test] Step 3: Polling /readyz health check endpoint...");
+    wait_for_stack_ready(&client, base_url).await;
+
+    // 1. Authenticate as admin
+    println!("[E2E Bitmap Test] Step 4: Authenticating as admin...");
+    let session_cookie = login_as_admin(&client, base_url).await;
+
+    // 2. GET /bitmaps to obtain session CSRF token from HTML
     println!("[E2E Bitmap Test] Step 5: Fetching bitmap library page...");
     let bitmaps_url = format!("{}/bitmaps", base_url);
     let list_resp = client
@@ -285,7 +288,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
     let csrf_token = extract_input_value(&list_html, "csrf_token")
         .expect("CSRF token not found in /bitmaps HTML page");
 
-    // 4. Initiate reference bitmap upload via POST /bitmaps
+    // 3. Initiate reference bitmap upload via POST /bitmaps
     println!("[E2E Bitmap Test] Step 6: Initiating reference bitmap upload...");
     let test_bitmap_name = format!("Docker E2E Bitmap {}", uuid::Uuid::new_v4().simple());
     let mut upload_form = HashMap::new();
@@ -318,6 +321,8 @@ async fn test_docker_e2e_bitmap_upload_flow() {
 
     if presigned_post_url.starts_with('/') {
         presigned_post_url = format!("http://localhost:9000{}", presigned_post_url);
+    } else if presigned_post_url.contains("http://rustfs:9000") {
+        presigned_post_url = presigned_post_url.replace("http://rustfs:9000", "http://localhost:9000");
     }
 
     assert!(
@@ -325,7 +330,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         "Presigned hidden form fields missing in upload template"
     );
 
-    // 5. Construct multipart/form-data request and upload PNG to S3/RustFS
+    // 4. Construct multipart/form-data request and upload PNG to S3/RustFS
     println!("[E2E Bitmap Test] Step 7: Uploading sample PNG to S3/RustFS...");
     let sample_png_bytes = create_sample_png_bytes(10, 10);
     let mut multipart = reqwest::multipart::Form::new();
@@ -348,7 +353,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         .await
         .expect("Failed to upload bitmap image to S3");
 
-    let redirect_location = s3_resp
+    let mut redirect_location = s3_resp
         .headers()
         .get("location")
         .or_else(|| s3_resp.headers().get("Location"))
@@ -362,7 +367,11 @@ async fn test_docker_e2e_bitmap_upload_flow() {
             )
         });
 
-    // 6. Follow S3 redirect to GET /bitmaps/commit
+    if redirect_location.contains("http://app:3000") {
+        redirect_location = redirect_location.replace("http://app:3000", "http://localhost:3000");
+    }
+
+    // 5. Follow S3 redirect to GET /bitmaps/commit
     println!("[E2E Bitmap Test] Step 8: Confirming bitmap upload commit...");
     let commit_page_resp = client
         .get(&redirect_location)
@@ -390,7 +399,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
     let commit_name = extract_input_value(&commit_page_html, "name")
         .expect("Name field not found on commit confirmation page");
 
-    // 7. Submit final POST /bitmaps/commit to persist database record
+    // 6. Submit final POST /bitmaps/commit to persist database record
     let commit_endpoint = format!("{}/bitmaps/commit", base_url);
     let mut commit_form = HashMap::new();
     commit_form.insert("csrf_token", commit_csrf_token.as_str());
@@ -412,10 +421,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         final_commit_resp.status()
     );
 
-    println!("[E2E Bitmap Test] Waiting 10s after bitmap commit...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
-    // 8. Fetch GET /bitmaps and verify uploaded bitmap appears in library HTML
+    // 7. Fetch GET /bitmaps and verify uploaded bitmap appears in library HTML
     println!("[E2E Bitmap Test] Step 9: Verifying bitmap appears in library list...");
     let final_list_resp = client
         .get(&bitmaps_url)
@@ -450,9 +456,6 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
         .expect("Failed to execute docker compose build");
     assert!(build_status.success(), "docker compose build failed");
 
-    println!("[E2E Simulator Test] Waiting 10s after image build...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
     println!("[E2E Simulator Test] Step 2: Starting Docker container stack...");
     let up_status = Command::new("docker")
         .args(["compose", "up", "-d"])
@@ -460,10 +463,6 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
         .expect("Failed to execute docker compose up -d");
     assert!(up_status.success(), "docker compose up -d failed");
 
-    println!("[E2E Simulator Test] Waiting 10s after container startup...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
-    println!("[E2E Simulator Test] Step 3: Polling /readyz health check endpoint...");
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
@@ -471,139 +470,13 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
         .expect("Failed to build reqwest HTTP client");
 
     let base_url = "http://localhost:3000";
-    let ready_endpoint = format!("{}/readyz", base_url);
 
-    let start_time = Instant::now();
-    let timeout = Duration::from_secs(300);
-    let mut is_ready = false;
-    let mut poll_attempts = 0;
-
-    println!("[E2E TEST] Waiting for readyz endpoint: {}", ready_endpoint);
-    while start_time.elapsed() < timeout {
-        poll_attempts += 1;
-        if let Ok(resp) = client.get(&ready_endpoint).send().await
-            && resp.status().is_success()
-        {
-            println!(
-                "[E2E Simulator Test] /readyz reported healthy status on attempt {}!",
-                poll_attempts
-            );
-            is_ready = true;
-            break;
-        }
-        println!(
-            "[E2E Simulator Test] Polling /readyz (attempt {})...",
-            poll_attempts
-        );
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-
-    assert!(
-        is_ready,
-        "Docker container stack failed to report healthy readyz status within timeout"
-    );
-    println!("[E2E TEST] Stack ready after {:.1}s", start_time.elapsed().as_secs_f64());
-
-    println!("[E2E Simulator Test] Waiting 10s for simulator workers to register and settle...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    println!("[E2E Simulator Test] Step 3: Polling /readyz health check endpoint...");
+    wait_for_stack_ready(&client, base_url).await;
 
     // 1. Authenticate session
     println!("[E2E Simulator Test] Step 4: Authenticating as admin...");
-    let login_url = format!("{}/login", base_url);
-    let mut login_resp = client
-        .post(&login_url)
-        .form(&[("username", "admin"), ("password", "NewAdminPassword123!")])
-        .send()
-        .await
-        .expect("Failed to submit login request");
-
-    if login_resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-        println!(
-            "[E2E Simulator Test] Initial credentials rejected, trying default password 'test'..."
-        );
-        login_resp = client
-            .post(&login_url)
-            .form(&[("username", "admin"), ("password", "test")])
-            .send()
-            .await
-            .expect("Failed to submit login request with initial password");
-    }
-
-    assert_eq!(
-        login_resp.status(),
-        reqwest::StatusCode::SEE_OTHER,
-        "Login request expected 303 See Other redirect, got status: {}",
-        login_resp.status()
-    );
-
-    let cookie_header = login_resp
-        .headers()
-        .get_all(reqwest::header::SET_COOKIE)
-        .iter()
-        .find_map(|h| h.to_str().ok().filter(|s| s.contains("session_id")))
-        .expect("Set-Cookie header with session_id missing on login response");
-
-    let mut session_cookie = cookie_header
-        .split(';')
-        .next()
-        .expect("Invalid cookie format")
-        .to_string();
-
-    // Handle password reset if needed
-    let password_url = format!("{}/account/password", base_url);
-    let pwd_page_resp = client
-        .get(&password_url)
-        .header(reqwest::header::COOKIE, &session_cookie)
-        .send()
-        .await
-        .expect("Failed to GET /account/password");
-
-    if pwd_page_resp.status() == reqwest::StatusCode::OK {
-        println!("[E2E Simulator Test] Password change required. Submitting new admin password...");
-        let pwd_page_html = pwd_page_resp
-            .text()
-            .await
-            .expect("Failed to read password change page HTML");
-
-        if let Some(pwd_csrf_token) = extract_input_value(&pwd_page_html, "csrf_token") {
-            let mut change_pwd_form = HashMap::new();
-            change_pwd_form.insert("csrf_token", pwd_csrf_token.as_str());
-            change_pwd_form.insert("current_password", "test");
-            change_pwd_form.insert("new_password", "NewAdminPassword123!");
-            change_pwd_form.insert("confirm_password", "NewAdminPassword123!");
-
-            let _ = client
-                .post(&password_url)
-                .header(reqwest::header::COOKIE, &session_cookie)
-                .form(&change_pwd_form)
-                .send()
-                .await
-                .expect("Failed to submit password change form");
-
-            let re_login_resp = client
-                .post(&login_url)
-                .form(&[("username", "admin"), ("password", "NewAdminPassword123!")])
-                .send()
-                .await
-                .expect("Failed to re-login after password change");
-
-            if let Some(new_cookie_header) = re_login_resp
-                .headers()
-                .get_all(reqwest::header::SET_COOKIE)
-                .iter()
-                .find_map(|h| h.to_str().ok().filter(|s| s.contains("session_id")))
-            {
-                session_cookie = new_cookie_header
-                    .split(';')
-                    .next()
-                    .expect("Invalid cookie format")
-                    .to_string();
-            }
-        }
-    }
-
-    println!("[E2E Simulator Test] Waiting 10s after authentication...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    let session_cookie = login_as_admin(&client, base_url).await;
 
     // 2. Fetch GET /automations/new to obtain session CSRF token
     println!("[E2E Simulator Test] Step 5: Fetching /automations/new form...");
@@ -788,9 +661,6 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
 
     assert_eq!(activate_resp.status(), reqwest::StatusCode::SEE_OTHER);
 
-    println!("[E2E Simulator Test] Waiting 10s after activating automation...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
-
     // 5. Trigger immediate execution run via POST /automations/{id}/run-now
     println!("[E2E Simulator Test] Step 8: Triggering immediate task execution (run-now)...");
     let run_now_url = format!("{}/automations/{}/run-now", base_url, automation_id);
@@ -834,10 +704,9 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     });
 
     println!(
-        "[E2E Simulator Test] Task run triggered (ID: {}). Waiting 10s for simulator worker to claim assignment...",
+        "[E2E Simulator Test] Task run triggered (ID: {}). Polling for assignment and execution...",
         task_run_id
     );
-    tokio::time::sleep(Duration::from_secs(10)).await;
 
     // 6. Poll task run status until completed by containerized simulator service
     println!("[E2E Simulator Test] Step 9: Polling task run status until completion...");
@@ -846,6 +715,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     let run_timeout = Duration::from_secs(300);
     let mut run_succeeded = false;
     let mut run_poll_attempts = 0;
+    let mut last_status = String::from("unknown");
 
     while run_poll_start.elapsed() < run_timeout {
         run_poll_attempts += 1;
@@ -869,15 +739,32 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
                     run_poll_start.elapsed().as_secs()
                 );
                 run_succeeded = true;
+                last_status = "Succeeded".to_string();
                 break;
             }
 
-            if current_status == "Failed" || current_status == "Cancelled" {
+            if run_html.contains("Failed") || run_html.contains("failed") {
+                last_status = "Failed".to_string();
                 println!(
-                    "[E2E TEST] Task run {} entered terminal failure state '{}'!",
-                    task_run_id, current_status
+                    "[E2E TEST] Task run {} entered terminal failure state 'Failed'!",
+                    task_run_id
                 );
                 break;
+            }
+
+            if run_html.contains("Cancelled") || run_html.contains("cancelled") {
+                last_status = "Cancelled".to_string();
+                println!(
+                    "[E2E TEST] Task run {} entered terminal failure state 'Cancelled'!",
+                    task_run_id
+                );
+                break;
+            }
+
+            if run_html.contains("Running") || run_html.contains("running") {
+                last_status = "Running".to_string();
+            } else if run_html.contains("Queued") || run_html.contains("queued") {
+                last_status = "Queued".to_string();
             }
         } else {
             println!(
@@ -887,12 +774,13 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
             );
         }
         println!(
-            "[E2E Simulator Test] Polling task run {} status (attempt {}, elapsed {}s)...",
+            "[E2E Simulator Test] Polling task run {} status (status: {}, attempt {}, elapsed {}s)...",
             task_run_id,
+            last_status,
             run_poll_attempts,
             run_poll_start.elapsed().as_secs()
         );
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     assert!(
@@ -900,9 +788,6 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
         "Task run {} failed to complete with status succeeded within timeout (last status: '{}')",
         task_run_id, last_status
     );
-
-    println!("[E2E Simulator Test] Waiting 10s before downloading screenshots ZIP archive...");
-    tokio::time::sleep(Duration::from_secs(10)).await;
 
     // 7. Verify screenshots arrived and can be downloaded as a ZIP archive
     println!("[E2E Simulator Test] Step 10: Downloading and verifying screenshots ZIP archive...");
