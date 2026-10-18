@@ -105,7 +105,15 @@ impl LoginRateLimiter {
     }
 
     pub fn check_rate_limit(&self, ip: IpAddr, username: &str) -> Result<(), &'static str> {
-        let now = Instant::now();
+        self.check_rate_limit_at(ip, username, Instant::now())
+    }
+
+    pub fn check_rate_limit_at(
+        &self,
+        ip: IpAddr,
+        username: &str,
+        now: Instant,
+    ) -> Result<(), &'static str> {
         let mut inner = self.inner.lock().expect("lock rate limiter mutex");
 
         if let Some(user_count) = inner.prune_and_clean_user(ip, username, now, self.window)
@@ -124,7 +132,10 @@ impl LoginRateLimiter {
     }
 
     pub fn record_failure(&self, ip: IpAddr, username: &str) {
-        let now = Instant::now();
+        self.record_failure_at(ip, username, Instant::now());
+    }
+
+    pub fn record_failure_at(&self, ip: IpAddr, username: &str, now: Instant) {
         let mut inner = self.inner.lock().expect("lock rate limiter mutex");
 
         if inner.user_attempts.len() + inner.ip_attempts.len() > EVICTION_THRESHOLD {
@@ -149,7 +160,10 @@ impl LoginRateLimiter {
     }
 
     pub fn entry_counts(&self) -> (usize, usize) {
-        let now = Instant::now();
+        self.entry_counts_at(Instant::now())
+    }
+
+    pub fn entry_counts_at(&self, now: Instant) -> (usize, usize) {
         let mut inner = self.inner.lock().expect("lock rate limiter mutex");
         inner.sweep_expired(now, self.window);
         (inner.user_attempts.len(), inner.ip_attempts.len())
@@ -165,34 +179,35 @@ mod tests {
     fn test_dual_rate_limiting_and_eviction() {
         let limiter = LoginRateLimiter::new_with_ip_limit(2, 4, Duration::from_millis(50));
         let ip: IpAddr = "192.168.1.50".parse().unwrap();
+        let t0 = Instant::now();
 
         // Check initially allowed
-        assert!(limiter.check_rate_limit(ip, "user1").is_ok());
+        assert!(limiter.check_rate_limit_at(ip, "user1", t0).is_ok());
 
         // 2 failures for user1 -> user1 limit reached
-        limiter.record_failure(ip, "user1");
-        limiter.record_failure(ip, "user1");
+        limiter.record_failure_at(ip, "user1", t0);
+        limiter.record_failure_at(ip, "user1", t0);
 
-        assert!(limiter.check_rate_limit(ip, "user1").is_err());
+        assert!(limiter.check_rate_limit_at(ip, "user1", t0).is_err());
         // user2 on same IP is still under user limit, but total IP attempts is 2 (< 4)
-        assert!(limiter.check_rate_limit(ip, "user2").is_ok());
+        assert!(limiter.check_rate_limit_at(ip, "user2", t0).is_ok());
 
         // Add 2 failures for user2 -> total IP attempts becomes 4
-        limiter.record_failure(ip, "user2");
-        limiter.record_failure(ip, "user2");
+        limiter.record_failure_at(ip, "user2", t0);
+        limiter.record_failure_at(ip, "user2", t0);
 
         // Now user3 on same IP is blocked by per-IP limit!
-        let err = limiter.check_rate_limit(ip, "user3").unwrap_err();
+        let err = limiter.check_rate_limit_at(ip, "user3", t0).unwrap_err();
         assert!(err.contains("from this IP address"));
 
-        // Wait for window expiration
-        std::thread::sleep(Duration::from_millis(60));
+        // Simulate window expiration without sleeping (60ms > 50ms window)
+        let t1 = t0 + Duration::from_millis(60);
 
-        // After window expiration, check_rate_limit evicts old entries
-        assert!(limiter.check_rate_limit(ip, "user1").is_ok());
-        assert!(limiter.check_rate_limit(ip, "user3").is_ok());
+        // After window expiration, check_rate_limit_at evicts old entries
+        assert!(limiter.check_rate_limit_at(ip, "user1", t1).is_ok());
+        assert!(limiter.check_rate_limit_at(ip, "user3", t1).is_ok());
 
-        let (user_count, ip_count) = limiter.entry_counts();
+        let (user_count, ip_count) = limiter.entry_counts_at(t1);
         assert_eq!(user_count, 0);
         assert_eq!(ip_count, 0);
     }
@@ -202,35 +217,36 @@ mod tests {
         let limiter = LoginRateLimiter::new_with_ip_limit(2, 100, Duration::from_millis(50));
         let ip1: IpAddr = "10.0.0.1".parse().unwrap();
         let ip2: IpAddr = "10.0.0.2".parse().unwrap();
+        let t0 = Instant::now();
 
         // 1. Case-insensitivity: "Admin", "ADMIN", "admin" share same bucket
-        limiter.record_failure(ip1, "Admin");
-        limiter.record_failure(ip1, "ADMIN");
-        let err = limiter.check_rate_limit(ip1, "admin").unwrap_err();
+        limiter.record_failure_at(ip1, "Admin", t0);
+        limiter.record_failure_at(ip1, "ADMIN", t0);
+        let err = limiter.check_rate_limit_at(ip1, "admin", t0).unwrap_err();
         assert_eq!(err, ERR_USER_RATE_LIMIT);
 
         // 2. Clear user attempts for ip1 and "admin"
         limiter.clear(ip1, "ADMIN");
-        assert!(limiter.check_rate_limit(ip1, "admin").is_ok());
+        assert!(limiter.check_rate_limit_at(ip1, "admin", t0).is_ok());
 
         // 3. Eviction threshold: Fill past EVICTION_THRESHOLD (256) with expired entries
         let fast_limiter = LoginRateLimiter::new_with_ip_limit(10, 10, Duration::from_millis(10));
         for i in 0..150 {
             let ip: IpAddr = format!("172.16.{}.{}", i / 250, i % 250).parse().unwrap();
-            fast_limiter.record_failure(ip, &format!("user{}", i));
+            fast_limiter.record_failure_at(ip, &format!("user{}", i), t0);
         }
         // Total entries: 150 user + 150 ip = 300 entries > 256 threshold
-        let (u_before, ip_before) = fast_limiter.entry_counts();
+        let (u_before, ip_before) = fast_limiter.entry_counts_at(t0);
         assert!(u_before > 0 && ip_before > 0);
 
-        // Sleep to let all previous entries expire
-        std::thread::sleep(Duration::from_millis(15));
+        // Simulate time progression so entries expire without sleeping (15ms > 10ms window)
+        let t1 = t0 + Duration::from_millis(15);
 
         // Next failure triggers sweep_expired inside record_failure because count > 256
-        fast_limiter.record_failure(ip2, "fresh_user");
+        fast_limiter.record_failure_at(ip2, "fresh_user", t1);
 
         // The old 150 expired entries should have been swept, leaving only fresh_user
-        let (u_after, ip_after) = fast_limiter.entry_counts();
+        let (u_after, ip_after) = fast_limiter.entry_counts_at(t1);
         assert_eq!(u_after, 1);
         assert_eq!(ip_after, 1);
     }
