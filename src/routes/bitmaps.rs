@@ -4,7 +4,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
-use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
@@ -286,32 +285,54 @@ pub struct BitmapsListTemplate {
     pub automation_name: Option<String>,
 }
 
-fn parse_bitmap_rows(rows: Vec<sqlx::postgres::PgRow>) -> Vec<BitmapListItem> {
+#[derive(Debug, sqlx::FromRow)]
+struct RawBitmapRow {
+    id: i64,
+    automation_id: Option<i64>,
+    automation_name: Option<String>,
+    name: String,
+    object_storage_key: String,
+    width: i32,
+    height: i32,
+    created_by: i64,
+    created_by_name: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct BitmapIdAutoRow {
+    automation_id: Option<i64>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct DeleteBitmapRow {
+    automation_id: Option<i64>,
+    name: String,
+    object_storage_key: String,
+}
+
+fn parse_bitmap_rows(rows: Vec<RawBitmapRow>) -> Vec<BitmapListItem> {
     let mut bitmaps = Vec::with_capacity(rows.len());
     for row in rows {
-        let id: i64 = row.get("id");
-        let width: i32 = row.get("width");
-        let height: i32 = row.get("height");
-
         let magnifier = ImageMagnifier::new(
-            format!("/media/bitmaps/{}", id),
-            width.max(1) as u32,
-            height.max(1) as u32,
+            format!("/media/bitmaps/{}", row.id),
+            row.width.max(1) as u32,
+            row.height.max(1) as u32,
             None,
             None,
         );
 
         bitmaps.push(BitmapListItem {
-            id,
-            automation_id: row.get("automation_id"),
-            automation_name: row.get("automation_name"),
-            name: row.get("name"),
-            object_storage_key: row.get("object_storage_key"),
-            width,
-            height,
-            created_by: row.get("created_by"),
-            created_by_name: row.get("created_by_name"),
-            created_at: row.get("created_at"),
+            id: row.id,
+            automation_id: row.automation_id,
+            automation_name: row.automation_name,
+            name: row.name,
+            object_storage_key: row.object_storage_key,
+            width: row.width,
+            height: row.height,
+            created_by: row.created_by,
+            created_by_name: row.created_by_name,
+            created_at: row.created_at,
             magnifier,
         });
     }
@@ -327,10 +348,10 @@ pub async fn fetch_bitmaps_list_template(
 
     let (automation_name, rows) = if let Some(aid) = automation_id {
         let (auto_res, rows_res) = tokio::join!(
-            sqlx::query("SELECT name FROM automations WHERE id = $1")
+            sqlx::query_scalar::<_, String>("SELECT name FROM automations WHERE id = $1")
                 .bind(aid)
                 .fetch_optional(db),
-            sqlx::query(
+            sqlx::query_as::<_, RawBitmapRow>(
                 r#"
                 SELECT
                     b.id, b.automation_id, a.name AS automation_name, b.name,
@@ -348,15 +369,14 @@ pub async fn fetch_bitmaps_list_template(
             .fetch_all(db)
         );
 
-        let auto_row = match auto_res {
-            Ok(Some(r)) => r,
+        let name = match auto_res {
+            Ok(Some(n)) => n,
             _ => return Err(Redirect::to("/automations")),
         };
-        let name: String = auto_row.get("name");
         let rows = rows_res.unwrap_or_default();
         (Some(name), rows)
     } else {
-        let rows = sqlx::query(
+        let rows = sqlx::query_as::<_, RawBitmapRow>(
             r#"
             SELECT
                 b.id, b.automation_id, a.name AS automation_name, b.name,
@@ -624,13 +644,14 @@ pub async fn post_bitmap_commit_handler(
 
     // Idempotency check: if bitmap with this key already exists, return redirect without error
     if let Ok(Some(existing)) =
-        sqlx::query("SELECT id, automation_id FROM bitmaps WHERE object_storage_key = $1")
-            .bind(&form.key)
-            .fetch_optional(&state.db)
-            .await
+        sqlx::query_as::<_, BitmapIdAutoRow>(
+            "SELECT automation_id FROM bitmaps WHERE object_storage_key = $1",
+        )
+        .bind(&form.key)
+        .fetch_optional(&state.db)
+        .await
     {
-        let aid: Option<i64> = existing.get("automation_id");
-        let redirect_path = match aid.or(form.automation_id) {
+        let redirect_path = match existing.automation_id.or(form.automation_id) {
             Some(a) => format!("/automations/{}/bitmaps", a),
             None => "/bitmaps".to_string(),
         };
@@ -642,7 +663,7 @@ pub async fn post_bitmap_commit_handler(
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    let row = match sqlx::query(
+    let bitmap_id = match sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by)
         VALUES ($1, $2, $3, $4, $5, $6)
@@ -658,14 +679,12 @@ pub async fn post_bitmap_commit_handler(
     .fetch_one(&state.db)
     .await
     {
-        Ok(r) => r,
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to insert bitmap into database: {}", e);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
         }
     };
-
-    let bitmap_id: i64 = row.get("id");
 
     let details = serde_json::json!({
         "name": bitmap_name,
@@ -703,8 +722,8 @@ async fn delete_bitmap_logic(
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
 
-    let bitmap_row = match sqlx::query(
-        "SELECT id, automation_id, name, object_storage_key FROM bitmaps WHERE id = $1",
+    let bitmap_row = match sqlx::query_as::<_, DeleteBitmapRow>(
+        "SELECT automation_id, name, object_storage_key FROM bitmaps WHERE id = $1",
     )
     .bind(bitmap_id)
     .fetch_optional(&state.db)
@@ -724,9 +743,9 @@ async fn delete_bitmap_logic(
         }
     };
 
-    let auto_id: Option<i64> = bitmap_row.get("automation_id");
-    let bitmap_name: String = bitmap_row.get("name");
-    let object_key: String = bitmap_row.get("object_storage_key");
+    let auto_id = bitmap_row.automation_id;
+    let bitmap_name = bitmap_row.name;
+    let object_key = bitmap_row.object_storage_key;
 
     if let Err(e) = state.storage_service().delete_object(&object_key).await {
         tracing::warn!("Failed to delete object key {} from S3: {}", object_key, e);
@@ -1110,13 +1129,12 @@ async fn fetch_s3_object_by_id(
     query_str: &'static str,
     id: i64,
 ) -> Option<Vec<u8>> {
-    let row = sqlx::query(query_str)
+    let key: String = sqlx::query_scalar(query_str)
         .bind(id)
         .fetch_optional(&state.db)
         .await
         .ok()??;
 
-    let key: String = row.get("object_storage_key");
     state.storage_service().get_object(&key).await.ok()
 }
 
@@ -1281,7 +1299,7 @@ pub async fn confirm_region_crop_logic(
             .into_response();
     }
 
-    let row = match sqlx::query(
+    let bitmap_id = match sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by)
         VALUES ($1, $2, $3, $4, $5, $6)
@@ -1297,14 +1315,12 @@ pub async fn confirm_region_crop_logic(
     .fetch_one(&state.db)
     .await
     {
-        Ok(r) => r,
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to insert cropped bitmap into database: {}", e);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
         }
     };
-
-    let bitmap_id: i64 = row.get("id");
 
     let details = serde_json::json!({
         "name": bitmap_name,
