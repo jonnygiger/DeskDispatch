@@ -16,7 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY Cargo.toml ./
 COPY crates/deskdispatch-protocol/Cargo.toml ./crates/deskdispatch-protocol/
 COPY crates/worker-simulator/Cargo.toml ./crates/worker-simulator/
-RUN mkdir -p src crates/deskdispatch-protocol/src crates/worker-simulator/src && \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/src/app/target \
+    mkdir -p src crates/deskdispatch-protocol/src crates/worker-simulator/src && \
     echo "fn main() {}" > src/main.rs && \
     echo "fn main() {}" > crates/worker-simulator/src/main.rs && \
     touch src/lib.rs && \
@@ -31,8 +33,13 @@ COPY static ./static
 COPY migrations ./migrations
 
 # Update timestamps on source files to force recompilation of workspace crates and build final binaries
-RUN touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs crates/worker-simulator/src/main.rs && \
-    cargo build --release --workspace
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/src/app/target \
+    touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs crates/worker-simulator/src/main.rs && \
+    cargo build --release --workspace && \
+    mkdir -p /app/bin && \
+    cp target/release/deskdispatch /app/bin/deskdispatch && \
+    cp target/release/worker-simulator /app/bin/worker-simulator
 
 # Stage 2: Runner
 FROM debian:bookworm-slim AS runner
@@ -49,8 +56,8 @@ RUN groupadd -g 10001 appgroup && \
     useradd -u 10001 -g appgroup -s /bin/false appuser
 
 # Copy the compiled binaries from the builder stage
-COPY --from=builder /usr/src/app/target/release/deskdispatch /app/deskdispatch
-COPY --from=builder /usr/src/app/target/release/worker-simulator /app/worker-simulator
+COPY --from=builder /app/bin/deskdispatch /app/deskdispatch
+COPY --from=builder /app/bin/worker-simulator /app/worker-simulator
 
 USER appuser:appgroup
 
@@ -60,7 +67,7 @@ ENV BIND_ADDRESS=0.0.0.0:3000 \
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=3 \
   CMD ["/app/deskdispatch", "healthcheck"]
 
 ENTRYPOINT ["/app/deskdispatch"]
