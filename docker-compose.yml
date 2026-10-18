@@ -31,10 +31,10 @@ services:
       APP_ENV: production
     healthcheck:
       test: ["CMD", "/app/deskdispatch", "healthcheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      interval: 1s
+      timeout: 3s
+      retries: 5
+      start_period: 1s
     logging:
       driver: "json-file"
       options:
@@ -55,10 +55,10 @@ services:
       - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d deskdispatch"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 1s
     logging:
       driver: "json-file"
       options:
@@ -78,10 +78,10 @@ services:
       - rustfs_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 1s
     logging:
       driver: "json-file"
       options:
@@ -109,7 +109,7 @@ services:
       ADMIN_PASSWORD: test
       ADMIN_DISPLAY_NAME: Admin
       APP_ENV: production
-    entrypoint: ["/bin/sh", "-c", "sleep 2 && /app/deskdispatch setup && sleep 1"]
+    entrypoint: ["/app/deskdispatch", "setup"]
     logging:
       driver: "json-file"
       options:

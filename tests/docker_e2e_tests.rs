@@ -78,6 +78,26 @@ fn create_sample_png_bytes(width: u32, height: u32) -> Vec<u8> {
     png_bytes.into_inner()
 }
 
+fn dump_docker_logs() {
+    println!("\n=================== DOCKER LOGS DUMP START ===================");
+    let output = Command::new("docker")
+        .args(["compose", "logs", "--tail=200"])
+        .output();
+
+    match output {
+        Ok(out) => {
+            println!("--- STDOUT ---");
+            println!("{}", String::from_utf8_lossy(&out.stdout));
+            println!("--- STDERR ---");
+            println!("{}", String::from_utf8_lossy(&out.stderr));
+        }
+        Err(e) => {
+            println!("Failed to run `docker compose logs`: {}", e);
+        }
+    }
+    println!("=================== DOCKER LOGS DUMP END ===================\n");
+}
+
 #[tokio::test]
 async fn test_docker_e2e_bitmap_upload_flow() {
     println!("[E2E Bitmap Test] Step 1: Building Docker images...");
@@ -115,6 +135,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
     let mut is_ready = false;
     let mut poll_attempts = 0;
 
+    println!("[E2E TEST] Waiting for readyz endpoint: {}", ready_endpoint);
     while start_time.elapsed() < timeout {
         poll_attempts += 1;
         if let Ok(resp) = client.get(&ready_endpoint).send().await
@@ -138,6 +159,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         is_ready,
         "Docker container stack failed to report healthy readyz status within timeout"
     );
+    println!("[E2E TEST] Stack ready after {:.1}s", start_time.elapsed().as_secs_f64());
 
     println!("[E2E Bitmap Test] Waiting 10s after application ready status...");
     tokio::time::sleep(Duration::from_secs(10)).await;
@@ -456,6 +478,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     let mut is_ready = false;
     let mut poll_attempts = 0;
 
+    println!("[E2E TEST] Waiting for readyz endpoint: {}", ready_endpoint);
     while start_time.elapsed() < timeout {
         poll_attempts += 1;
         if let Ok(resp) = client.get(&ready_endpoint).send().await
@@ -479,6 +502,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
         is_ready,
         "Docker container stack failed to report healthy readyz status within timeout"
     );
+    println!("[E2E TEST] Stack ready after {:.1}s", start_time.elapsed().as_secs_f64());
 
     println!("[E2E Simulator Test] Waiting 10s for simulator workers to register and settle...");
     tokio::time::sleep(Duration::from_secs(10)).await;
@@ -653,7 +677,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     click_step_form.insert("y", "300");
     click_step_form.insert("button", "left");
     click_step_form.insert("click_type", "single");
-    click_step_form.insert("post_delay_seconds", "0.2");
+    click_step_form.insert("post_delay_seconds", "0.0");
 
     let add_step_resp = client
         .post(&steps_url)
@@ -730,7 +754,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     pixel_step_form.insert("label", "Sample Color");
     pixel_step_form.insert("x", "500");
     pixel_step_form.insert("y", "300");
-    pixel_step_form.insert("post_delay_seconds", "0.2");
+    pixel_step_form.insert("post_delay_seconds", "0.0");
     if let Some(ref vid) = var_id_opt {
         pixel_step_form.insert("output_variable_id", vid.as_str());
     }
@@ -819,7 +843,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     println!("[E2E Simulator Test] Step 9: Polling task run status until completion...");
     let run_detail_url = format!("{}/runs/{}/status-frame", base_url, task_run_id);
     let run_poll_start = Instant::now();
-    let run_timeout = Duration::from_secs(450);
+    let run_timeout = Duration::from_secs(300);
     let mut run_succeeded = false;
     let mut run_poll_attempts = 0;
 
@@ -847,6 +871,20 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
                 run_succeeded = true;
                 break;
             }
+
+            if current_status == "Failed" || current_status == "Cancelled" {
+                println!(
+                    "[E2E TEST] Task run {} entered terminal failure state '{}'!",
+                    task_run_id, current_status
+                );
+                break;
+            }
+        } else {
+            println!(
+                "[E2E TEST] Warning: GET /runs/{} returned HTTP status {}",
+                task_run_id,
+                run_resp.status()
+            );
         }
         println!(
             "[E2E Simulator Test] Polling task run {} status (attempt {}, elapsed {}s)...",
@@ -859,8 +897,8 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
 
     assert!(
         run_succeeded,
-        "Task run {} failed to complete with status succeeded within timeout",
-        task_run_id
+        "Task run {} failed to complete with status succeeded within timeout (last status: '{}')",
+        task_run_id, last_status
     );
 
     println!("[E2E Simulator Test] Waiting 10s before downloading screenshots ZIP archive...");
