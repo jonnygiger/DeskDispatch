@@ -643,13 +643,12 @@ pub async fn post_bitmap_commit_handler(
     }
 
     // Idempotency check: if bitmap with this key already exists, return redirect without error
-    if let Ok(Some(existing)) =
-        sqlx::query_as::<_, BitmapIdAutoRow>(
-            "SELECT automation_id FROM bitmaps WHERE object_storage_key = $1",
-        )
-        .bind(&form.key)
-        .fetch_optional(&state.db)
-        .await
+    if let Ok(Some(existing)) = sqlx::query_as::<_, BitmapIdAutoRow>(
+        "SELECT automation_id FROM bitmaps WHERE object_storage_key = $1",
+    )
+    .bind(&form.key)
+    .fetch_optional(&state.db)
+    .await
     {
         let redirect_path = match existing.automation_id.or(form.automation_id) {
             Some(a) => format!("/automations/{}/bitmaps", a),
