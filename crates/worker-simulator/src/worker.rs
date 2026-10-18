@@ -75,6 +75,7 @@ impl SimulatedWorker {
 
         // Step 1: Register worker if no API key is set
         if self.api_key.is_none() {
+            let mut registered = false;
             if let Some(ref psk) = self.config.psk {
                 match self.register_worker(None, Some(psk)).await {
                     Ok(key) => {
@@ -83,38 +84,43 @@ impl SimulatedWorker {
                             "Unattended worker registered successfully via PSK"
                         );
                         self.api_key = Some(key);
+                        registered = true;
                     }
                     Err(e) => {
-                        error!(
+                        warn!(
                             worker_idx = self.config.worker_index,
-                            "Failed to register worker via PSK: {}", e
+                            "Failed to register worker via PSK: {}. Will attempt token registration...",
+                            e
                         );
-                        return;
                     }
                 }
-            } else if let Some(ref reg_token) = self.config.registration_token {
-                match self.register_worker(Some(reg_token), None).await {
-                    Ok(key) => {
-                        info!(
-                            worker_idx = self.config.worker_index,
-                            "Registered successfully with API key"
-                        );
-                        self.api_key = Some(key);
+            }
+
+            if !registered {
+                if let Some(ref reg_token) = self.config.registration_token {
+                    match self.register_worker(Some(reg_token), None).await {
+                        Ok(key) => {
+                            info!(
+                                worker_idx = self.config.worker_index,
+                                "Registered successfully with API key"
+                            );
+                            self.api_key = Some(key);
+                        }
+                        Err(e) => {
+                            error!(
+                                worker_idx = self.config.worker_index,
+                                "Failed to register worker with token: {}", e
+                            );
+                            return;
+                        }
                     }
-                    Err(e) => {
-                        error!(
-                            worker_idx = self.config.worker_index,
-                            "Failed to register worker: {}", e
-                        );
-                        return;
-                    }
+                } else {
+                    error!(
+                        worker_idx = self.config.worker_index,
+                        "Worker has neither API key, PSK, nor registration token. Exiting."
+                    );
+                    return;
                 }
-            } else {
-                error!(
-                    worker_idx = self.config.worker_index,
-                    "Worker has neither API key, PSK, nor registration token. Exiting."
-                );
-                return;
             }
         }
 
@@ -657,9 +663,19 @@ impl SimulatedWorker {
         upload_url: &str,
         image_bytes: Vec<u8>,
     ) -> Result<(), String> {
+        let target_url = if self.config.server_url.contains("http://app:")
+            || self.config.server_url.contains("http://deskdispatch-app:")
+        {
+            upload_url
+                .replace("http://localhost:9000", "http://rustfs:9000")
+                .replace("http://127.0.0.1:9000", "http://rustfs:9000")
+        } else {
+            upload_url.to_string()
+        };
+
         let res = self
             .client
-            .put(upload_url)
+            .put(&target_url)
             .header("Content-Type", "image/png")
             .body(image_bytes.clone())
             .send()
@@ -673,7 +689,7 @@ impl SimulatedWorker {
             {
                 let retry_res = self
                     .client
-                    .put(upload_url)
+                    .put(&target_url)
                     .body(image_bytes)
                     .send()
                     .await

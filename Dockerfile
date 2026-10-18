@@ -37,12 +37,12 @@ RUN touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs crates/
 # Stage 2: Runner
 FROM debian:bookworm-slim AS runner
 
-WORKDIR /app
-
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
 
 # Create non-root user
 RUN groupadd -g 10001 appgroup && \

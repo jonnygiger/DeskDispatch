@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: deskdispatch:latest
     container_name: deskdispatch-app
     restart: unless-stopped
     stop_grace_period: 15s
@@ -88,9 +89,7 @@ services:
         max-file: "3"
 
   migration:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: deskdispatch:latest
     container_name: deskdispatch-migration
     restart: "no"
     depends_on:
@@ -118,9 +117,7 @@ services:
         max-file: "3"
 
   simulator:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: deskdispatch:latest
     container_name: deskdispatch-simulator
     restart: unless-stopped
     depends_on:
@@ -128,6 +125,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     environment:
       SERVER_URL: http://app:3000
       DATABASE_URL: postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch
