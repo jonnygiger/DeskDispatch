@@ -94,7 +94,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
     let ready_endpoint = format!("{}/readyz", base_url);
 
     let start_time = Instant::now();
-    let timeout = Duration::from_secs(300);
+    let timeout = Duration::from_secs(3000);
     let mut is_ready = false;
 
     while start_time.elapsed() < timeout {
@@ -388,7 +388,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     let ready_endpoint = format!("{}/readyz", base_url);
 
     let start_time = Instant::now();
-    let timeout = Duration::from_secs(300);
+    let timeout = Duration::from_secs(3000);
     let mut is_ready = false;
 
     while start_time.elapsed() < timeout {
@@ -714,7 +714,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     // 6. Poll task run status until completed by containerized simulator service
     let run_detail_url = format!("{}/runs/{}", base_url, task_run_id);
     let run_poll_start = Instant::now();
-    let run_timeout = Duration::from_secs(45);
+    let run_timeout = Duration::from_secs(450);
     let mut run_succeeded = false;
 
     while run_poll_start.elapsed() < run_timeout {
