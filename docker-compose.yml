@@ -125,6 +125,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     environment:
       SERVER_URL: http://app:3000
       DATABASE_URL: postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch

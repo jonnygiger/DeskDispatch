@@ -44,12 +44,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Stage 2: Runner
 FROM debian:bookworm-slim AS runner
 
-WORKDIR /app
-
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
 
 # Create non-root user
 RUN groupadd -g 10001 appgroup && \
