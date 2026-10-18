@@ -644,7 +644,8 @@ impl SimulatedWorker {
                         worker_idx = self.config.worker_index,
                         task_run_id = task_run_id,
                         step_id = step_id,
-                        "Failed to post step result: {}", e
+                        "Failed to post step result: {}",
+                        e
                     );
                 }
             }
@@ -701,7 +702,8 @@ impl SimulatedWorker {
                 error!(
                     worker_idx = self.config.worker_index,
                     task_run_id = task_run_id,
-                    "Failed to send complete task run request: {}", e
+                    "Failed to send complete task run request: {}",
+                    e
                 );
             }
         }
@@ -911,7 +913,8 @@ impl SimulatedWorker {
                 worker_idx = self.config.worker_index,
                 task_run_id = task_run_id,
                 step_id = step_id,
-                "Failed to call screenshot commit endpoint: {}", e
+                "Failed to call screenshot commit endpoint: {}",
+                e
             );
         }
 
