@@ -30,9 +30,9 @@ COPY templates ./templates
 COPY static ./static
 COPY migrations ./migrations
 
-# Update timestamps on source files to force recompilation of workspace crates and build final binary
-RUN touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs && \
-    cargo build --release
+# Update timestamps on source files to force recompilation of workspace crates and build final binaries
+RUN touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs crates/worker-simulator/src/main.rs && \
+    cargo build --release --workspace
 
 # Stage 2: Runner
 FROM debian:bookworm-slim AS runner
@@ -48,8 +48,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -g 10001 appgroup && \
     useradd -u 10001 -g appgroup -s /bin/false appuser
 
-# Copy the compiled binary from the builder stage
+# Copy the compiled binaries from the builder stage
 COPY --from=builder /usr/src/app/target/release/deskdispatch /app/deskdispatch
+COPY --from=builder /usr/src/app/target/release/worker-simulator /app/worker-simulator
 
 USER appuser:appgroup
 
