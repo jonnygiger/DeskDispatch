@@ -591,7 +591,10 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     assert_eq!(create_var_resp.status(), reqwest::StatusCode::SEE_OTHER);
 
     // Fetch new step find_pixel_rgb page to extract variable ID from dropdown HTML
-    let new_fp_url = format!("{}/automations/{}/steps/new/find_pixel_rgb", base_url, automation_id);
+    let new_fp_url = format!(
+        "{}/automations/{}/steps/new/find_pixel_rgb",
+        base_url, automation_id
+    );
     let new_fp_resp = client
         .get(&new_fp_url)
         .header(reqwest::header::COOKIE, &session_cookie)
@@ -612,9 +615,12 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
             let abs_pos = search_idx + pos + pattern.len();
             if let Some(end) = new_fp_html[abs_pos..].find('"') {
                 let val = &new_fp_html[abs_pos..abs_pos + end];
-                let tag_end = new_fp_html[abs_pos..].find("</option>").map(|p| abs_pos + p).unwrap_or(abs_pos);
+                let tag_end = new_fp_html[abs_pos..]
+                    .find("</option>")
+                    .map(|p| abs_pos + p)
+                    .unwrap_or(abs_pos);
                 let option_text = &new_fp_html[abs_pos..tag_end];
-                if val != "" && val != "0" && option_text.contains("pixel_color") {
+                if !val.is_empty() && val != "0" && option_text.contains("pixel_color") {
                     found = Some(val.to_string());
                     break;
                 }
@@ -698,9 +704,12 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
 
     let run_id_str = run_location.trim_start_matches("/runs/");
     let clean_run_id_str = run_id_str.split('?').next().unwrap_or(run_id_str);
-    let task_run_id: i64 = clean_run_id_str
-        .parse()
-        .unwrap_or_else(|e| panic!("Failed to parse task_run_id from redirect location '{}': {}", run_location, e));
+    let task_run_id: i64 = clean_run_id_str.parse().unwrap_or_else(|e| {
+        panic!(
+            "Failed to parse task_run_id from redirect location '{}': {}",
+            run_location, e
+        )
+    });
 
     // 6. Poll task run status until completed by containerized simulator service
     let run_detail_url = format!("{}/runs/{}", base_url, task_run_id);

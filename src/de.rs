@@ -1,36 +1,85 @@
-use serde::{Deserialize, Deserializer, de};
-use std::borrow::Cow;
-use std::fmt::Display;
+use serde::de::{self, Deserializer, IntoDeserializer, Visitor};
+use std::fmt::{self, Display};
+use std::marker::PhantomData;
 use std::str::FromStr;
+
+struct OptionNumberVisitor<T>(PhantomData<T>);
+
+impl<'de, T> Visitor<'de> for OptionNumberVisitor<T>
+where
+    T: FromStr + de::Deserialize<'de>,
+    T::Err: Display,
+{
+    type Value = Option<T>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a number, a numeric string, an empty string, or null")
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(None)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(None)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            Ok(None)
+        } else {
+            trimmed.parse::<T>().map(Some).map_err(de::Error::custom)
+        }
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        T::deserialize(v.into_deserializer()).map(Some)
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        T::deserialize(v.into_deserializer()).map(Some)
+    }
+
+    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        T::deserialize(v.into_deserializer()).map(Some)
+    }
+}
 
 /// Deserializes an empty string or whitespace-only string into `None`,
 /// or parses a non-empty string / number into `Some(T)`.
 pub fn deserialize_option_number<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
-    T: FromStr + Deserialize<'de>,
+    T: FromStr + de::Deserialize<'de>,
     T::Err: Display,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum OptionNum<'a, T> {
-        Num(T),
-        Str(Cow<'a, str>),
-        None,
-    }
-
-    match OptionNum::<'de, T>::deserialize(deserializer)? {
-        OptionNum::Num(n) => Ok(Some(n)),
-        OptionNum::Str(s) => {
-            let trimmed = s.trim();
-            if trimmed.is_empty() {
-                Ok(None)
-            } else {
-                trimmed.parse::<T>().map(Some).map_err(de::Error::custom)
-            }
-        }
-        OptionNum::None => Ok(None),
-    }
+    deserializer.deserialize_any(OptionNumberVisitor(PhantomData))
 }
 
 #[cfg(test)]
