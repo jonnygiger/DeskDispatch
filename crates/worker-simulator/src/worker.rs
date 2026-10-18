@@ -429,6 +429,15 @@ impl SimulatedWorker {
                 .and_then(|d| d.as_u64())
                 .unwrap_or(100);
 
+            info!(
+                worker_idx = self.config.worker_index,
+                task_run_id = task_run_id,
+                seq = seq,
+                step_id = step_id,
+                step_type = step_type,
+                "Executing automation step"
+            );
+
             let started_at = Utc::now();
             tokio::time::sleep(Duration::from_millis(post_delay_ms.min(1000))).await;
 
@@ -605,11 +614,33 @@ impl SimulatedWorker {
                 .send()
                 .await;
 
-            if let Err(e) = res {
-                error!(
-                    worker_idx = self.config.worker_index,
-                    "Failed to post step result: {}", e
-                );
+            match res {
+                Ok(resp) if resp.status().is_success() => {
+                    info!(
+                        worker_idx = self.config.worker_index,
+                        task_run_id = task_run_id,
+                        step_id = step_id,
+                        result = result_str,
+                        "Successfully reported step result"
+                    );
+                }
+                Ok(resp) => {
+                    warn!(
+                        worker_idx = self.config.worker_index,
+                        task_run_id = task_run_id,
+                        step_id = step_id,
+                        status = %resp.status(),
+                        "Posting step result returned non-200 status"
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        worker_idx = self.config.worker_index,
+                        task_run_id = task_run_id,
+                        step_id = step_id,
+                        "Failed to post step result: {}", e
+                    );
+                }
             }
         }
 
@@ -634,13 +665,40 @@ impl SimulatedWorker {
             },
         };
 
-        let _ = self
+        let complete_res = self
             .client
             .post(&complete_url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&complete_req)
             .send()
             .await;
+
+        match complete_res {
+            Ok(resp) if resp.status().is_success() => {
+                info!(
+                    worker_idx = self.config.worker_index,
+                    task_run_id = task_run_id,
+                    final_status = final_status,
+                    "Successfully reported task run completion"
+                );
+            }
+            Ok(resp) => {
+                warn!(
+                    worker_idx = self.config.worker_index,
+                    task_run_id = task_run_id,
+                    final_status = final_status,
+                    status = %resp.status(),
+                    "Complete task run returned non-200 status"
+                );
+            }
+            Err(e) => {
+                error!(
+                    worker_idx = self.config.worker_index,
+                    task_run_id = task_run_id,
+                    "Failed to send complete task run request: {}", e
+                );
+            }
+        }
 
         info!(
             worker_idx = self.config.worker_index,
@@ -814,13 +872,32 @@ impl SimulatedWorker {
             height: Some(1080),
         };
 
-        let _ = self
+        let commit_res = self
             .client
             .post(&commit_url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&commit_req)
             .send()
             .await;
+
+        if let Ok(resp) = commit_res {
+            if !resp.status().is_success() {
+                warn!(
+                    worker_idx = self.config.worker_index,
+                    task_run_id = task_run_id,
+                    step_id = step_id,
+                    status = %resp.status(),
+                    "Screenshot commit endpoint returned non-200 status"
+                );
+            }
+        } else if let Err(e) = commit_res {
+            warn!(
+                worker_idx = self.config.worker_index,
+                task_run_id = task_run_id,
+                step_id = step_id,
+                "Failed to call screenshot commit endpoint: {}", e
+            );
+        }
 
         Ok(upload_info.object_key)
     }

@@ -78,8 +78,29 @@ fn create_sample_png_bytes(width: u32, height: u32) -> Vec<u8> {
     png_bytes.into_inner()
 }
 
+fn dump_docker_logs() {
+    println!("\n=================== DOCKER LOGS DUMP START ===================");
+    let output = Command::new("docker")
+        .args(["compose", "logs", "--tail=200"])
+        .output();
+
+    match output {
+        Ok(out) => {
+            println!("--- STDOUT ---");
+            println!("{}", String::from_utf8_lossy(&out.stdout));
+            println!("--- STDERR ---");
+            println!("{}", String::from_utf8_lossy(&out.stderr));
+        }
+        Err(e) => {
+            println!("Failed to run `docker compose logs`: {}", e);
+        }
+    }
+    println!("=================== DOCKER LOGS DUMP END ===================\n");
+}
+
 #[tokio::test]
 async fn test_docker_e2e_bitmap_upload_flow() {
+    println!("[E2E TEST] Starting test_docker_e2e_bitmap_upload_flow...");
     let _ = Command::new("docker")
         .args(["compose", "up", "-d", "--build"])
         .status();
@@ -97,6 +118,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
     let timeout = Duration::from_secs(300);
     let mut is_ready = false;
 
+    println!("[E2E TEST] Waiting for readyz endpoint: {}", ready_endpoint);
     while start_time.elapsed() < timeout {
         if let Ok(resp) = client.get(&ready_endpoint).send().await
             && resp.status().is_success()
@@ -107,10 +129,15 @@ async fn test_docker_e2e_bitmap_upload_flow() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
+    if !is_ready {
+        dump_docker_logs();
+    }
+
     assert!(
         is_ready,
         "Docker container stack failed to report healthy readyz status within timeout"
     );
+    println!("[E2E TEST] Stack ready after {:.1}s", start_time.elapsed().as_secs_f64());
 
     // 1. Authenticate via POST /login with seeded credentials
     let login_url = format!("{}/login", base_url);
@@ -374,6 +401,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
 
 #[tokio::test]
 async fn test_docker_e2e_simulator_workflow_and_screenshot() {
+    println!("[E2E TEST] Starting test_docker_e2e_simulator_workflow_and_screenshot...");
     let _ = Command::new("docker")
         .args(["compose", "up", "-d", "--build"])
         .status();
@@ -391,6 +419,7 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     let timeout = Duration::from_secs(300);
     let mut is_ready = false;
 
+    println!("[E2E TEST] Waiting for readyz endpoint: {}", ready_endpoint);
     while start_time.elapsed() < timeout {
         if let Ok(resp) = client.get(&ready_endpoint).send().await
             && resp.status().is_success()
@@ -401,10 +430,15 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
+    if !is_ready {
+        dump_docker_logs();
+    }
+
     assert!(
         is_ready,
         "Docker container stack failed to report healthy readyz status within timeout"
     );
+    println!("[E2E TEST] Stack ready after {:.1}s", start_time.elapsed().as_secs_f64());
 
     // 1. Authenticate session
     let login_url = format!("{}/login", base_url);
@@ -712,12 +746,19 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
     });
 
     // 6. Poll task run status until completed by containerized simulator service
+    println!(
+        "[E2E TEST] Polling task run {} status via GET /runs/{}",
+        task_run_id, task_run_id
+    );
     let run_detail_url = format!("{}/runs/{}", base_url, task_run_id);
     let run_poll_start = Instant::now();
     let run_timeout = Duration::from_secs(300);
     let mut run_succeeded = false;
+    let mut last_status = String::new();
+    let mut poll_count: u64 = 0;
 
     while run_poll_start.elapsed() < run_timeout {
+        poll_count += 1;
         let run_resp = client
             .get(&run_detail_url)
             .header(reqwest::header::COOKIE, &session_cookie)
@@ -731,18 +772,61 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
                 .await
                 .expect("Failed to read task run detail HTML");
 
-            if run_html.contains("Succeeded") || run_html.contains("succeeded") {
+            let current_status = if run_html.contains("Succeeded") || run_html.contains("succeeded") {
+                "Succeeded"
+            } else if run_html.contains("Failed") || run_html.contains("failed") {
+                "Failed"
+            } else if run_html.contains("Running") || run_html.contains("running") {
+                "Running"
+            } else if run_html.contains("Queued") || run_html.contains("queued") {
+                "Queued"
+            } else if run_html.contains("Cancelled") || run_html.contains("cancelled") {
+                "Cancelled"
+            } else {
+                "Unknown"
+            };
+
+            if current_status != last_status || poll_count % 25 == 0 {
+                println!(
+                    "[E2E TEST] Task run {} poll #{} (elapsed: {:.1}s): status='{}'",
+                    task_run_id,
+                    poll_count,
+                    run_poll_start.elapsed().as_secs_f64(),
+                    current_status
+                );
+                last_status = current_status.to_string();
+            }
+
+            if current_status == "Succeeded" {
                 run_succeeded = true;
                 break;
             }
+
+            if current_status == "Failed" || current_status == "Cancelled" {
+                println!(
+                    "[E2E TEST] Task run {} entered terminal failure state '{}'!",
+                    task_run_id, current_status
+                );
+                break;
+            }
+        } else {
+            println!(
+                "[E2E TEST] Warning: GET /runs/{} returned HTTP status {}",
+                task_run_id,
+                run_resp.status()
+            );
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
+    if !run_succeeded {
+        dump_docker_logs();
+    }
+
     assert!(
         run_succeeded,
-        "Task run {} failed to complete with status succeeded within timeout",
-        task_run_id
+        "Task run {} failed to complete with status succeeded within timeout (last status: '{}')",
+        task_run_id, last_status
     );
 
     // 7. Verify screenshots arrived and can be downloaded as a ZIP archive
