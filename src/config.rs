@@ -318,4 +318,49 @@ TEST_DESKDISPATCH_APOS_CHAR='
         assert!(!debug_str.contains("secure_s3_secret_key_99"));
         assert!(!debug_str.contains("secure_session_secret_007"));
     }
+
+    #[test]
+    fn test_parse_dotenv_content_edge_cases() {
+        // Arrange: dotenv content with comments containing leading spaces, key/value surrounding whitespace,
+        // multiple equals signs, empty values, empty quoted strings, mismatched quotes, single character strings,
+        // and lines without equals signs.
+        let env_content = r#"
+   # Leading whitespace comment
+NO_EQUALS_LINE
+  SPACED_KEY   =   spaced_value
+EMPTY_VAL=
+EMPTY_QUOTED_DOUBLE=""
+EMPTY_QUOTED_SINGLE=''
+MISMATCHED_QUOTES="unmatched'
+MULTIPLE_EQUALS=postgres://user:pass@localhost:5432/db?ssl=true&mode=1
+SINGLE_CHAR_QUOTED="x"
+"#;
+        let mut map = HashMap::new();
+
+        // Act
+        parse_dotenv_content(env_content, &mut map);
+
+        // Assert: Verify expected parsed entries and omission of invalid or comment lines
+        assert_eq!(map.len(), 7);
+        assert_eq!(
+            map.get("SPACED_KEY").map(String::as_str),
+            Some("spaced_value")
+        );
+        assert_eq!(map.get("EMPTY_VAL").map(String::as_str), Some(""));
+        assert_eq!(map.get("EMPTY_QUOTED_DOUBLE").map(String::as_str), Some(""));
+        assert_eq!(map.get("EMPTY_QUOTED_SINGLE").map(String::as_str), Some(""));
+        assert_eq!(
+            map.get("MISMATCHED_QUOTES").map(String::as_str),
+            Some("\"unmatched'")
+        );
+        assert_eq!(
+            map.get("MULTIPLE_EQUALS").map(String::as_str),
+            Some("postgres://user:pass@localhost:5432/db?ssl=true&mode=1")
+        );
+        assert_eq!(
+            map.get("SINGLE_CHAR_QUOTED").map(String::as_str),
+            Some("x")
+        );
+        assert!(!map.contains_key("NO_EQUALS_LINE"));
+    }
 }
