@@ -32,8 +32,8 @@ secrecy = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.28", features = ["v4", "serde"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
 url = "2.5"
+png = "0.18"
 
 [dev-dependencies]
 proptest = "1.11"

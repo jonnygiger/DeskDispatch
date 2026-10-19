@@ -66,16 +66,17 @@ fn extract_attr_value(tag_str: &str, attr_name: &str) -> Option<String> {
 }
 
 fn create_sample_png_bytes(width: u32, height: u32) -> Vec<u8> {
-    let img_buf = image::RgbImage::from_fn(width, height, |x, y| {
-        let r = ((x * 255) / width.max(1)) as u8;
+    let mut pixels = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
         let g = ((y * 255) / height.max(1)) as u8;
-        image::Rgb([r, g, 200])
-    });
-    let mut png_bytes = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgb8(img_buf)
-        .write_to(&mut png_bytes, image::ImageFormat::Png)
-        .expect("Failed to encode sample PNG");
-    png_bytes.into_inner()
+        for x in 0..width {
+            let r = ((x * 255) / width.max(1)) as u8;
+            pixels.push(r);
+            pixels.push(g);
+            pixels.push(200);
+        }
+    }
+    deskdispatch::routes::bitmaps::encode_png(width, height, &pixels)
 }
 
 #[allow(dead_code)]

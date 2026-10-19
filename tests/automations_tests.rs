@@ -1459,15 +1459,12 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
     );
 
     // Upload 15x20 PNG image bytes to S3
-    let img_buf = image::RgbImage::from_fn(15, 20, |_, _| image::Rgb([0, 128, 255]));
-    let mut png_bytes = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgb8(img_buf)
-        .write_to(&mut png_bytes, image::ImageFormat::Png)
-        .unwrap();
+    let blue_pixels = [0, 128, 255].repeat(15 * 20);
+    let png_bytes = deskdispatch::routes::bitmaps::encode_png(15, 20, &blue_pixels);
 
     let _ = state
         .storage_service()
-        .put_object(&bitmap_key, png_bytes.into_inner(), "image/png")
+        .put_object(&bitmap_key, png_bytes, "image/png")
         .await;
 
     // Commit reference bitmap via POST /bitmaps/commit
