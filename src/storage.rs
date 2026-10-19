@@ -922,14 +922,33 @@ pub fn parse_list_objects_v2_xml(xml: &str) -> Vec<StorageObject> {
 }
 
 fn extract_xml_tag_slice<'a>(xml_block: &'a str, tag_name: &str) -> Option<&'a str> {
-    let start_tag = format!("<{}>", tag_name);
-    let end_tag = format!("</{}>", tag_name);
+    let bytes = xml_block.as_bytes();
+    let tag_bytes = tag_name.as_bytes();
 
-    let start_idx = xml_block.find(&start_tag)?;
-    let rest = &xml_block[start_idx + start_tag.len()..];
-    let end_idx = rest.find(&end_tag)?;
-
-    Some(&rest[..end_idx])
+    let mut start = 0;
+    while start < bytes.len() {
+        let rel_open = xml_block[start..].find('<')?;
+        let open_idx = start + rel_open;
+        let rest = &xml_block[open_idx + 1..];
+        if rest.as_bytes().starts_with(tag_bytes)
+            && rest.as_bytes().get(tag_bytes.len()) == Some(&b'>')
+        {
+            let val_start = open_idx + 1 + tag_bytes.len() + 1;
+            let close_rest = &xml_block[val_start..];
+            for close_idx in 0..close_rest.len() {
+                let s = close_rest.as_bytes();
+                if s[close_idx..].starts_with(b"</")
+                    && s[close_idx + 2..].starts_with(tag_bytes)
+                    && s.get(close_idx + 2 + tag_bytes.len()) == Some(&b'>')
+                {
+                    return Some(&close_rest[..close_idx]);
+                }
+            }
+            return None;
+        }
+        start = open_idx + 1;
+    }
+    None
 }
 
 #[cfg(test)]
