@@ -533,6 +533,7 @@ pub fn generate_presigned_post_policy(
     })
 }
 
+#[cfg(test)]
 fn rewrite_url_with_public_endpoint(
     url: String,
     internal_endpoint: Option<&str>,

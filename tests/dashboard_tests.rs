@@ -1,5 +1,4 @@
 #![allow(clippy::unwrap_used)]
-use argon2::{Argon2, PasswordHasher};
 use axum::{
     body::Body,
     http::{Request, StatusCode, header},
@@ -15,13 +14,9 @@ async fn get_test_pool() -> Option<sqlx::PgPool> {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
     });
-    let connect_opts = db_url
-        .parse::<sqlx::postgres::PgConnectOptions>()
-        .ok()?
-        .options([("connect_timeout", "1")]);
     sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_millis(500))
-        .connect_with(connect_opts)
+        .connect(&db_url)
         .await
         .ok()
 }
@@ -35,20 +30,15 @@ async fn test_dashboard_stats_tiles() {
 
     // Seed test user
     let username = format!("dashuser_{}", Uuid::new_v4().simple());
-    let hash = Argon2::default()
-        .hash_password("Password123!".as_bytes())
-        .unwrap()
-        .to_string();
 
     let user_row = sqlx::query(
         r#"
         INSERT INTO users (username, password_hash, display_name, role, is_active)
-        VALUES ($1, $2, 'Dashboard Tester', 'admin', true)
+        VALUES ($1, 'hash', 'Dashboard Tester', 'admin', true)
         RETURNING id
         "#,
     )
     .bind(&username)
-    .bind(&hash)
     .fetch_one(&pool)
     .await
     .unwrap();
