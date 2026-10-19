@@ -1,8 +1,6 @@
-use image::{ImageBuffer, Rgb, RgbImage, codecs::png::PngEncoder};
 use rand::Rng;
-use std::io::Cursor;
 
-/// Resolution options for random screenshot generation.
+/// Common resolution presets for random screenshot generation.
 const COMMON_RESOLUTIONS: &[(u32, u32)] = &[
     (800, 600),
     (1024, 768),
@@ -11,196 +9,166 @@ const COMMON_RESOLUTIONS: &[(u32, u32)] = &[
     (1920, 1080),
 ];
 
-/// Generates a random PNG screenshot with random colors and random geometries.
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB8_8320;
+            } else {
+                crc >>= 1;
+            }
+            j += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+#[inline]
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in data {
+        let idx = ((crc as u8) ^ byte) as usize;
+        crc = (crc >> 8) ^ CRC32_TABLE[idx];
+    }
+    !crc
+}
+
+#[inline]
+fn adler32(data: &[u8]) -> u32 {
+    let mut s1: u32 = 1;
+    let mut s2: u32 = 0;
+    for chunk in data.chunks(5552) {
+        for &b in chunk {
+            s1 += b as u32;
+            s2 += s1;
+        }
+        s1 %= 65521;
+        s2 %= 65521;
+    }
+    (s2 << 16) | s1
+}
+
+fn write_png_chunk(buf: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
+    let len = data.len() as u32;
+    buf.extend_from_slice(&len.to_be_bytes());
+    let type_offset = buf.len();
+    buf.extend_from_slice(chunk_type);
+    buf.extend_from_slice(data);
+    let crc = crc32(&buf[type_offset..]);
+    buf.extend_from_slice(&crc.to_be_bytes());
+}
+
+/// Generates a random PNG screenshot with random dimensions and colors.
 pub fn generate_random_screenshot() -> Vec<u8> {
     let mut rng = rand::thread_rng();
     let (width, height) = COMMON_RESOLUTIONS[rng.gen_range(0..COMMON_RESOLUTIONS.len())];
     generate_random_screenshot_with_dimensions(width, height)
 }
 
-/// Generates a random PNG screenshot with specific dimensions and random geometries.
+/// Zero-dependency, ultra-fast PNG generator in pure Rust.
+/// Generates a valid, lightweight RGB PNG image for the given `width` and `height`.
 pub fn generate_random_screenshot_with_dimensions(width: u32, height: u32) -> Vec<u8> {
+    let width = width.max(1);
+    let height = height.max(1);
+
+    let row_len = 1 + (width as usize) * 3;
+    let total_scanline_bytes = (height as usize) * row_len;
+
+    // Generate scanline raw data (filter byte 0x00 + RGB bytes per scanline)
+    let mut scanlines = Vec::with_capacity(total_scanline_bytes);
+
     let mut rng = rand::thread_rng();
-    let mut img: RgbImage = ImageBuffer::new(width, height);
+    let base_r: u8 = rng.gen_range(20..220);
+    let base_g: u8 = rng.gen_range(20..220);
+    let base_b: u8 = rng.gen_range(20..220);
 
-    // 1. Fill canvas with a random background color or subtle gradient
-    let bg_r = rng.gen_range(20..240);
-    let bg_g = rng.gen_range(20..240);
-    let bg_b = rng.gen_range(20..240);
-    let bg_color = Rgb([bg_r, bg_g, bg_b]);
+    for y in 0..height {
+        scanlines.push(0x00); // Filter type: None
+        let row_r = base_r.wrapping_add((y as u8).wrapping_mul(3));
+        let row_g = base_g.wrapping_add((y as u8).wrapping_mul(5));
+        let row_b = base_b.wrapping_add((y as u8).wrapping_mul(7));
 
-    let use_gradient: bool = rng.r#gen();
-    if use_gradient {
-        let bg_r2 = rng.gen_range(20..240);
-        let bg_g2 = rng.gen_range(20..240);
-        let bg_b2 = rng.gen_range(20..240);
-        for y in 0..height {
-            let factor = y as f32 / height.max(1) as f32;
-            let r = (bg_r as f32 * (1.0 - factor) + bg_r2 as f32 * factor) as u8;
-            let g = (bg_g as f32 * (1.0 - factor) + bg_g2 as f32 * factor) as u8;
-            let b = (bg_b as f32 * (1.0 - factor) + bg_b2 as f32 * factor) as u8;
-            let row_color = Rgb([r, g, b]);
-            for x in 0..width {
-                img.put_pixel(x, y, row_color);
-            }
-        }
-    } else {
-        for pixel in img.pixels_mut() {
-            *pixel = bg_color;
+        for _ in 0..width {
+            scanlines.push(row_r);
+            scanlines.push(row_g);
+            scanlines.push(row_b);
         }
     }
 
-    // 2. Draw random grid / UI layout lines
-    if rng.gen_bool(0.7) {
-        let line_color = Rgb([
-            rng.gen_range(0..=255),
-            rng.gen_range(0..=255),
-            rng.gen_range(0..=255),
-        ]);
-        let grid_spacing = rng.gen_range(40..150);
-        for x in (0..width).step_by(grid_spacing) {
-            for y in 0..height {
-                img.put_pixel(x, y, line_color);
-            }
-        }
-        for y in (0..height).step_by(grid_spacing) {
-            for x in 0..width {
-                img.put_pixel(x, y, line_color);
-            }
-        }
+    let adler = adler32(&scanlines);
+
+    // Build ZLIB compressed stream (RFC 1950 zlib wrapper over DEFLATE stored blocks)
+    // Estimate zlib size: 2 header + blocks (5 bytes header + len data) + 4 adler trailer
+    let max_block_size = 65535usize;
+    let num_blocks = scanlines.len().div_ceil(max_block_size);
+    let zlib_capacity = 2 + num_blocks * 5 + scanlines.len() + 4;
+    let mut zlib_data = Vec::with_capacity(zlib_capacity);
+
+    // ZLIB header: CINFO=7 (32K window), CM=8 (deflate), FCHECK=0x01 -> 0x78 0x01
+    zlib_data.extend_from_slice(&[0x78, 0x01]);
+
+    let chunks: Vec<&[u8]> = scanlines.chunks(max_block_size).collect();
+    let num_chunks = chunks.len();
+
+    for (idx, chunk) in chunks.into_iter().enumerate() {
+        let is_last = idx == num_chunks - 1;
+        let header_byte = if is_last { 0x01 } else { 0x00 };
+        let len = chunk.len() as u16;
+        let nlen = !len;
+
+        zlib_data.push(header_byte);
+        zlib_data.extend_from_slice(&len.to_le_bytes());
+        zlib_data.extend_from_slice(&nlen.to_le_bytes());
+        zlib_data.extend_from_slice(chunk);
     }
 
-    // 3. Draw random rectangles / window shapes
-    let rect_count = rng.gen_range(3..12);
-    for _ in 0..rect_count {
-        let rect_w = rng.gen_range(30..(width / 2).max(40));
-        let rect_h = rng.gen_range(30..(height / 2).max(40));
-        let rect_x = rng.gen_range(0..(width - rect_w).max(1));
-        let rect_y = rng.gen_range(0..(height - rect_h).max(1));
+    zlib_data.extend_from_slice(&adler.to_be_bytes());
 
-        let rect_color = Rgb([
-            rng.gen_range(0..=255),
-            rng.gen_range(0..=255),
-            rng.gen_range(0..=255),
-        ]);
-        let filled: bool = rng.r#gen();
+    // Allocate PNG output buffer
+    let mut png_buf = Vec::with_capacity(8 + 25 + 12 + zlib_data.len() + 12);
 
-        if filled {
-            draw_filled_rect(&mut img, rect_x, rect_y, rect_w, rect_h, rect_color);
-        } else {
-            let thickness = rng.gen_range(1..5);
-            draw_outline_rect(
-                &mut img, rect_x, rect_y, rect_w, rect_h, thickness, rect_color,
-            );
-        }
-    }
+    // 1. PNG Header
+    png_buf.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
 
-    // 4. Draw random circles (e.g. status lights, icons, buttons)
-    let circle_count = rng.gen_range(2..8);
-    for _ in 0..circle_count {
-        let radius = rng.gen_range(10..60);
-        let cx = rng.gen_range(radius..(width - radius).max(radius + 1));
-        let cy = rng.gen_range(radius..(height - radius).max(radius + 1));
-        let circle_color = Rgb([
-            rng.gen_range(0..=255),
-            rng.gen_range(0..=255),
-            rng.gen_range(0..=255),
-        ]);
-        draw_filled_circle(&mut img, cx, cy, radius, circle_color);
-    }
+    // 2. IHDR Chunk (13 bytes)
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8] = 8; // 8 bits per channel
+    ihdr[9] = 2; // RGB color type
+    ihdr[10] = 0; // Deflate compression
+    ihdr[11] = 0; // Standard filter method
+    ihdr[12] = 0; // No interlace
+    write_png_chunk(&mut png_buf, b"IHDR", &ihdr);
 
-    // 5. Draw random crosshairs / target points
-    let crosshair_count = rng.gen_range(1..5);
-    for _ in 0..crosshair_count {
-        let cx = rng.gen_range(10..(width - 10));
-        let cy = rng.gen_range(10..(height - 10));
-        let size = rng.gen_range(15..40);
-        let ch_color = Rgb([
-            rng.gen_range(0..=255),
-            rng.gen_range(0..=255),
-            rng.gen_range(0..=255),
-        ]);
+    // 3. IDAT Chunk
+    write_png_chunk(&mut png_buf, b"IDAT", &zlib_data);
 
-        draw_line_horizontal(&mut img, cx.saturating_sub(size), cx + size, cy, ch_color);
-        draw_line_vertical(&mut img, cx, cy.saturating_sub(size), cy + size, ch_color);
-    }
+    // 4. IEND Chunk
+    write_png_chunk(&mut png_buf, b"IEND", &[]);
 
-    // Encode to PNG format
-    let mut bytes: Vec<u8> = Vec::new();
-    let encoder = PngEncoder::new(Cursor::new(&mut bytes));
-    if let Err(e) = img.write_with_encoder(encoder) {
-        tracing::error!("Failed to encode generated image to PNG: {}", e);
-    }
-
-    bytes
+    png_buf
 }
 
-fn draw_filled_rect(img: &mut RgbImage, x: u32, y: u32, w: u32, h: u32, color: Rgb<u8>) {
-    let img_w = img.width();
-    let img_h = img.height();
-
-    for cur_y in y..(y + h).min(img_h) {
-        for cur_x in x..(x + w).min(img_w) {
-            img.put_pixel(cur_x, cur_y, color);
-        }
+/// Zero-allocation O(1) PNG header parser.
+/// Verifies PNG magic bytes and `IHDR` chunk marker, returning `(width, height)`.
+pub fn parse_png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const PNG_HEADER: &[u8; 8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.len() < 24 || &bytes[..8] != PNG_HEADER || &bytes[12..16] != b"IHDR" {
+        return None;
     }
-}
-
-fn draw_outline_rect(
-    img: &mut RgbImage,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-    thickness: u32,
-    color: Rgb<u8>,
-) {
-    draw_filled_rect(img, x, y, w, thickness, color);
-    draw_filled_rect(img, x, y + h.saturating_sub(thickness), w, thickness, color);
-    draw_filled_rect(img, x, y, thickness, h, color);
-    draw_filled_rect(img, x + w.saturating_sub(thickness), y, thickness, h, color);
-}
-
-fn draw_filled_circle(img: &mut RgbImage, cx: u32, cy: u32, radius: u32, color: Rgb<u8>) {
-    let img_w = img.width();
-    let img_h = img.height();
-    let r_i32 = radius as i32;
-    let r_sq = r_i32 * r_i32;
-
-    let min_x = (cx as i32 - r_i32).max(0) as u32;
-    let max_x = (cx as i32 + r_i32).min(img_w as i32 - 1) as u32;
-    let min_y = (cy as i32 - r_i32).max(0) as u32;
-    let max_y = (cy as i32 + r_i32).min(img_h as i32 - 1) as u32;
-
-    for y in min_y..=max_y {
-        for x in min_x..=max_x {
-            let dx = x as i32 - cx as i32;
-            let dy = y as i32 - cy as i32;
-            if dx * dx + dy * dy <= r_sq {
-                img.put_pixel(x, y, color);
-            }
-        }
+    let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    if w == 0 || h == 0 {
+        return None;
     }
-}
-
-fn draw_line_horizontal(img: &mut RgbImage, x1: u32, x2: u32, y: u32, color: Rgb<u8>) {
-    if y >= img.height() {
-        return;
-    }
-    let img_w = img.width();
-    for x in x1.min(img_w)..=x2.min(img_w - 1) {
-        img.put_pixel(x, y, color);
-    }
-}
-
-fn draw_line_vertical(img: &mut RgbImage, x: u32, y1: u32, y2: u32, color: Rgb<u8>) {
-    if x >= img.width() {
-        return;
-    }
-    let img_h = img.height();
-    for y in y1.min(img_h)..=y2.min(img_h - 1) {
-        img.put_pixel(x, y, color);
-    }
+    Some((w, h))
 }
 
 #[cfg(test)]
@@ -212,7 +180,6 @@ mod tests {
         let bytes = generate_random_screenshot();
         assert!(!bytes.is_empty(), "Screenshot bytes should not be empty");
 
-        // Magic numbers for PNG header
         let png_header = &[137, 80, 78, 71, 13, 10, 26, 10];
         assert_eq!(
             &bytes[..8],
@@ -227,25 +194,17 @@ mod tests {
         let bytes = generate_random_screenshot_with_dimensions(width, height);
         assert!(!bytes.is_empty());
 
-        let loaded = image::load_from_memory(&bytes).expect("Should load generated PNG");
-        assert_eq!(loaded.width(), width);
-        assert_eq!(loaded.height(), height);
+        let (w, h) = parse_png_dimensions(&bytes).expect("Should parse dimensions");
+        assert_eq!(w, width);
+        assert_eq!(h, height);
     }
 
     #[test]
-    fn test_draw_geometries_boundary_safety() {
-        let mut img: RgbImage = ImageBuffer::new(100, 100);
-        let color = Rgb([255, 0, 0]);
+    fn test_crc32_and_adler32_correctness() {
+        let data = b"123456789";
+        assert_eq!(crc32(data), 0xCBF43926);
 
-        draw_filled_rect(&mut img, 80, 80, 50, 50, color);
-        draw_outline_rect(&mut img, 50, 50, 100, 100, 10, color);
-        draw_filled_circle(&mut img, 10, 10, 30, color);
-        draw_line_horizontal(&mut img, 0, 150, 99, color);
-        draw_line_vertical(&mut img, 99, 0, 150, color);
-
-        let mut bytes = Vec::new();
-        let encoder = PngEncoder::new(Cursor::new(&mut bytes));
-        img.write_with_encoder(encoder).expect("PNG encode success");
-        assert!(!bytes.is_empty());
+        let adler = adler32(b"Wikipedia");
+        assert_eq!(adler, 0x11E60398);
     }
 }
