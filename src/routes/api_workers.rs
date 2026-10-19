@@ -721,6 +721,27 @@ pub async fn post_step_result_handler(
             );
         }
 
+        if let Some(ref key) = payload.screenshot_object_key
+            && let Err(e) = sqlx::query(
+                r#"
+            INSERT INTO step_screenshots (step_id, object_storage_key, width, height)
+            VALUES ($1, $2, 1920, 1080)
+            ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key
+            "#,
+            )
+            .bind(payload.step_id)
+            .bind(key)
+            .execute(&mut *tx)
+            .await
+        {
+            tracing::error!(
+                task_run_id = task_run_id,
+                step_id = payload.step_id,
+                "Failed to upsert step_screenshots on step result: {}",
+                e
+            );
+        }
+
         tx.commit().await?;
         tracing::warn!(
             worker_id = worker.id,

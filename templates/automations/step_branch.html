@@ -91,7 +91,9 @@
                 {% for bm in bitmaps %}
                     {% if bm.is_selected(reference_bitmap_id) %}
                         <div style="margin-top: 0.5rem; text-align: center;">
-                            <img src="/media/images/{{ bm.object_storage_key }}" alt="Reference Preview" style="max-width: 120px; max-height: 80px; border: 1px solid var(--color-border); border-radius: 4px; object-fit: contain;">
+                            <a href="/media/bitmaps/{{ bm.id }}" target="_blank" title="View reference bitmap">
+                                <img src="/media/bitmaps/{{ bm.id }}" alt="Reference Preview" style="max-width: 120px; max-height: 80px; border: 1px solid var(--color-border); border-radius: 4px; object-fit: contain;">
+                            </a>
                         </div>
                     {% endif %}
                 {% endfor %}

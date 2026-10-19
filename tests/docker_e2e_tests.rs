@@ -140,7 +140,10 @@ async fn wait_for_stack_ready(client: &reqwest::Client, base_url: &str) {
                 );
             }
         } else {
-            println!("[E2E TEST] Polling /readyz connection attempt {} failed...", poll_attempts);
+            println!(
+                "[E2E TEST] Polling /readyz connection attempt {} failed...",
+                poll_attempts
+            );
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
