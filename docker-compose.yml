@@ -131,7 +131,7 @@ services:
       SERVER_URL: http://app:3000
       DATABASE_URL: postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch
       UNATTENDED_REGISTRATION_PSK: deskdispatch_psk_prod_secret_1234
-    entrypoint: ["/app/worker-simulator", "--server-url", "http://app:3000", "--database-url", "postgres://postgres:deskdispatch_db_prod_secret_9823@postgres:5432/deskdispatch", "-c", "2"]
+    entrypoint: ["/app/worker-simulator", "--server-url", "http://app:3000", "-c", "2", "--profile", "normal"]
     logging:
       driver: "json-file"
       options:

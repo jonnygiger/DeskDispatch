@@ -33,6 +33,10 @@ pub struct SimCliArgs {
     /// Override worker profile (mixed, normal, flaky, power_outage, laggy_network, outdated_agent)
     #[arg(long, default_value = "mixed")]
     pub profile: String,
+
+    /// Optional database connection URL (accepted for backwards compatibility and ignored)
+    #[arg(long, hide = true, env = "DATABASE_URL")]
+    pub database_url: Option<String>,
 }
 
 #[cfg(test)]

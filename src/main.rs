@@ -139,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: config.clone(),
         rate_limiter: LoginRateLimiter::default(),
         task_queue_notifier: tx_notify.clone(),
-        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
     };
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
