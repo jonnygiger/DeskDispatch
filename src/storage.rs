@@ -533,23 +533,6 @@ pub fn generate_presigned_post_policy(
     })
 }
 
-fn rewrite_url_with_public_endpoint(
-    url: String,
-    internal_endpoint: Option<&str>,
-    public_endpoint: Option<&str>,
-) -> String {
-    let (Some(internal_ep), Some(public_ep)) = (internal_endpoint, public_endpoint) else {
-        return url;
-    };
-    let clean_internal = internal_ep.trim_end_matches('/');
-    let clean_public = public_ep.trim_end_matches('/');
-    if let Some(rest) = url.strip_prefix(clean_internal) {
-        format!("{}{}", clean_public, rest)
-    } else {
-        url
-    }
-}
-
 /// Storage service wrapper for S3 / RustFS operations.
 #[derive(Clone, Debug)]
 pub struct StorageService {
@@ -1180,16 +1163,5 @@ mod tests {
         assert_eq!(objects[0].size, 12345);
         assert_eq!(objects[1].key, "tmp/item2.png");
         assert_eq!(objects[1].size, 67890);
-    }
-
-    #[test]
-    fn test_rewrite_url_with_public_endpoint() {
-        let url = "http://minio.internal:9000/bucket/key.png?sig=123".to_string();
-        let rewritten = rewrite_url_with_public_endpoint(
-            url.clone(),
-            Some("http://minio.internal:9000/"),
-            Some("https://s3.public.com/"),
-        );
-        assert_eq!(rewritten, "https://s3.public.com/bucket/key.png?sig=123");
     }
 }
