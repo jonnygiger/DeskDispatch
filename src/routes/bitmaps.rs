@@ -1191,6 +1191,20 @@ async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<V
     None
 }
 
+/// Encodes raw 8-bit RGB pixel bytes into PNG format using the `png` crate.
+pub fn encode_png(width: u32, height: u32, rgb_pixels: &[u8]) -> Vec<u8> {
+    let width = width.max(1);
+    let height = height.max(1);
+    let mut out_bytes = Vec::with_capacity((width * height * 3) as usize + 64);
+    let mut encoder = png::Encoder::new(&mut out_bytes, width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    if let Ok(mut writer) = encoder.write_header() {
+        let _ = writer.write_image_data(rgb_pixels);
+    }
+    out_bytes
+}
+
 /// Helper to load source image bytes, crop to (tl_x, tl_y, crop_w, crop_h), and return PNG bytes.
 async fn crop_image_region(
     state: &AppState,
@@ -1204,29 +1218,63 @@ async fn crop_image_region(
     let crop_h = crop_h.max(1);
 
     if let Some(bytes) = fetch_source_image_bytes(state, image_url).await {
-        if let Ok(img) = image::load_from_memory(&bytes) {
-            let cropped = img.crop_imm(tl_x, tl_y, crop_w, crop_h);
-            let mut out_bytes = Vec::with_capacity((crop_w * crop_h * 4) as usize);
-            let mut cursor = std::io::Cursor::new(&mut out_bytes);
-            if cropped
-                .write_to(&mut cursor, image::ImageFormat::Png)
-                .is_ok()
-            {
-                return out_bytes;
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+
+        if let Ok(mut reader) = decoder.read_info() {
+            let mut buf = vec![0; reader.output_buffer_size().unwrap_or_else(|| reader.info().raw_bytes())];
+            if let Ok(info) = reader.next_frame(&mut buf) {
+                let src_w = info.width;
+                let src_h = info.height;
+                let bytes_per_pixel = match info.color_type {
+                    png::ColorType::Rgb => 3,
+                    png::ColorType::Rgba => 4,
+                    png::ColorType::Grayscale => 1,
+                    png::ColorType::GrayscaleAlpha => 2,
+                    _ => 3,
+                };
+
+                let mut cropped = Vec::with_capacity((crop_w * crop_h * 3) as usize);
+                for y in 0..crop_h {
+                    let sy = tl_y.saturating_add(y).min(src_h.saturating_sub(1));
+                    for x in 0..crop_w {
+                        let sx = tl_x.saturating_add(x).min(src_w.saturating_sub(1));
+                        let idx = ((sy * src_w + sx) as usize) * bytes_per_pixel;
+                        if idx + bytes_per_pixel <= buf.len() {
+                            let px = &buf[idx..idx + bytes_per_pixel];
+                            match bytes_per_pixel {
+                                3 => cropped.extend_from_slice(px),
+                                4 => cropped.extend_from_slice(&px[..3]),
+                                1 | 2 => {
+                                    cropped.push(px[0]);
+                                    cropped.push(px[0]);
+                                    cropped.push(px[0]);
+                                }
+                                _ => cropped.extend_from_slice(&[0, 0, 0]),
+                            }
+                        } else {
+                            cropped.extend_from_slice(&[0, 0, 0]);
+                        }
+                    }
+                }
+
+                return encode_png(crop_w, crop_h, &cropped);
             }
         }
     }
 
     // Fallback: Generate a placeholder PNG of size crop_w x crop_h
-    let img_buf = image::RgbImage::from_fn(crop_w, crop_h, |x, y| {
-        let r = ((x * 255) / crop_w) as u8;
+    let mut fallback_pixels = Vec::with_capacity((crop_w * crop_h * 3) as usize);
+    for y in 0..crop_h {
         let g = ((y * 255) / crop_h) as u8;
-        image::Rgb([r, g, 180])
-    });
-    let mut out_bytes = Vec::with_capacity((crop_w * crop_h * 3) as usize);
-    let mut cursor = std::io::Cursor::new(&mut out_bytes);
-    let _ = image::DynamicImage::ImageRgb8(img_buf).write_to(&mut cursor, image::ImageFormat::Png);
-    out_bytes
+        for x in 0..crop_w {
+            let r = ((x * 255) / crop_w) as u8;
+            fallback_pixels.push(r);
+            fallback_pixels.push(g);
+            fallback_pixels.push(180);
+        }
+    }
+    encode_png(crop_w, crop_h, &fallback_pixels)
 }
 
 #[tracing::instrument(skip(state, user, form))]
@@ -1455,6 +1503,25 @@ mod tests {
         // Boundary clamping near native max
         let (nx_max, ny_max) = map_grid_click_to_native(319, 319, 1918, 1078, 1920, 1080);
         assert_eq!((nx_max, ny_max), (1919, 1079));
+    }
+
+    #[test]
+    fn test_png_encoder_and_header_parsing() {
+        let (width, height) = (10u32, 10u32);
+        let mut original_pixels = Vec::with_capacity((width * height * 3) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                original_pixels.push((x * 20) as u8);
+                original_pixels.push((y * 20) as u8);
+                original_pixels.push(100);
+            }
+        }
+
+        let png_bytes = encode_png(width, height, &original_pixels);
+        assert!(!png_bytes.is_empty());
+
+        let parsed_dims = parse_png_dimensions(&png_bytes);
+        assert_eq!(parsed_dims, Some((10, 10)));
     }
 
     #[test]

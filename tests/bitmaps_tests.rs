@@ -302,15 +302,12 @@ async fn test_bitmap_upload_flow() {
         admin_id,
         uuid::Uuid::new_v4().simple()
     );
-    let img_buf = image::RgbImage::from_fn(10, 10, |_, _| image::Rgb([255, 0, 0]));
-    let mut png_bytes = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgb8(img_buf)
-        .write_to(&mut png_bytes, image::ImageFormat::Png)
-        .unwrap();
+    let red_pixels = [255, 0, 0].repeat(10 * 10);
+    let png_bytes = deskdispatch::routes::bitmaps::encode_png(10, 10, &red_pixels);
 
     let _ = state
         .storage_service()
-        .put_object(&test_key, png_bytes.into_inner(), "image/png")
+        .put_object(&test_key, png_bytes, "image/png")
         .await;
 
     // 3. Admin GET /bitmaps/commit callback -> 200 OK rendering confirmation page (BitmapsConfirmTemplate)
