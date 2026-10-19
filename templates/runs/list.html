@@ -66,6 +66,7 @@
         <table class="table">
             <thead>
                 <tr>
+                    <th style="width: 70px;">Preview</th>
                     <th>Run ID</th>
                     <th>Automation</th>
                     <th>Worker</th>
@@ -79,6 +80,15 @@
             <tbody>
                 {% for run in runs %}
                 <tr>
+                    <td>
+                        {% if let Some(sid) = run.screenshot_step_id %}
+                            <a href="/media/screenshots/{{ sid }}" target="_blank" title="View latest run screenshot">
+                                <img src="/media/screenshots/{{ sid }}" alt="Run #{{ run.id }} screenshot preview" style="width: 50px; height: 32px; border-radius: 4px; object-fit: cover; border: 1px solid var(--color-border);">
+                            </a>
+                        {% else %}
+                            <div style="width: 50px; height: 32px; border-radius: 4px; background: var(--color-bg-secondary); border: 1px solid var(--color-border); display: flex; align-items: center; justify-content: center; font-size: 0.65rem; color: var(--color-text-muted);">No View</div>
+                        {% endif %}
+                    </td>
                     <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
                     <td><a href="/automations/{{ run.automation_id }}">{{ run.automation_name }}</a></td>
                     <td>

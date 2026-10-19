@@ -682,6 +682,84 @@ pub async fn post_recording_convert_handler(
                     current_position += 10.0;
                 }
             }
+            "find_pixel_rgb" => {
+                if let Ok(step_id) = sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO automation_steps (automation_id, position, step_type, post_delay_ms) VALUES ($1, $2, 'find_pixel_rgb', 0) RETURNING id",
+                )
+                .bind(new_automation_id)
+                .bind(current_position)
+                .fetch_one(&mut *tx)
+                .await
+                {
+                    last_created_step_id = Some(step_id);
+
+                    let _ = sqlx::query(
+                        "INSERT INTO step_find_pixel_rgb (step_id, x, y) VALUES ($1, $2, $3)",
+                    )
+                    .bind(step_id)
+                    .bind(event.x.unwrap_or(0))
+                    .bind(event.y.unwrap_or(0))
+                    .execute(&mut *tx)
+                    .await;
+
+                    if let Some(ref key) = event.screenshot_object_key {
+                        let _ = sqlx::query(
+                            "INSERT INTO step_screenshots (step_id, object_storage_key, width, height) VALUES ($1, $2, 1920, 1080) ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key",
+                        )
+                        .bind(step_id)
+                        .bind(key)
+                        .execute(&mut *tx)
+                        .await;
+                    }
+
+                    current_position += 10.0;
+                }
+            }
+            "find_bitmap" => {
+                // If reference bitmap exists or default first bitmap
+                let bm_id_opt: Option<i64> = sqlx::query_scalar(
+                    "SELECT id FROM bitmaps WHERE automation_id = $1 OR automation_id IS NULL ORDER BY id ASC LIMIT 1",
+                )
+                .bind(new_automation_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .ok()
+                .flatten();
+
+                if let Some(bm_id) = bm_id_opt
+                    && let Ok(step_id) = sqlx::query_scalar::<_, i64>(
+                        "INSERT INTO automation_steps (automation_id, position, step_type, post_delay_ms) VALUES ($1, $2, 'find_bitmap', 0) RETURNING id",
+                    )
+                    .bind(new_automation_id)
+                    .bind(current_position)
+                    .fetch_one(&mut *tx)
+                    .await
+                {
+                    last_created_step_id = Some(step_id);
+
+                    let _ = sqlx::query(
+                        "INSERT INTO step_find_bitmap (step_id, reference_bitmap_id, search_x, search_y) VALUES ($1, $2, $3, $4)",
+                    )
+                    .bind(step_id)
+                    .bind(bm_id)
+                    .bind(event.x)
+                    .bind(event.y)
+                    .execute(&mut *tx)
+                    .await;
+
+                    if let Some(ref key) = event.screenshot_object_key {
+                        let _ = sqlx::query(
+                            "INSERT INTO step_screenshots (step_id, object_storage_key, width, height) VALUES ($1, $2, 1920, 1080) ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key",
+                        )
+                        .bind(step_id)
+                        .bind(key)
+                        .execute(&mut *tx)
+                        .await;
+                    }
+
+                    current_position += 10.0;
+                }
+            }
             "screenshot" => {
                 if let Some(ref key) = event.screenshot_object_key
                     && let Some(step_id) = last_created_step_id

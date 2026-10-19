@@ -148,16 +148,31 @@
     {% else %}
         {% for step in steps %}
         <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <div style="font-weight: 600; font-size: 1rem; margin-bottom: 0.25rem;">
-                    Step {{ step.step_number }} —
-                    {% if let Some(lbl) = step.label %}
-                        <strong>{{ lbl }}</strong>:
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="flex-shrink: 0;">
+                    {% if step.screenshot_key.is_some() %}
+                        <a href="/media/screenshots/{{ step.id }}" target="_blank" title="View step reference screenshot">
+                            <img src="/media/screenshots/{{ step.id }}" alt="Screenshot thumbnail for step {{ step.step_number }}" style="width: 80px; height: 50px; border-radius: 4px; object-fit: cover; border: 1px solid var(--color-border);">
+                        </a>
+                    {% else if let Some(bm_id) = step.reference_bitmap_id %}
+                        <a href="/media/bitmaps/{{ bm_id }}" target="_blank" title="View reference bitmap">
+                            <img src="/media/bitmaps/{{ bm_id }}" alt="Bitmap thumbnail for step {{ step.step_number }}" style="width: 80px; height: 50px; border-radius: 4px; object-fit: contain; background: var(--color-bg-secondary); border: 1px solid var(--color-border);">
+                        </a>
+                    {% else %}
+                        <div style="width: 80px; height: 50px; border-radius: 4px; background: var(--color-bg-secondary); border: 1px solid var(--color-border); display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: var(--color-text-muted);">No View</div>
                     {% endif %}
-                    {{ step.description }}{{ step.formatted_post_delay() }}
                 </div>
-                <div style="font-size: 0.8125rem; color: var(--color-text-muted);">
-                    Type: <code>{{ step.step_type }}</code> | Position: {{ step.position }}
+                <div>
+                    <div style="font-weight: 600; font-size: 1rem; margin-bottom: 0.25rem;">
+                        Step {{ step.step_number }} —
+                        {% if let Some(lbl) = step.label %}
+                            <strong>{{ lbl }}</strong>:
+                        {% endif %}
+                        {{ step.description }}{{ step.formatted_post_delay() }}
+                    </div>
+                    <div style="font-size: 0.8125rem; color: var(--color-text-muted);">
+                        Type: <code>{{ step.step_type }}</code> | Position: {{ step.position }}
+                    </div>
                 </div>
             </div>
             {% if user.role.can_edit() %}
