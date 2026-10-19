@@ -133,58 +133,14 @@ pub fn escape_css_url<'a>(url: &'a str) -> Cow<'a, str> {
     Cow::Owned(escaped)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ImageMagnifierData {
-    presigned_url: String,
-    native_w: u32,
-    native_h: u32,
-    target_x: Option<u32>,
-    target_y: Option<u32>,
-}
-
-impl From<ImageMagnifierData> for ImageMagnifier {
-    fn from(data: ImageMagnifierData) -> Self {
-        Self::new(
-            data.presigned_url,
-            data.native_w,
-            data.native_h,
-            data.target_x,
-            data.target_y,
-        )
-    }
-}
-
-impl From<ImageMagnifier> for ImageMagnifierData {
-    fn from(mag: ImageMagnifier) -> Self {
-        ImageMagnifierData {
-            presigned_url: mag.presigned_url,
-            native_w: mag.native_w,
-            native_h: mag.native_h,
-            target_x: mag.target_x,
-            target_y: mag.target_y,
-        }
-    }
-}
-
-/// ImageMagnifier struct representing the three-panel image magnifier component settings and pre-computed calculations.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(from = "ImageMagnifierData", into = "ImageMagnifierData")]
+/// ImageMagnifier struct representing the three-panel image magnifier component settings and calculations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageMagnifier {
     pub presigned_url: String,
-    pub escaped_url: String,
     pub native_w: u32,
     pub native_h: u32,
     pub target_x: Option<u32>,
     pub target_y: Option<u32>,
-    pub zoom400_bg_w: u32,
-    pub zoom400_bg_h: u32,
-    pub zoom400_pan_x: f64,
-    pub zoom400_pan_y: f64,
-    pub grid_bg_w: u32,
-    pub grid_bg_h: u32,
-    pub grid_pan_x: f64,
-    pub grid_pan_y: f64,
-    pub normal_marker_css: String,
 }
 
 impl ImageMagnifier {
@@ -195,59 +151,12 @@ impl ImageMagnifier {
         target_x: Option<u32>,
         target_y: Option<u32>,
     ) -> Self {
-        let presigned_url = presigned_url.into();
-        let escaped_url = escape_css_url(&presigned_url).into_owned();
-
-        let show_marker = target_x.is_some() && target_y.is_some() && native_w > 0 && native_h > 0;
-
-        let (tx, ty) = match (target_x, target_y) {
-            (Some(x), Some(y)) => (x as f64, y as f64),
-            _ => (native_w as f64 / 2.0, native_h as f64 / 2.0),
-        };
-
-        let normal_marker_css = if show_marker {
-            match ViewportFit::compute(600.0, 340.0, native_w, native_h) {
-                Some(fit) => fit.marker_style(tx, ty),
-                None => String::new(),
-            }
-        } else {
-            String::new()
-        };
-
-        let zoom400_bg_w = native_w * 4;
-        let zoom400_bg_h = native_h * 4;
-
-        let (zoom400_pan_x, zoom400_pan_y) = if native_w > 0 && native_h > 0 {
-            (160.0 - (tx * 4.0), 160.0 - (ty * 4.0))
-        } else {
-            (0.0, 0.0)
-        };
-
-        let grid_bg_w = native_w * 20;
-        let grid_bg_h = native_h * 20;
-
-        let (grid_pan_x, grid_pan_y) = if native_w > 0 && native_h > 0 {
-            (160.0 - (tx * 20.0 + 10.0), 160.0 - (ty * 20.0 + 10.0))
-        } else {
-            (0.0, 0.0)
-        };
-
         Self {
-            presigned_url,
-            escaped_url,
+            presigned_url: presigned_url.into(),
             native_w,
             native_h,
             target_x,
             target_y,
-            zoom400_bg_w,
-            zoom400_bg_h,
-            zoom400_pan_x,
-            zoom400_pan_y,
-            grid_bg_w,
-            grid_bg_h,
-            grid_pan_x,
-            grid_pan_y,
-            normal_marker_css,
         }
     }
 
@@ -256,32 +165,59 @@ impl ImageMagnifier {
         self.target_x.is_some() && self.target_y.is_some() && self.native_w > 0 && self.native_h > 0
     }
 
+    #[inline]
+    pub fn escaped_url(&self) -> Cow<'_, str> {
+        escape_css_url(&self.presigned_url)
+    }
+
     /// Background style for normal panel (1x scale, viewport 600x340 or calculated fit)
     pub fn normal_style(&self) -> String {
         format!(
             "background-image: url('{}'); background-size: contain; background-position: center;",
-            self.escaped_url
+            self.escaped_url()
         )
     }
 
     /// Marker style for normal panel
-    pub fn normal_marker_style(&self) -> &str {
-        &self.normal_marker_css
+    pub fn normal_marker_style(&self) -> String {
+        if self.show_marker() {
+            let (tx, ty) = match (self.target_x, self.target_y) {
+                (Some(x), Some(y)) => (x as f64, y as f64),
+                _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
+            };
+            match ViewportFit::compute(600.0, 340.0, self.native_w, self.native_h) {
+                Some(fit) => fit.marker_style(tx, ty),
+                None => String::new(),
+            }
+        } else {
+            String::new()
+        }
     }
 
     /// Background style for 400% (4x) zoom panel (viewport 320x320)
     pub fn zoom400_style(&self) -> String {
+        let (tx, ty) = match (self.target_x, self.target_y) {
+            (Some(x), Some(y)) => (x as f64, y as f64),
+            _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
+        };
+        let (bg_w, bg_h) = (self.native_w * 4, self.native_h * 4);
+        let (pan_x, pan_y) = if self.native_w > 0 && self.native_h > 0 {
+            (160.0 - (tx * 4.0), 160.0 - (ty * 4.0))
+        } else {
+            (0.0, 0.0)
+        };
         format!(
             "background-image: url('{}'); background-size: {}px {}px; background-position: {:.2}px {:.2}px;",
-            self.escaped_url,
-            self.zoom400_bg_w,
-            self.zoom400_bg_h,
-            self.zoom400_pan_x,
-            self.zoom400_pan_y
+            self.escaped_url(),
+            bg_w,
+            bg_h,
+            pan_x,
+            pan_y
         )
     }
 
     /// Marker style for 400% (4x) zoom panel (viewport 320x320)
+    #[inline]
     pub fn zoom400_marker_style(&self) -> &'static str {
         if self.show_marker() {
             "left: 160px; top: 160px;"
@@ -292,13 +228,28 @@ impl ImageMagnifier {
 
     /// CSS custom properties style for 20x pixel grid panel (viewport 320x320)
     pub fn grid_style(&self) -> String {
+        let (tx, ty) = match (self.target_x, self.target_y) {
+            (Some(x), Some(y)) => (x as f64, y as f64),
+            _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
+        };
+        let (bg_w, bg_h) = (self.native_w * 20, self.native_h * 20);
+        let (pan_x, pan_y) = if self.native_w > 0 && self.native_h > 0 {
+            (160.0 - (tx * 20.0 + 10.0), 160.0 - (ty * 20.0 + 10.0))
+        } else {
+            (0.0, 0.0)
+        };
         format!(
             "--grid-bg-url: url('{}'); --grid-bg-w: {}px; --grid-bg-h: {}px; --grid-pan-x: {:.2}px; --grid-pan-y: {:.2}px;",
-            self.escaped_url, self.grid_bg_w, self.grid_bg_h, self.grid_pan_x, self.grid_pan_y
+            self.escaped_url(),
+            bg_w,
+            bg_h,
+            pan_x,
+            pan_y
         )
     }
 
     /// Marker style for 20x pixel grid panel (viewport 320x320)
+    #[inline]
     pub fn grid_marker_style(&self) -> &'static str {
         if self.show_marker() {
             "left: 160px; top: 160px;"
@@ -342,8 +293,16 @@ mod tests {
             serde_json::from_str(&json_str).expect("Deserialization succeeds");
 
         assert_eq!(mag, deserialized);
-        assert_eq!(deserialized.zoom400_bg_w, 1920 * 4);
-        assert_eq!(deserialized.grid_bg_w, 1920 * 20);
+        assert!(
+            deserialized
+                .zoom400_style()
+                .contains("background-size: 7680px 4320px")
+        );
+        assert!(
+            deserialized
+                .grid_style()
+                .contains("--grid-bg-w: 38400px; --grid-bg-h: 21600px;")
+        );
         assert!(deserialized.show_marker());
     }
 

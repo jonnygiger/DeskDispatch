@@ -1222,7 +1222,12 @@ async fn crop_image_region(
         decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
 
         if let Ok(mut reader) = decoder.read_info() {
-            let mut buf = vec![0; reader.output_buffer_size().unwrap_or_else(|| reader.info().raw_bytes())];
+            let mut buf = vec![
+                0;
+                reader
+                    .output_buffer_size()
+                    .unwrap_or_else(|| reader.info().raw_bytes())
+            ];
             if let Ok(info) = reader.next_frame(&mut buf) {
                 let src_w = info.width;
                 let src_h = info.height;

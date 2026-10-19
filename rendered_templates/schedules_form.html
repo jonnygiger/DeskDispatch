@@ -77,8 +77,8 @@
 
         <div style="margin-bottom: 1.25rem;">
             <label for="cron_expression" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Cron Expression *</label>
-            <input type="text" name="cron_expression" id="cron_expression" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; font-family: monospace;" value="0 9 * * MON-FRI" placeholder="0 9 * * MON-FRI" required />
-            <small style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
+            <input type="text" name="cron_expression" id="cron_expression" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; font-family: monospace;" value="0 9 * * MON-FRI" placeholder="0 9 * * MON-FRI" required aria-describedby="cron-expression-help" />
+            <small id="cron-expression-help" style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
                 Standard 5-field cron syntax (min hour day month weekday). Examples:
                 <code>0 9 * * MON-FRI</code> = weekdays at 9am,
                 <code>0 0 * * *</code> = daily at midnight,
@@ -105,20 +105,20 @@
 
         <div style="margin-bottom: 1.25rem;">
             <label for="overlap_policy" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Overlap Policy</label>
-            <select name="overlap_policy" id="overlap_policy" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
+            <select name="overlap_policy" id="overlap_policy" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" aria-describedby="overlap-policy-help">
                 <option value="allow" selected>Allow (always queue when due)</option>
                 <option value="skip" >Skip (do not queue if run is active)</option>
                 <option value="queue" >Queue (enqueue regardless)</option>
             </select>
-            <small style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
+            <small id="overlap-policy-help" style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
                 Determines how to handle due schedules when a previous task run for this schedule is still active.
             </small>
         </div>
 
         <div style="margin-bottom: 1.25rem;">
             <label for="max_queue_age_secs" style="display: block; font-weight: 500; margin-bottom: 0.35rem;">Max Queue Age (Seconds)</label>
-            <input type="number" name="max_queue_age_secs" id="max_queue_age_secs" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" value="3600" placeholder="e.g. 3600 (optional)" min="1" />
-            <small style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
+            <input type="number" name="max_queue_age_secs" id="max_queue_age_secs" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" value="3600" placeholder="e.g. 3600 (optional)" min="1" aria-describedby="max-queue-age-help" />
+            <small id="max-queue-age-help" style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
                 If a schedule is delayed longer than this threshold (e.g. workers offline), the run expires instead of piling up.
             </small>
         </div>
@@ -130,8 +130,8 @@
             </div>
             <div>
                 <label for="wol_warmup_secs" style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.25rem;">Warm-up Time (Seconds)</label>
-                <input type="number" name="wol_warmup_secs" id="wol_warmup_secs" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" value="300" min="0" placeholder="e.g. 300 for 5 minutes" />
-                <small style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
+                <input type="number" name="wol_warmup_secs" id="wol_warmup_secs" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" value="300" min="0" placeholder="e.g. 300 for 5 minutes" aria-describedby="wol-warmup-help" />
+                <small id="wol-warmup-help" style="display: block; margin-top: 0.35rem; color: var(--color-text-muted); font-size: 0.8125rem;">
                     Sends WOL magic packets to target worker MAC address(es) this many seconds in advance of the scheduled execution time.
                 </small>
             </div>
