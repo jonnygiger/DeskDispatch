@@ -177,4 +177,63 @@ mod tests {
         );
         assert_eq!(extracted.level, FlashLevel::Error);
     }
+
+    #[test]
+    fn test_url_decode_edge_cases() {
+        // Truncated percent escapes
+        assert_eq!(url_decode("hello%"), None);
+        assert_eq!(url_decode("hello%2"), None);
+
+        // Invalid hex characters
+        assert_eq!(url_decode("hello%2G"), None);
+        assert_eq!(url_decode("hello%G2"), None);
+
+        // Invalid UTF-8 byte sequences
+        assert_eq!(url_decode("%FF%FE"), None);
+
+        // Plus-sign to space conversion and lowercase hex digits
+        assert_eq!(
+            url_decode("hello+world%2fslash"),
+            Some("hello world/slash".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_flash_message_edge_cases() {
+        // Missing cookie header
+        let empty_headers = HeaderMap::new();
+        assert_eq!(extract_flash_message(&empty_headers), None);
+
+        // Flash message without explicit level defaults to FlashLevel::Info
+        let mut info_headers = HeaderMap::new();
+        info_headers.insert(
+            axum::http::header::COOKIE,
+            "flash_msg=System%20notification".parse().unwrap(),
+        );
+        let extracted_info = extract_flash_message(&info_headers).unwrap();
+        assert_eq!(extracted_info.message, "System notification");
+        assert_eq!(extracted_info.level, FlashLevel::Info);
+
+        // Unrecognized flash level cookie value falls back to FlashLevel::Info
+        let mut unknown_level_headers = HeaderMap::new();
+        unknown_level_headers.insert(
+            axum::http::header::COOKIE,
+            "flash_msg=Test; flash_level=unknown".parse().unwrap(),
+        );
+        let extracted_unknown = extract_flash_message(&unknown_level_headers).unwrap();
+        assert_eq!(extracted_unknown.message, "Test");
+        assert_eq!(extracted_unknown.level, FlashLevel::Info);
+
+        // FlashMessage::info constructor check
+        let flash_info = FlashMessage::info("Informational notice");
+        assert_eq!(flash_info.level, FlashLevel::Info);
+        assert_eq!(flash_info.message, "Informational notice");
+
+        // clear_flash_cookie formatting
+        let (c1, c2) = clear_flash_cookie();
+        assert!(c1.contains("flash_msg=;"));
+        assert!(c1.contains("Max-Age=0"));
+        assert!(c2.contains("flash_level=;"));
+        assert!(c2.contains("Max-Age=0"));
+    }
 }

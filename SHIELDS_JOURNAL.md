@@ -43,3 +43,7 @@ Action: Test username case insensitivity, selective user attempt resetting (`cle
 ## 2025-03-20 Dotenv Line Parsing Edge Cases Coverage
 Learning: Zero-dependency `.env` parsing (`parse_dotenv_content`) handles complex string inputs (comments with leading whitespace, key/value surrounding whitespace, empty values, single/double empty quotes, mismatched quotes, single character quotes, and values with multiple equals signs).
 Action: Test `.env` line parsing edge cases directly with multi-line string fixtures in `src/config.rs` unit tests without touching disk or process environment variables.
+
+## 2025-03-21 URL Decoding & Flash Message Extraction Edge Cases Coverage
+Learning: `url_decode` in `src/auth/flash.rs` returns `None` when encountering truncated percent escapes (e.g. `"hello%"`, `"hello%2"`), invalid hex escape digits (e.g. `"hello%2G"`), or invalid UTF-8 byte sequences (e.g. `"%FF%FE"`), while `extract_flash_message` defaults level to `FlashLevel::Info` when the `flash_level` cookie is absent or contains an unrecognized string value.
+Action: Unit test `url_decode` boundary inputs, missing header options, default level fallbacks, and clear cookie formatting directly in `src/auth/flash.rs`.
