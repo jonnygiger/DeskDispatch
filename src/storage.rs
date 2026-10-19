@@ -812,7 +812,11 @@ impl StorageService {
         object_key: &str,
         expires_in: Duration,
     ) -> Result<String, StorageError> {
-        let url = generate_presigned_url(
+        let endpoint_url = self
+            .public_endpoint_url
+            .as_deref()
+            .or(self.endpoint_url.as_deref());
+        generate_presigned_url(
             "GET",
             &self.bucket,
             object_key,
@@ -820,13 +824,8 @@ impl StorageService {
             &self.access_key,
             &self.secret_key,
             &self.region,
-            self.endpoint_url.as_deref(),
-        )?;
-        Ok(rewrite_url_with_public_endpoint(
-            url,
-            self.endpoint_url.as_deref(),
-            self.public_endpoint_url.as_deref(),
-        ))
+            endpoint_url,
+        )
     }
 
     /// Generates a presigned PUT URL for worker node file uploads in S3 / RustFS with the given expiration duration.
@@ -836,7 +835,11 @@ impl StorageService {
         object_key: &str,
         expires_in: Duration,
     ) -> Result<String, StorageError> {
-        let url = generate_presigned_url(
+        let endpoint_url = self
+            .public_endpoint_url
+            .as_deref()
+            .or(self.endpoint_url.as_deref());
+        generate_presigned_url(
             "PUT",
             &self.bucket,
             object_key,
@@ -844,13 +847,8 @@ impl StorageService {
             &self.access_key,
             &self.secret_key,
             &self.region,
-            self.endpoint_url.as_deref(),
-        )?;
-        Ok(rewrite_url_with_public_endpoint(
-            url,
-            self.endpoint_url.as_deref(),
-            self.public_endpoint_url.as_deref(),
-        ))
+            endpoint_url,
+        )
     }
 
     /// Generates a presigned POST policy for browser-direct file uploads in S3 / RustFS.
@@ -1003,12 +1001,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_presigned_get_url() {
-        let storage = StorageService::new("test-bucket").with_credentials(
-            "test_access_key",
-            "test_secret_key",
-            "us-east-1",
-            Some("http://localhost:9000"),
-        );
+        let storage = StorageService::new("test-bucket")
+            .with_credentials(
+                "test_access_key",
+                "test_secret_key",
+                "us-east-1",
+                Some("http://rustfs:9000"),
+            )
+            .with_public_endpoint(Some("http://localhost:9000"));
 
         assert_eq!(storage.bucket(), "test-bucket");
 
@@ -1023,16 +1023,40 @@ mod tests {
         assert!(url.contains("http://localhost:9000/test-bucket/screenshots/step_123.png"));
         assert!(url.contains("X-Amz-Expires=900"));
         assert!(url.contains("X-Amz-Signature="));
-    }
 
-    #[tokio::test]
-    async fn test_generate_presigned_put_url() {
-        let storage = StorageService::new("test-bucket").with_credentials(
+        // Verify the signature calculation used the public endpoint host (localhost:9000)
+        let direct_url = generate_presigned_url(
+            "GET",
+            "test-bucket",
+            object_key,
+            expires_in,
             "test_access_key",
             "test_secret_key",
             "us-east-1",
             Some("http://localhost:9000"),
-        );
+        )
+        .unwrap();
+
+        let extract_sig = |u: &str| {
+            u.split("X-Amz-Signature=")
+                .nth(1)
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        assert_eq!(extract_sig(&url), extract_sig(&direct_url));
+    }
+
+    #[tokio::test]
+    async fn test_generate_presigned_put_url() {
+        let storage = StorageService::new("test-bucket")
+            .with_credentials(
+                "test_access_key",
+                "test_secret_key",
+                "us-east-1",
+                Some("http://rustfs:9000"),
+            )
+            .with_public_endpoint(Some("http://localhost:9000"));
 
         assert_eq!(storage.bucket(), "test-bucket");
 
@@ -1047,6 +1071,28 @@ mod tests {
         assert!(url.contains("http://localhost:9000/test-bucket/uploads/worker_run_456.png"));
         assert!(url.contains("X-Amz-Expires=600"));
         assert!(url.contains("X-Amz-Signature="));
+
+        // Verify the signature calculation used the public endpoint host (localhost:9000)
+        let direct_url = generate_presigned_url(
+            "PUT",
+            "test-bucket",
+            object_key,
+            expires_in,
+            "test_access_key",
+            "test_secret_key",
+            "us-east-1",
+            Some("http://localhost:9000"),
+        )
+        .unwrap();
+
+        let extract_sig = |u: &str| {
+            u.split("X-Amz-Signature=")
+                .nth(1)
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        assert_eq!(extract_sig(&url), extract_sig(&direct_url));
     }
 
     #[test]
