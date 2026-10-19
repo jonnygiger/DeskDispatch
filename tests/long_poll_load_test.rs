@@ -31,12 +31,17 @@ impl Drop for WorkerCleanupGuard {
     fn drop(&mut self) {
         let pool = self.pool.clone();
         let prefix = format!("{}%", self.host_prefix);
-        tokio::task::spawn(async move {
-            let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE hostname LIKE $1")
-                .bind(prefix)
-                .execute(&pool)
-                .await;
-        });
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let _ = std::thread::spawn(move || {
+                handle.block_on(async move {
+                    let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE hostname LIKE $1")
+                        .bind(prefix)
+                        .execute(&pool)
+                        .await;
+                });
+            })
+            .join();
+        }
     }
 }
 
@@ -108,29 +113,36 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         host_prefix: host_prefix.clone(),
     };
 
-    // 1. Seed 300 distinct workers in task_worker_pcs
+    // 1. Batch seed 300 distinct workers in task_worker_pcs in a single query
     let num_workers = 300;
+    let hostnames: Vec<String> = (0..num_workers)
+        .map(|i| format!("{}-{}", host_prefix, i))
+        .collect();
+    let display_names: Vec<String> = (0..num_workers)
+        .map(|i| format!("Load Test Worker {}", i))
+        .collect();
+    let api_key_hashes: Vec<Vec<u8>> = vec![vec![0u8; 32]; num_workers];
+
+    let inserted_rows: Vec<(i64, String, String)> = sqlx::query_as(
+        r#"
+        INSERT INTO task_worker_pcs (hostname, display_name, status, api_key_hash)
+        SELECT u.hostname, u.display_name, 'idle', u.api_key_hash
+        FROM UNNEST($1::text[], $2::text[], $3::bytea[]) AS u(hostname, display_name, api_key_hash)
+        RETURNING id, hostname, display_name
+        "#,
+    )
+    .bind(&hostnames)
+    .bind(&display_names)
+    .bind(&api_key_hashes)
+    .fetch_all(&pool)
+    .await
+    .expect("Failed to batch insert test workers");
+
     let mut auth_workers = Vec::with_capacity(num_workers);
-
-    for i in 0..num_workers {
-        let hostname = format!("{}-{}", host_prefix, i);
-        let display_name = format!("Load Test Worker {}", i);
-        let worker_id: i64 = sqlx::query_scalar(
-            r#"
-            INSERT INTO task_worker_pcs (hostname, display_name, status, api_key_hash)
-            VALUES ($1, $2, 'idle', $3)
-            RETURNING id
-            "#,
-        )
-        .bind(&hostname)
-        .bind(&display_name)
-        .bind(vec![0u8; 32])
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to insert test worker");
-
+    let now = chrono::Utc::now();
+    for (id, hostname, display_name) in inserted_rows {
         auth_workers.push(WorkerAuth {
-            id: worker_id,
+            id,
             hostname,
             display_name,
             status: "idle".to_string(),
@@ -139,7 +151,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
             screen_height: None,
             os_info: None,
             agent_version: None,
-            created_at: chrono::Utc::now(),
+            created_at: now,
         });
     }
 
@@ -218,8 +230,18 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         handles_wake.push(handle);
     }
 
-    // Give workers a tiny window to enter long polling wait on broadcast channel
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Wait deterministically for all workers to subscribe to the task queue notifier before triggering wake notification
+    let wait_start = std::time::Instant::now();
+    while tx_notify.receiver_count() < num_workers {
+        if wait_start.elapsed() > Duration::from_secs(5) {
+            panic!(
+                "Timed out waiting for {} workers to subscribe to task queue notifier (active: {})",
+                num_workers,
+                tx_notify.receiver_count()
+            );
+        }
+        tokio::task::yield_now().await;
+    }
 
     // Send task queue notification to wake up long-polling workers
     let _ = tx_notify.send(());
