@@ -26,10 +26,6 @@ pub struct SimCliArgs {
     #[arg(long)]
     pub api_keys: Option<String>,
 
-    /// PostgreSQL Database URL for auto-seeding worker registration tokens
-    #[arg(long, env = "DATABASE_URL")]
-    pub database_url: Option<String>,
-
     /// Optional max simulation run duration in seconds
     #[arg(long)]
     pub duration_secs: Option<u64>,

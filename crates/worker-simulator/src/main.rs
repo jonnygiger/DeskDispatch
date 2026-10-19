@@ -6,7 +6,6 @@ use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use worker_simulator::cli::SimCliArgs;
-use worker_simulator::db_seeder::seed_workers_in_db;
 use worker_simulator::profile::WorkerProfile;
 use worker_simulator::worker::{SimulatedWorker, WorkerConfig};
 
@@ -31,25 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut reg_tokens: Vec<Option<String>> = vec![None; args.count];
     let mut api_keys: Vec<Option<String>> = vec![None; args.count];
 
-    if let Some(ref db_url) = args.database_url {
-        info!("Seeding {} test workers in database...", args.count);
-        match seed_workers_in_db(db_url, args.count).await {
-            Ok(tokens) => {
-                info!(
-                    "Successfully seeded {} registration tokens in DB",
-                    tokens.len()
-                );
-                for (i, tok) in tokens.into_iter().enumerate() {
-                    if i < args.count {
-                        reg_tokens[i] = Some(tok);
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Database seeder error: {}. Proceeding without DB seed.", e);
-            }
-        }
-    } else if let Some(ref tokens_str) = args.registration_tokens {
+    if let Some(ref tokens_str) = args.registration_tokens {
         let parsed_tokens: Vec<&str> = tokens_str.split(',').map(|s| s.trim()).collect();
         for (i, tok) in parsed_tokens.into_iter().enumerate() {
             if i < args.count && !tok.is_empty() {
