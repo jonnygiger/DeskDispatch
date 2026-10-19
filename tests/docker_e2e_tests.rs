@@ -79,8 +79,12 @@ fn create_sample_png_bytes(width: u32, height: u32) -> Vec<u8> {
     deskdispatch::routes::bitmaps::encode_png(width, height, &pixels)
 }
 
-#[allow(dead_code)]
 fn dump_docker_logs() {
+    println!("\n=================== DOCKER PROCESSES ===================");
+    if let Ok(ps_out) = Command::new("docker").args(["compose", "ps"]).output() {
+        println!("{}", String::from_utf8_lossy(&ps_out.stdout));
+    }
+
     println!("\n=================== DOCKER LOGS DUMP START ===================");
     let output = Command::new("docker")
         .args(["compose", "logs", "--tail=200"])
@@ -100,6 +104,16 @@ fn dump_docker_logs() {
     println!("=================== DOCKER LOGS DUMP END ===================\n");
 }
 
+struct DockerLogGuard;
+
+impl Drop for DockerLogGuard {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            dump_docker_logs();
+        }
+    }
+}
+
 async fn wait_for_stack_ready(client: &reqwest::Client, base_url: &str) {
     let ready_endpoint = format!("{}/readyz", base_url);
     let start_time = Instant::now();
@@ -110,18 +124,29 @@ async fn wait_for_stack_ready(client: &reqwest::Client, base_url: &str) {
     println!("[E2E TEST] Waiting for readyz endpoint: {}", ready_endpoint);
     while start_time.elapsed() < timeout {
         poll_attempts += 1;
-        if let Ok(resp) = client.get(&ready_endpoint).send().await
-            && resp.status().is_success()
-        {
-            println!(
-                "[E2E TEST] /readyz reported healthy status on attempt {}!",
-                poll_attempts
-            );
-            is_ready = true;
-            break;
+        if let Ok(resp) = client.get(&ready_endpoint).send().await {
+            if resp.status().is_success() {
+                println!(
+                    "[E2E TEST] /readyz reported healthy status on attempt {}!",
+                    poll_attempts
+                );
+                is_ready = true;
+                break;
+            } else {
+                println!(
+                    "[E2E TEST] /readyz status {} on attempt {}...",
+                    resp.status(),
+                    poll_attempts
+                );
+            }
+        } else {
+            println!("[E2E TEST] Polling /readyz connection attempt {} failed...", poll_attempts);
         }
-        println!("[E2E TEST] Polling /readyz (attempt {})...", poll_attempts);
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    if !is_ready {
+        dump_docker_logs();
     }
 
     assert!(
@@ -235,6 +260,7 @@ async fn login_as_admin(client: &reqwest::Client, base_url: &str) -> String {
 
 #[tokio::test]
 async fn test_docker_e2e_bitmap_upload_flow() {
+    let _guard = DockerLogGuard;
     println!("[E2E Bitmap Test] Step 1: Building Docker images...");
     let build_status = Command::new("docker")
         .args(["compose", "build"])
@@ -451,6 +477,7 @@ async fn test_docker_e2e_bitmap_upload_flow() {
 
 #[tokio::test]
 async fn test_docker_e2e_simulator_workflow_and_screenshot() {
+    let _guard = DockerLogGuard;
     println!("[E2E Simulator Test] Step 1: Building Docker images...");
     let build_status = Command::new("docker")
         .args(["compose", "build"])
@@ -783,6 +810,11 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
             run_poll_start.elapsed().as_secs()
         );
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    if !run_succeeded {
+        println!("[E2E TEST] Task run polling failed or timed out. Dumping Docker logs...");
+        dump_docker_logs();
     }
 
     assert!(
