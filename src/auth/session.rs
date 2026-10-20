@@ -130,4 +130,58 @@ mod tests {
         assert_eq!(extract_session_id(&secure_cookie), Some(sid));
         assert_eq!(extract_session_id(&insecure_cookie), Some(sid));
     }
+
+    #[test]
+    fn test_extract_session_id_edge_cases_and_clear_cookie() {
+        // Arrange
+        let valid_uuid_1 = Uuid::new_v4();
+        let valid_uuid_2 = Uuid::new_v4();
+
+        // 1. Verify clear_session_cookie exact attributes
+        let clear_cookie = clear_session_cookie();
+        assert!(clear_cookie.contains("__Host-session_id="));
+        assert!(clear_cookie.contains("Max-Age=0"));
+        assert!(clear_cookie.contains("Expires=Thu, 01 Jan 1970 00:00:00 GMT"));
+        assert!(clear_cookie.contains("Path=/"));
+        assert!(clear_cookie.contains("HttpOnly"));
+        assert!(clear_cookie.contains("Secure"));
+        assert!(clear_cookie.contains("SameSite=Lax"));
+
+        // 2. Extract session ID from multi-cookie header with leading/trailing whitespace
+        let multi_cookie = format!(
+            "  theme=dark;   __Host-session_id={} ;   lang=en ",
+            valid_uuid_1
+        );
+        assert_eq!(extract_session_id(&multi_cookie), Some(valid_uuid_1));
+
+        // 3. Extract session ID from header without space after semicolon
+        let no_space_cookie = format!("a=1;session_id={};b=2", valid_uuid_2);
+        assert_eq!(extract_session_id(&no_space_cookie), Some(valid_uuid_2));
+
+        // 4. Invalid non-UUID cookie values return None
+        assert_eq!(extract_session_id("session_id=not-a-valid-uuid"), None);
+        assert_eq!(extract_session_id("__Host-session_id=12345"), None);
+
+        // 5. Fallback: invalid __Host-session_id followed by valid session_id
+        let fallback_cookie = format!("__Host-session_id=invalid-uuid; session_id={}", valid_uuid_1);
+        assert_eq!(extract_session_id(&fallback_cookie), Some(valid_uuid_1));
+
+        // 6. Precedence: valid __Host-session_id encountered first takes precedence
+        let precedence_cookie = format!(
+            "__Host-session_id={}; session_id={}",
+            valid_uuid_1, valid_uuid_2
+        );
+        assert_eq!(extract_session_id(&precedence_cookie), Some(valid_uuid_1));
+
+        // 7. Non-matching key name prefixes return None
+        let false_prefix_cookie = format!(
+            "not_session_id={}; my__Host-session_id={}",
+            valid_uuid_1, valid_uuid_2
+        );
+        assert_eq!(extract_session_id(&false_prefix_cookie), None);
+
+        // 8. Empty or whitespace-only header returns None
+        assert_eq!(extract_session_id(""), None);
+        assert_eq!(extract_session_id("   \t  \n "), None);
+    }
 }
