@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
@@ -10,9 +11,18 @@ pub const ERR_IP_RATE_LIMIT: &str =
 
 const EVICTION_THRESHOLD: usize = 256;
 
+#[inline]
+fn normalize_username(username: &str) -> Cow<'_, str> {
+    if username.bytes().any(|b| b.is_ascii_uppercase()) {
+        Cow::Owned(username.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(username)
+    }
+}
+
 #[derive(Debug)]
 struct RateLimiterInner {
-    user_attempts: HashMap<(IpAddr, String), Vec<Instant>>,
+    user_attempts: HashMap<IpAddr, HashMap<String, Vec<Instant>>>,
     ip_attempts: HashMap<IpAddr, Vec<Instant>>,
 }
 
@@ -24,19 +34,24 @@ impl RateLimiterInner {
         now: Instant,
         window: Duration,
     ) -> Option<usize> {
-        match self.user_attempts.entry((ip, username.to_lowercase())) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                let ts = entry.get_mut();
-                ts.retain(|t| now.duration_since(*t) < window);
-                if ts.is_empty() {
-                    entry.remove();
-                    None
-                } else {
-                    Some(ts.len())
-                }
+        let norm = normalize_username(username);
+        let (count, is_empty) = {
+            let user_map = self.user_attempts.get_mut(&ip)?;
+            let ts = user_map.get_mut(norm.as_ref())?;
+            ts.retain(|t| now.duration_since(*t) < window);
+            if ts.is_empty() {
+                user_map.remove(norm.as_ref());
+                (None, user_map.is_empty())
+            } else {
+                (Some(ts.len()), false)
             }
-            std::collections::hash_map::Entry::Vacant(_) => None,
+        };
+
+        if is_empty {
+            self.user_attempts.remove(&ip);
         }
+
+        count
     }
 
     fn prune_and_clean_ip(&mut self, ip: IpAddr, now: Instant, window: Duration) -> Option<usize> {
@@ -56,9 +71,12 @@ impl RateLimiterInner {
     }
 
     fn sweep_expired(&mut self, now: Instant, window: Duration) {
-        self.user_attempts.retain(|_, timestamps| {
-            timestamps.retain(|t| now.duration_since(*t) < window);
-            !timestamps.is_empty()
+        self.user_attempts.retain(|_, user_map| {
+            user_map.retain(|_, timestamps| {
+                timestamps.retain(|t| now.duration_since(*t) < window);
+                !timestamps.is_empty()
+            });
+            !user_map.is_empty()
         });
         self.ip_attempts.retain(|_, timestamps| {
             timestamps.retain(|t| now.duration_since(*t) < window);
@@ -142,10 +160,12 @@ impl LoginRateLimiter {
             inner.sweep_expired(now, self.window);
         }
 
-        let user_ts = inner
-            .user_attempts
-            .entry((ip, username.to_lowercase()))
-            .or_default();
+        let norm = normalize_username(username);
+        let user_map = inner.user_attempts.entry(ip).or_default();
+        let user_ts = match user_map.get_mut(norm.as_ref()) {
+            Some(ts) => ts,
+            None => user_map.entry(norm.into_owned()).or_default(),
+        };
         user_ts.retain(|t| now.duration_since(*t) < self.window);
         user_ts.push(now);
 
@@ -156,7 +176,15 @@ impl LoginRateLimiter {
 
     pub fn clear(&self, ip: IpAddr, username: &str) {
         let mut inner = self.inner.lock().expect("lock rate limiter mutex");
-        inner.user_attempts.remove(&(ip, username.to_lowercase()));
+        let norm = normalize_username(username);
+        let mut is_empty = false;
+        if let Some(user_map) = inner.user_attempts.get_mut(&ip) {
+            user_map.remove(norm.as_ref());
+            is_empty = user_map.is_empty();
+        }
+        if is_empty {
+            inner.user_attempts.remove(&ip);
+        }
     }
 
     pub fn entry_counts(&self) -> (usize, usize) {
@@ -166,7 +194,8 @@ impl LoginRateLimiter {
     pub fn entry_counts_at(&self, now: Instant) -> (usize, usize) {
         let mut inner = self.inner.lock().expect("lock rate limiter mutex");
         inner.sweep_expired(now, self.window);
-        (inner.user_attempts.len(), inner.ip_attempts.len())
+        let total_user_entries = inner.user_attempts.values().map(|m| m.len()).sum();
+        (total_user_entries, inner.ip_attempts.len())
     }
 }
 

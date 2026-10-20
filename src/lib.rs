@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use axum::{Router, middleware, routing::get};
-use config::Config;
+pub use config::{Config, SecretString};
 use sqlx::PgPool;
 use tower_http::{
     catch_panic::CatchPanicLayer,

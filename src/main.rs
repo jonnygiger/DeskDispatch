@@ -2,7 +2,6 @@
 
 use argon2::{Argon2, PasswordHasher};
 use deskdispatch::{AppState, auth::LoginRateLimiter, build_router, config::Config, routes::*};
-use secrecy::ExposeSecret;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::net::SocketAddr;

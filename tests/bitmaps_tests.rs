@@ -5,7 +5,6 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use deskdispatch::{AppState, config::Config, routes::*};
-use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower::ServiceExt;
 

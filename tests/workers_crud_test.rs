@@ -9,7 +9,6 @@ use deskdispatch::AppState;
 use deskdispatch::auth::{AuthUser, UserRole, generate_csrf_token};
 use deskdispatch::config::Config;
 use deskdispatch::routes::workers::*;
-use secrecy::ExposeSecret;
 use tower::ServiceExt;
 use uuid::Uuid;
 

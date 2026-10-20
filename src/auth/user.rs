@@ -4,7 +4,6 @@ use axum::{
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Redirect, Response},
 };
-use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::str::FromStr;
