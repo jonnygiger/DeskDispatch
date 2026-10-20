@@ -12,7 +12,7 @@ pub fn encode_hex(bytes: &[u8]) -> String {
         buf[i * 2] = HEX_CHARS[(b >> 4) as usize];
         buf[i * 2 + 1] = HEX_CHARS[(b & 0x0f) as usize];
     }
-    String::from_utf8(buf).unwrap_or_default()
+    String::from_utf8(buf).expect("hex characters are valid utf8")
 }
 
 const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -26,22 +26,22 @@ pub fn encode_base64(bytes: &[u8]) -> String {
         let b2 = chunk.get(2).map_or(0, |&b| b as u32);
         let triple = (b0 << 16) | (b1 << 8) | b2;
 
-        buf.push(BASE64_CHARS[((triple >> 18) & 0x3f) as usize]);
-        buf.push(BASE64_CHARS[((triple >> 12) & 0x3f) as usize]);
-
-        if chunk.len() > 1 {
-            buf.push(BASE64_CHARS[((triple >> 6) & 0x3f) as usize]);
+        let c0 = BASE64_CHARS[((triple >> 18) & 0x3f) as usize];
+        let c1 = BASE64_CHARS[((triple >> 12) & 0x3f) as usize];
+        let c2 = if chunk.len() > 1 {
+            BASE64_CHARS[((triple >> 6) & 0x3f) as usize]
         } else {
-            buf.push(b'=');
-        }
-
-        if chunk.len() > 2 {
-            buf.push(BASE64_CHARS[(triple & 0x3f) as usize]);
+            b'='
+        };
+        let c3 = if chunk.len() > 2 {
+            BASE64_CHARS[(triple & 0x3f) as usize]
         } else {
-            buf.push(b'=');
-        }
+            b'='
+        };
+
+        buf.extend_from_slice(&[c0, c1, c2, c3]);
     }
-    String::from_utf8(buf).unwrap_or_default()
+    String::from_utf8(buf).expect("base64 characters are valid utf8")
 }
 
 pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
@@ -124,7 +124,12 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
 }
 
 pub fn url_encode_component(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
+    if s.bytes()
+        .all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~'))
+    {
+        return s.to_string();
+    }
+    let mut result = String::with_capacity(s.len() + 16);
     for b in s.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
@@ -142,15 +147,16 @@ pub fn url_encode_component(s: &str) -> String {
 
 /// Derives the 4-tier AWS SigV4 HMAC-SHA256 signing key.
 fn derive_signing_key(secret_key: &str, date_str: &str, region: &str) -> [u8; 32] {
-    let k_secret_bytes = if secret_key.len() <= 56 {
-        let mut buf = [0u8; 64];
-        buf[..4].copy_from_slice(b"AWS4");
-        buf[4..4 + secret_key.len()].copy_from_slice(secret_key.as_bytes());
-        hmac_sha256(&buf[..4 + secret_key.len()], date_str.as_bytes())
+    let mut key_buf = [0u8; 64];
+    let secret_bytes = secret_key.as_bytes();
+    let k_secret_bytes = if secret_bytes.len() <= 60 {
+        key_buf[..4].copy_from_slice(b"AWS4");
+        key_buf[4..4 + secret_bytes.len()].copy_from_slice(secret_bytes);
+        hmac_sha256(&key_buf[..4 + secret_bytes.len()], date_str.as_bytes())
     } else {
-        let mut vec = Vec::with_capacity(4 + secret_key.len());
+        let mut vec = Vec::with_capacity(4 + secret_bytes.len());
         vec.extend_from_slice(b"AWS4");
-        vec.extend_from_slice(secret_key.as_bytes());
+        vec.extend_from_slice(secret_bytes);
         hmac_sha256(&vec, date_str.as_bytes())
     };
 
@@ -288,6 +294,8 @@ pub fn generate_presigned_url_with_query(
     endpoint_url: Option<&str>,
     extra_params: &[(&str, &str)],
 ) -> Result<String, StorageError> {
+    use std::fmt::Write;
+
     let now = Utc::now();
     let date_str = now.format("%Y%m%d").to_string();
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -332,39 +340,45 @@ pub fn generate_presigned_url_with_query(
         }
     };
 
-    let mut query_params = vec![
-        ("X-Amz-Algorithm", "AWS4-HMAC-SHA256".to_string()),
-        ("X-Amz-Credential", credential),
-        ("X-Amz-Date", amz_date.clone()),
-        ("X-Amz-Expires", expires_secs),
-        ("X-Amz-SignedHeaders", "host".to_string()),
-    ];
+    let encoded_credential = url_encode_component(&credential);
 
-    for &(k, v) in extra_params {
-        query_params.push((k, v.to_string()));
-    }
+    let canonical_query_string = if extra_params.is_empty() {
+        let mut q_str = String::with_capacity(
+            128 + encoded_credential.len() + amz_date.len() + expires_secs.len(),
+        );
+        let _ = write!(
+            q_str,
+            "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}&X-Amz-Date={}&X-Amz-Expires={}&X-Amz-SignedHeaders=host",
+            encoded_credential, amz_date, expires_secs
+        );
+        q_str
+    } else {
+        use std::borrow::Cow;
+        let mut query_params: Vec<(&str, Cow<'_, str>)> =
+            Vec::with_capacity(5 + extra_params.len());
+        query_params.push(("X-Amz-Algorithm", Cow::Borrowed("AWS4-HMAC-SHA256")));
+        query_params.push(("X-Amz-Credential", Cow::Borrowed(&encoded_credential)));
+        query_params.push(("X-Amz-Date", Cow::Borrowed(&amz_date)));
+        query_params.push(("X-Amz-Expires", Cow::Borrowed(&expires_secs)));
+        query_params.push(("X-Amz-SignedHeaders", Cow::Borrowed("host")));
 
-    let mut encoded_params: Vec<(String, String)> = query_params
-        .into_iter()
-        .map(|(k, v)| (url_encode_component(k), url_encode_component(&v)))
-        .collect();
-    encoded_params.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-
-    let mut canonical_query_string = String::with_capacity(
-        encoded_params
-            .iter()
-            .map(|(k, v)| k.len() + 1 + v.len() + 1)
-            .sum::<usize>()
-            .saturating_sub(1),
-    );
-    for (idx, (k, v)) in encoded_params.iter().enumerate() {
-        if idx > 0 {
-            canonical_query_string.push('&');
+        for &(k, v) in extra_params {
+            query_params.push((k, Cow::Owned(url_encode_component(v))));
         }
-        canonical_query_string.push_str(k);
-        canonical_query_string.push('=');
-        canonical_query_string.push_str(v);
-    }
+
+        query_params.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(&b.1)));
+
+        let mut q_str = String::with_capacity(256);
+        for (idx, (k, v)) in query_params.iter().enumerate() {
+            if idx > 0 {
+                q_str.push('&');
+            }
+            q_str.push_str(k);
+            q_str.push('=');
+            q_str.push_str(v);
+        }
+        q_str
+    };
 
     let canonical_headers = format!("host:{}\n", host);
     let signed_headers = "host";
@@ -903,31 +917,30 @@ pub fn parse_list_objects_v2_xml(xml: &str) -> Vec<StorageObject> {
 }
 
 fn extract_xml_tag_slice<'a>(xml_block: &'a str, tag_name: &str) -> Option<&'a str> {
-    let bytes = xml_block.as_bytes();
-    let tag_bytes = tag_name.as_bytes();
-
-    let mut start = 0;
-    while start < bytes.len() {
-        let rel_open = xml_block[start..].find('<')?;
-        let open_idx = start + rel_open;
-        let rest = &xml_block[open_idx + 1..];
-        if rest.as_bytes().starts_with(tag_bytes)
-            && rest.as_bytes().get(tag_bytes.len()) == Some(&b'>')
+    let open_tag_len = tag_name.len() + 2;
+    let mut search = xml_block;
+    while let Some(open_idx) = search.find('<') {
+        let after_open = &search[open_idx + 1..];
+        if after_open.starts_with(tag_name)
+            && after_open.as_bytes().get(tag_name.len()) == Some(&b'>')
         {
-            let val_start = open_idx + 1 + tag_bytes.len() + 1;
-            let close_rest = &xml_block[val_start..];
-            for close_idx in 0..close_rest.len() {
-                let s = close_rest.as_bytes();
-                if s[close_idx..].starts_with(b"</")
-                    && s[close_idx + 2..].starts_with(tag_bytes)
-                    && s.get(close_idx + 2 + tag_bytes.len()) == Some(&b'>')
+            let val_start = open_idx + open_tag_len;
+            let val_block = &search[val_start..];
+            let mut close_search = val_block;
+            let mut offset = 0;
+            while let Some(close_idx) = close_search.find("</") {
+                let after_close = &close_search[close_idx + 2..];
+                if after_close.starts_with(tag_name)
+                    && after_close.as_bytes().get(tag_name.len()) == Some(&b'>')
                 {
-                    return Some(&close_rest[..close_idx]);
+                    return Some(&val_block[..offset + close_idx]);
                 }
+                offset += close_idx + 2;
+                close_search = &val_block[offset..];
             }
             return None;
         }
-        start = open_idx + 1;
+        search = &search[open_idx + 1..];
     }
     None
 }
@@ -1163,5 +1176,16 @@ mod tests {
         assert_eq!(objects[0].size, 12345);
         assert_eq!(objects[1].key, "tmp/item2.png");
         assert_eq!(objects[1].size, 67890);
+
+        // Test extract_xml_tag_slice directly with nested tags
+        let nested_xml = "<Contents><Key>tmp/item1.png</Key></Contents>";
+        assert_eq!(
+            extract_xml_tag_slice(nested_xml, "Contents"),
+            Some("<Key>tmp/item1.png</Key>")
+        );
+        assert_eq!(
+            extract_xml_tag_slice(nested_xml, "Key"),
+            Some("tmp/item1.png")
+        );
     }
 }
