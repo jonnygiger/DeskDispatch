@@ -163,7 +163,10 @@ mod tests {
         assert_eq!(extract_session_id("__Host-session_id=12345"), None);
 
         // 5. Fallback: invalid __Host-session_id followed by valid session_id
-        let fallback_cookie = format!("__Host-session_id=invalid-uuid; session_id={}", valid_uuid_1);
+        let fallback_cookie = format!(
+            "__Host-session_id=invalid-uuid; session_id={}",
+            valid_uuid_1
+        );
         assert_eq!(extract_session_id(&fallback_cookie), Some(valid_uuid_1));
 
         // 6. Precedence: valid __Host-session_id encountered first takes precedence
