@@ -25,32 +25,54 @@ async fn get_test_pool() -> Option<sqlx::PgPool> {
 struct WorkerCleanupGuard {
     pool: sqlx::PgPool,
     host_prefix: String,
+    user_id: Option<i64>,
+    auto_id: Option<i64>,
+    task_run_id: Option<i64>,
 }
 
 impl Drop for WorkerCleanupGuard {
     fn drop(&mut self) {
         let pool = self.pool.clone();
         let prefix = format!("{}%", self.host_prefix);
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let _ = std::thread::spawn(move || {
-                handle.block_on(async move {
-                    let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE hostname LIKE $1")
-                        .bind(prefix)
-                        .execute(&pool)
-                        .await;
-                });
-            })
-            .join();
-        }
-    }
-}
+        let user_id = self.user_id;
+        let auto_id = self.auto_id;
+        let task_run_id = self.task_run_id;
 
-async fn cleanup_workers(pool: &sqlx::PgPool, host_prefix: &str) {
-    let prefix = format!("{}%", host_prefix);
-    let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE hostname LIKE $1")
-        .bind(prefix)
-        .execute(pool)
-        .await;
+        let cleanup = async move {
+            if let Some(tr_id) = task_run_id {
+                let _ = sqlx::query("DELETE FROM task_runs WHERE id = $1")
+                    .bind(tr_id)
+                    .execute(&pool)
+                    .await;
+            }
+            if let Some(a_id) = auto_id {
+                let _ = sqlx::query("DELETE FROM automations WHERE id = $1")
+                    .bind(a_id)
+                    .execute(&pool)
+                    .await;
+            }
+            if let Some(u_id) = user_id {
+                let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+                    .bind(u_id)
+                    .execute(&pool)
+                    .await;
+            }
+            let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE hostname LIKE $1")
+                .bind(prefix)
+                .execute(&pool)
+                .await;
+        };
+
+        let _ = std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                rt.block_on(cleanup);
+            }
+        })
+        .join();
+    }
 }
 
 #[tokio::test]
@@ -108,9 +130,12 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     let host_prefix = format!("load-test-host-{}", run_id_suffix);
 
     // RAII guard guarantees worker cleanup even on assertion panic
-    let _cleanup_guard = WorkerCleanupGuard {
+    let mut cleanup_guard = WorkerCleanupGuard {
         pool: pool.clone(),
         host_prefix: host_prefix.clone(),
+        user_id: None,
+        auto_id: None,
+        task_run_id: None,
     };
 
     // 1. Batch seed 300 distinct workers in task_worker_pcs in a single query
@@ -202,6 +227,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     .fetch_one(&pool)
     .await
     .expect("Failed to seed user");
+    cleanup_guard.user_id = Some(user_id);
 
     let auto_id: i64 = sqlx::query_scalar(
         "INSERT INTO automations (name, description, status, created_by) VALUES ('Load Test Auto', 'Desc', 'active', $1) RETURNING id",
@@ -210,6 +236,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     .fetch_one(&pool)
     .await
     .expect("Failed to seed automation");
+    cleanup_guard.auto_id = Some(auto_id);
 
     let task_run_id: i64 = sqlx::query_scalar(
         "INSERT INTO task_runs (automation_id, status, queued_at) VALUES ($1, 'queued', now()) RETURNING id",
@@ -218,6 +245,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     .fetch_one(&pool)
     .await
     .expect("Failed to seed queued task_run");
+    cleanup_guard.task_run_id = Some(task_run_id);
 
     // Spawn 300 long polling workers again
     let mut handles_wake = Vec::with_capacity(num_workers);
@@ -293,18 +321,5 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         "Claiming worker should be one of the 300 long-polling test workers"
     );
 
-    // Explicit cleanup of test entities
-    let _ = sqlx::query("DELETE FROM task_runs WHERE id = $1")
-        .bind(task_run_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM automations WHERE id = $1")
-        .bind(auto_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
-        .execute(&pool)
-        .await;
-    cleanup_workers(&pool, &host_prefix).await;
+    // RAII Drop on cleanup_guard automatically cleans up task_runs, automations, users, and task_worker_pcs
 }
