@@ -721,27 +721,6 @@ pub async fn post_step_result_handler(
             );
         }
 
-        if let Some(ref key) = payload.screenshot_object_key
-            && let Err(e) = sqlx::query(
-                r#"
-            INSERT INTO step_screenshots (step_id, object_storage_key, width, height)
-            VALUES ($1, $2, 1920, 1080)
-            ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key
-            "#,
-            )
-            .bind(payload.step_id)
-            .bind(key)
-            .execute(&mut *tx)
-            .await
-        {
-            tracing::error!(
-                task_run_id = task_run_id,
-                step_id = payload.step_id,
-                "Failed to upsert step_screenshots on step result: {}",
-                e
-            );
-        }
-
         tx.commit().await?;
         tracing::warn!(
             worker_id = worker.id,
@@ -803,34 +782,22 @@ pub async fn post_step_result_handler(
         }
     }
 
-    let captured_r = payload.captured_r.or_else(|| {
-        payload
-            .captured_rgb
-            .as_ref()
-            .and_then(|v| v.first().copied())
-    });
-    let captured_g = payload.captured_g.or_else(|| {
-        payload
-            .captured_rgb
-            .as_ref()
-            .and_then(|v| v.get(1).copied())
-    });
-    let captured_b = payload.captured_b.or_else(|| {
-        payload
-            .captured_rgb
-            .as_ref()
-            .and_then(|v| v.get(2).copied())
-    });
+    let (rgb_r, rgb_g, rgb_b) = match payload.captured_rgb.as_deref() {
+        Some([r, g, b, ..]) => (Some(*r), Some(*g), Some(*b)),
+        _ => (None, None, None),
+    };
 
-    let captured_x = payload.captured_x.or_else(|| {
-        payload
-            .captured_xy
-            .as_ref()
-            .and_then(|v| v.first().copied())
-    });
-    let captured_y = payload
-        .captured_y
-        .or_else(|| payload.captured_xy.as_ref().and_then(|v| v.get(1).copied()));
+    let captured_r = payload.captured_r.or(rgb_r);
+    let captured_g = payload.captured_g.or(rgb_g);
+    let captured_b = payload.captured_b.or(rgb_b);
+
+    let (xy_x, xy_y) = match payload.captured_xy.as_deref() {
+        Some([x, y, ..]) => (Some(*x), Some(*y)),
+        _ => (None, None),
+    };
+
+    let captured_x = payload.captured_x.or(xy_x);
+    let captured_y = payload.captured_y.or(xy_y);
 
     let completed_at = payload
         .completed_at
@@ -1129,9 +1096,27 @@ pub async fn post_recording_events_handler(
 
     let count = payload.events.len();
 
-    for event in &payload.events {
-        let captured_at = event.captured_at.unwrap_or_else(chrono::Utc::now);
-        let event_type = event.event_type.trim();
+    if count > 0 {
+        let now = chrono::Utc::now();
+        let mut seqs = Vec::with_capacity(count);
+        let mut event_types = Vec::with_capacity(count);
+        let mut xs = Vec::with_capacity(count);
+        let mut ys = Vec::with_capacity(count);
+        let mut buttons = Vec::with_capacity(count);
+        let mut key_combos = Vec::with_capacity(count);
+        let mut screenshot_keys = Vec::with_capacity(count);
+        let mut captured_ats = Vec::with_capacity(count);
+
+        for event in &payload.events {
+            seqs.push(event.sequence_number);
+            event_types.push(event.event_type.trim());
+            xs.push(event.x);
+            ys.push(event.y);
+            buttons.push(event.button.as_deref());
+            key_combos.push(event.key_combo.as_deref());
+            screenshot_keys.push(event.screenshot_object_key.as_deref());
+            captured_ats.push(event.captured_at.unwrap_or(now));
+        }
 
         sqlx::query(
             r#"
@@ -1139,7 +1124,11 @@ pub async fn post_recording_events_handler(
                 recording_session_id, sequence_number, event_type,
                 x, y, button, key_combo, screenshot_object_key, captured_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            SELECT $1, u.seq, u.event_type, u.x, u.y, u.button, u.key_combo, u.screenshot_key, u.captured_at
+            FROM UNNEST(
+                $2::int4[], $3::text[], $4::int4[], $5::int4[],
+                $6::text[], $7::text[], $8::text[], $9::timestamptz[]
+            ) AS u(seq, event_type, x, y, button, key_combo, screenshot_key, captured_at)
             ON CONFLICT (recording_session_id, sequence_number) DO UPDATE
             SET event_type = EXCLUDED.event_type,
                 x = EXCLUDED.x,
@@ -1151,14 +1140,14 @@ pub async fn post_recording_events_handler(
             "#,
         )
         .bind(session_id)
-        .bind(event.sequence_number)
-        .bind(event_type)
-        .bind(event.x)
-        .bind(event.y)
-        .bind(event.button.as_deref())
-        .bind(event.key_combo.as_deref())
-        .bind(event.screenshot_object_key.as_deref())
-        .bind(captured_at)
+        .bind(&seqs)
+        .bind(&event_types)
+        .bind(&xs)
+        .bind(&ys)
+        .bind(&buttons)
+        .bind(&key_combos)
+        .bind(&screenshot_keys)
+        .bind(&captured_ats)
         .execute(&mut *tx)
         .await?;
     }
@@ -1244,31 +1233,6 @@ pub async fn post_worker_stop_recording_handler(
             session_id
         ))),
     }
-}
-
-#[tracing::instrument(skip(worker, state, payload))]
-pub async fn post_task_run_screenshot_commit_with_key_handler(
-    worker: AuthWorker,
-    State(state): State<AppState>,
-    Path((task_run_id, object_key)): Path<(i64, String)>,
-    payload: Option<Json<CommitScreenshotRequest>>,
-) -> Result<impl IntoResponse, AppError> {
-    let mut req = payload.map(|Json(p)| p).unwrap_or(CommitScreenshotRequest {
-        step_id: None,
-        object_key: None,
-        width: None,
-        height: None,
-    });
-    if req.object_key.is_none() {
-        req.object_key = Some(object_key);
-    }
-    post_task_run_screenshot_commit_handler(
-        worker,
-        State(state),
-        Path(task_run_id),
-        Some(Json(req)),
-    )
-    .await
 }
 
 #[tracing::instrument(skip(_worker, state))]
