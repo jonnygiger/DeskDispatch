@@ -1,6 +1,7 @@
 use askama::Template;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::fmt::Write;
 
 /// Represents aspect-ratio containment fitting of a native image `(native_w, native_h)`
 /// inside a display container viewport `(display_w, display_h)`.
@@ -63,7 +64,13 @@ impl ViewportFit {
     pub fn marker_style(&self, tx: f64, ty: f64) -> String {
         let marker_left = self.offset_x + (tx * self.scale);
         let marker_top = self.offset_y + (ty * self.scale);
-        format!("left: {:.2}px; top: {:.2}px;", marker_left, marker_top)
+        let mut style = String::with_capacity(36);
+        let _ = write!(
+            style,
+            "left: {:.2}px; top: {:.2}px;",
+            marker_left, marker_top
+        );
+        style
     }
 }
 
@@ -170,21 +177,30 @@ impl ImageMagnifier {
         escape_css_url(&self.presigned_url)
     }
 
+    #[inline]
+    fn target_or_center(&self) -> (f64, f64) {
+        match (self.target_x, self.target_y) {
+            (Some(x), Some(y)) => (x as f64, y as f64),
+            _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
+        }
+    }
+
     /// Background style for normal panel (1x scale, viewport 600x340 or calculated fit)
     pub fn normal_style(&self) -> String {
-        format!(
+        let escaped = self.escaped_url();
+        let mut style = String::with_capacity(escaped.len() + 80);
+        let _ = write!(
+            style,
             "background-image: url('{}'); background-size: contain; background-position: center;",
-            self.escaped_url()
-        )
+            escaped
+        );
+        style
     }
 
     /// Marker style for normal panel
     pub fn normal_marker_style(&self) -> String {
         if self.show_marker() {
-            let (tx, ty) = match (self.target_x, self.target_y) {
-                (Some(x), Some(y)) => (x as f64, y as f64),
-                _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
-            };
+            let (tx, ty) = self.target_or_center();
             match ViewportFit::compute(600.0, 340.0, self.native_w, self.native_h) {
                 Some(fit) => fit.marker_style(tx, ty),
                 None => String::new(),
@@ -196,24 +212,21 @@ impl ImageMagnifier {
 
     /// Background style for 400% (4x) zoom panel (viewport 320x320)
     pub fn zoom400_style(&self) -> String {
-        let (tx, ty) = match (self.target_x, self.target_y) {
-            (Some(x), Some(y)) => (x as f64, y as f64),
-            _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
-        };
+        let (tx, ty) = self.target_or_center();
         let (bg_w, bg_h) = (self.native_w * 4, self.native_h * 4);
         let (pan_x, pan_y) = if self.native_w > 0 && self.native_h > 0 {
             (160.0 - (tx * 4.0), 160.0 - (ty * 4.0))
         } else {
             (0.0, 0.0)
         };
-        format!(
+        let escaped = self.escaped_url();
+        let mut style = String::with_capacity(escaped.len() + 100);
+        let _ = write!(
+            style,
             "background-image: url('{}'); background-size: {}px {}px; background-position: {:.2}px {:.2}px;",
-            self.escaped_url(),
-            bg_w,
-            bg_h,
-            pan_x,
-            pan_y
-        )
+            escaped, bg_w, bg_h, pan_x, pan_y
+        );
+        style
     }
 
     /// Marker style for 400% (4x) zoom panel (viewport 320x320)
@@ -228,24 +241,21 @@ impl ImageMagnifier {
 
     /// CSS custom properties style for 20x pixel grid panel (viewport 320x320)
     pub fn grid_style(&self) -> String {
-        let (tx, ty) = match (self.target_x, self.target_y) {
-            (Some(x), Some(y)) => (x as f64, y as f64),
-            _ => (self.native_w as f64 / 2.0, self.native_h as f64 / 2.0),
-        };
+        let (tx, ty) = self.target_or_center();
         let (bg_w, bg_h) = (self.native_w * 20, self.native_h * 20);
         let (pan_x, pan_y) = if self.native_w > 0 && self.native_h > 0 {
             (160.0 - (tx * 20.0 + 10.0), 160.0 - (ty * 20.0 + 10.0))
         } else {
             (0.0, 0.0)
         };
-        format!(
+        let escaped = self.escaped_url();
+        let mut style = String::with_capacity(escaped.len() + 120);
+        let _ = write!(
+            style,
             "--grid-bg-url: url('{}'); --grid-bg-w: {}px; --grid-bg-h: {}px; --grid-pan-x: {:.2}px; --grid-pan-y: {:.2}px;",
-            self.escaped_url(),
-            bg_w,
-            bg_h,
-            pan_x,
-            pan_y
-        )
+            escaped, bg_w, bg_h, pan_x, pan_y
+        );
+        style
     }
 
     /// Marker style for 20x pixel grid panel (viewport 320x320)
