@@ -723,23 +723,33 @@ impl SimulatedWorker {
         upload_url: &str,
         image_bytes: Vec<u8>,
     ) -> Result<(), String> {
-        let target_url = if self.config.server_url.contains("http://app:")
+        let (target_url, host_header) = if self.config.server_url.contains("http://app:")
             || self.config.server_url.contains("http://deskdispatch-app:")
         {
-            upload_url
+            let host_hdr = url::Url::parse(upload_url).ok().and_then(|u| {
+                u.host_str().map(|h| match u.port() {
+                    Some(p) => format!("{}:{}", h, p),
+                    None => h.to_string(),
+                })
+            });
+            let rewritten = upload_url
                 .replace("http://localhost:9000", "http://rustfs:9000")
-                .replace("http://127.0.0.1:9000", "http://rustfs:9000")
+                .replace("http://127.0.0.1:9000", "http://rustfs:9000");
+            (rewritten, host_hdr)
         } else {
-            upload_url.to_string()
+            (upload_url.to_string(), None)
         };
 
-        let res = self
+        let mut req = self
             .client
             .put(&target_url)
-            .header("Content-Type", "image/png")
-            .body(image_bytes.clone())
-            .send()
-            .await;
+            .header("Content-Type", "image/png");
+
+        if let Some(ref h) = host_header {
+            req = req.header("Host", h);
+        }
+
+        let res = req.body(image_bytes.clone()).send().await;
 
         match res {
             Ok(resp) if resp.status().is_success() => Ok(()),
@@ -747,9 +757,11 @@ impl SimulatedWorker {
                 if resp.status() == StatusCode::FORBIDDEN
                     || resp.status() == StatusCode::BAD_REQUEST =>
             {
-                let retry_res = self
-                    .client
-                    .put(&target_url)
+                let mut retry_req = self.client.put(&target_url);
+                if let Some(ref h) = host_header {
+                    retry_req = retry_req.header("Host", h);
+                }
+                let retry_res = retry_req
                     .body(image_bytes)
                     .send()
                     .await
