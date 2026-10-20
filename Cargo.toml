@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.99.0"
 
 [workspace]
-members = [".", "crates/deskdispatch-protocol", "crates/worker-simulator"]
+members = [".", "crates/deskdispatch-protocol", "crates/worker-simulator", "crates/deskdispatch-worker"]
 
 [lints.clippy]
 unwrap_used = "deny"
