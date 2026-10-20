@@ -68,9 +68,9 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         s3_public_endpoint: None,
         s3_bucket: "deskdispatch-bucket".to_string(),
         s3_access_key: "rustfsadmin".to_string(),
-        s3_secret_key: secrecy::SecretString::from("rustfsadminpassword".to_string()),
+        s3_secret_key: deskdispatch::SecretString::from("rustfsadminpassword".to_string()),
         s3_region: "us-east-1".to_string(),
-        session_secret: secrecy::SecretString::from("test_secret".to_string()),
+        session_secret: deskdispatch::SecretString::from("test_secret".to_string()),
         bind_address: "0.0.0.0:3000".to_string(),
         environment: "development".to_string(),
         min_agent_version: None,
@@ -85,7 +85,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         task_run_step_retention_days: 30,
         screenshot_retention_days: 30,
         metrics_bind_address: None,
-        unattended_registration_psk: secrecy::SecretString::from(
+        unattended_registration_psk: deskdispatch::SecretString::from(
             "deskdispatch_wps_psk_secret".to_string(),
         ),
     });

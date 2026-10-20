@@ -1,6 +1,42 @@
-use secrecy::{ExposeSecret, SecretString};
 use std::collections::HashMap;
 use std::env;
+use std::fmt;
+
+/// Zero-dependency secret string wrapper that redacts sensitive string content
+/// when formatted with `Debug`.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self(secret.into())
+    }
+
+    #[inline]
+    pub fn expose_secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SecretString {
+    #[inline]
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for SecretString {
+    #[inline]
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SecretString(***)")
+    }
+}
 
 /// Zero-dependency `.env` file parser returning key-value pairs without modifying process environment state.
 pub fn parse_dotenv() -> HashMap<String, String> {

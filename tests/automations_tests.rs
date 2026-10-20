@@ -9,7 +9,6 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use deskdispatch::{AppState, auth::generate_csrf_token, config::Config, routes::*};
-use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower::ServiceExt;
 

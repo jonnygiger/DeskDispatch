@@ -57,8 +57,8 @@ mod tests {
     use super::*;
     use crate::auth::LoginRateLimiter;
     use crate::config::Config;
+    use crate::config::SecretString;
     use axum::{Router, body::Body, routing::get};
-    use secrecy::SecretString;
     use tower::ServiceExt;
 
     fn create_test_state(s3_public_endpoint: Option<String>) -> AppState {

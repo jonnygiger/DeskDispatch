@@ -17,7 +17,6 @@ use deskdispatch::routes::{
     post_deactivate_user_handler, post_edit_user_handler, post_login_handler,
     post_password_handler, post_reset_password_handler,
 };
-use secrecy::ExposeSecret;
 use sqlx::Row;
 use tower::ServiceExt;
 use uuid::Uuid;

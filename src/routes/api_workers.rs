@@ -1602,7 +1602,6 @@ pub async fn post_register_worker_handler(
     State(state): State<AppState>,
     Json(payload): Json<RegisterWorkerRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    use secrecy::ExposeSecret;
     use std::sync::atomic::Ordering;
 
     let psk = payload
@@ -1619,7 +1618,7 @@ pub async fn post_register_worker_handler(
         }
 
         let expected_psk = state.config.unattended_registration_psk.expose_secret();
-        if provided_psk != expected_psk.as_str() {
+        if provided_psk != expected_psk {
             return Err(AppError::Unauthorized("Invalid pre-shared key".to_string()));
         }
 

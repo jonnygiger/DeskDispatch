@@ -10,7 +10,6 @@ use deskdispatch::auth::{AuthUser, UserRole, generate_csrf_token};
 use deskdispatch::config::Config;
 use deskdispatch::routes::schedules::*;
 use deskdispatch::wol::{create_magic_packet, parse_mac_address};
-use secrecy::ExposeSecret;
 use tower::ServiceExt;
 use uuid::Uuid;
 
