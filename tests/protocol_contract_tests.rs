@@ -156,6 +156,15 @@ fn test_protocol_dto_serialization_roundtrip() {
                 text_to_type: "Hello World".to_string(),
                 delay_between_keys_ms: 50,
             },
+            StepPayload::WindowControl {
+                id: 12,
+                label: Some("Focus Window".to_string()),
+                post_delay_ms: 150,
+                action: "activate".to_string(),
+                match_pattern: "Firefox".to_string(),
+                match_type: "contains".to_string(),
+                timeout_ms: 5000,
+            },
         ],
     };
     let full_auto_str = serde_json::to_string(&full_auto).unwrap();

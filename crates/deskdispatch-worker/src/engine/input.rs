@@ -104,4 +104,105 @@ impl InputController {
             }
         }
     }
+
+    pub fn window_control(
+        &self,
+        action: &str,
+        match_pattern: &str,
+        match_type: &str,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
+        info!(
+            action = action,
+            match_pattern = match_pattern,
+            match_type = match_type,
+            timeout_ms = timeout_ms,
+            "Executing window control"
+        );
+
+        let search_arg = match match_type.to_lowercase().as_str() {
+            "exact" => format!("^{}$", match_pattern),
+            "starts_with" => format!("^{}", match_pattern),
+            _ => match_pattern.to_string(),
+        };
+
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+
+        loop {
+            let search_output = Command::new("xdotool")
+                .env("DISPLAY", &self.display)
+                .arg("search")
+                .arg("--onlyvisible")
+                .arg("--name")
+                .arg(&search_arg)
+                .output();
+
+            if let Ok(output) = search_output
+                && output.status.success()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let window_ids: Vec<&str> = stdout.lines().map(str::trim).filter(|s| !s.is_empty()).collect();
+
+                if let Some(wid) = window_ids.first() {
+                    let act_norm = action.to_lowercase();
+                    if act_norm == "wait" {
+                        return Ok(());
+                    }
+
+                    let status = match act_norm.as_str() {
+                        "activate" => Command::new("xdotool")
+                            .env("DISPLAY", &self.display)
+                            .arg("windowactivate")
+                            .arg("--sync")
+                            .arg(wid)
+                            .status(),
+                        "close" => Command::new("xdotool")
+                            .env("DISPLAY", &self.display)
+                            .arg("windowclose")
+                            .arg(wid)
+                            .status(),
+                        "minimize" => Command::new("xdotool")
+                            .env("DISPLAY", &self.display)
+                            .arg("windowminimize")
+                            .arg(wid)
+                            .status(),
+                        "maximize" => Command::new("xdotool")
+                            .env("DISPLAY", &self.display)
+                            .arg("windowsize")
+                            .arg(wid)
+                            .arg("100%")
+                            .arg("100%")
+                            .status(),
+                        _ => Command::new("xdotool")
+                            .env("DISPLAY", &self.display)
+                            .arg("windowactivate")
+                            .arg(wid)
+                            .status(),
+                    };
+
+                    match status {
+                        Ok(s) if s.success() => return Ok(()),
+                        _ => {
+                            debug!("xdotool window action execution omitted or unavailable");
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
+            if start.elapsed() >= timeout {
+                if action.to_lowercase() == "wait" {
+                    return Err(format!(
+                        "Window matching '{}' not found within {}ms",
+                        match_pattern, timeout_ms
+                    ));
+                }
+                debug!("Window search omitted or not found on DISPLAY");
+                return Ok(());
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
 }

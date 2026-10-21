@@ -272,6 +272,15 @@ pub enum StepPayload {
         timeout_ms: u64,
         retry_interval_ms: u64,
     },
+    WindowControl {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        action: String,
+        match_pattern: String,
+        match_type: String,
+        timeout_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
