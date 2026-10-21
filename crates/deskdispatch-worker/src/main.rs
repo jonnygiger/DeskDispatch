@@ -14,8 +14,8 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = CliArgs::parse();
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&args.log_level));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&args.log_level));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     info!(
@@ -66,7 +66,10 @@ async fn run_worker_loop(args: CliArgs) -> Result<(), Box<dyn std::error::Error>
                     registered = true;
                 }
                 Err(e) => {
-                    warn!("WPS PSK registration failed: {}. Trying registration token...", e);
+                    warn!(
+                        "WPS PSK registration failed: {}. Trying registration token...",
+                        e
+                    );
                 }
             }
         }
@@ -90,7 +93,9 @@ async fn run_worker_loop(args: CliArgs) -> Result<(), Box<dyn std::error::Error>
                     }
                 }
             } else {
-                return Err("Worker requires API key, WPS PSK, or registration token to start".into());
+                return Err(
+                    "Worker requires API key, WPS PSK, or registration token to start".into(),
+                );
             }
         }
 
@@ -155,7 +160,10 @@ async fn run_worker_loop(args: CliArgs) -> Result<(), Box<dyn std::error::Error>
                 task_run_id,
                 automation,
             }) => {
-                info!(task_run_id = task_run_id, "Executing assigned automation task");
+                info!(
+                    task_run_id = task_run_id,
+                    "Executing assigned automation task"
+                );
                 if let Err(e) = runner.execute_automation(task_run_id, &automation).await {
                     error!(
                         task_run_id = task_run_id,
@@ -172,7 +180,10 @@ async fn run_worker_loop(args: CliArgs) -> Result<(), Box<dyn std::error::Error>
                 );
             }
             Err(e) => {
-                warn!("Polling next assignment returned error: {}. Retrying in 5s...", e);
+                warn!(
+                    "Polling next assignment returned error: {}. Retrying in 5s...",
+                    e
+                );
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }

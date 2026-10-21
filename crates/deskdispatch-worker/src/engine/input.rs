@@ -12,7 +12,13 @@ impl InputController {
         }
     }
 
-    pub fn mouse_click(&self, x: i32, y: i32, button: &str, click_type: &str) -> Result<(), String> {
+    pub fn mouse_click(
+        &self,
+        x: i32,
+        y: i32,
+        button: &str,
+        click_type: &str,
+    ) -> Result<(), String> {
         info!(
             x = x,
             y = y,

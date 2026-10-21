@@ -60,7 +60,9 @@ impl CapturedImage {
         let width = info.width;
         let height = info.height;
 
-        let buf_size = reader.output_buffer_size().unwrap_or((width * height * 4) as usize);
+        let buf_size = reader
+            .output_buffer_size()
+            .unwrap_or((width * height * 4) as usize);
         let mut buf = vec![0u8; buf_size];
         let output_info = reader
             .next_frame(&mut buf)
@@ -131,7 +133,8 @@ fn capture_x11_screen(
         return Err("No external screenshot tool succeeded".to_string());
     }
 
-    let bytes = std::fs::read(&tmp_path).map_err(|e| format!("Failed to read screenshot file: {}", e))?;
+    let bytes =
+        std::fs::read(&tmp_path).map_err(|e| format!("Failed to read screenshot file: {}", e))?;
     let _ = std::fs::remove_file(&tmp_path);
 
     CapturedImage::decode_png(&bytes)

@@ -125,7 +125,10 @@ impl WorkerApiClient {
             .map_err(|e| format!("Poll next assignment HTTP request failed: {}", e))?;
 
         if !resp.status().is_success() {
-            return Err(format!("Poll next assignment HTTP status {}", resp.status()));
+            return Err(format!(
+                "Poll next assignment HTTP status {}",
+                resp.status()
+            ));
         }
 
         resp.json::<NextAssignmentResponse>()
@@ -229,7 +232,10 @@ impl WorkerApiClient {
             .map_err(|e| format!("Get screenshot upload URL request failed: {}", e))?;
 
         if !resp.status().is_success() {
-            return Err(format!("Get screenshot upload URL HTTP status {}", resp.status()));
+            return Err(format!(
+                "Get screenshot upload URL HTTP status {}",
+                resp.status()
+            ));
         }
 
         resp.json::<ScreenshotUploadUrlResponse>()
@@ -295,7 +301,9 @@ impl WorkerApiClient {
 
         match resp {
             Ok(r) if r.status().is_success() => Ok(()),
-            Ok(r) if r.status() == StatusCode::FORBIDDEN || r.status() == StatusCode::BAD_REQUEST => {
+            Ok(r)
+                if r.status() == StatusCode::FORBIDDEN || r.status() == StatusCode::BAD_REQUEST =>
+            {
                 let retry_resp = self
                     .client
                     .put(upload_url)
@@ -363,7 +371,10 @@ impl WorkerApiClient {
             .map_err(|e| format!("Post recording events HTTP request failed: {}", e))?;
 
         if !resp.status().is_success() {
-            return Err(format!("Post recording events HTTP status {}", resp.status()));
+            return Err(format!(
+                "Post recording events HTTP status {}",
+                resp.status()
+            ));
         }
 
         resp.json::<PostRecordingEventsResponse>()

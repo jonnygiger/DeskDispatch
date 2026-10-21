@@ -66,7 +66,8 @@ impl StepRunner {
 
             let mut screenshot_object_key = None;
             if let Ok(png_bytes) = screen.encode_png()
-                && let Ok(upload_info) = self.api_client.get_screenshot_upload_url(task_run_id).await
+                && let Ok(upload_info) =
+                    self.api_client.get_screenshot_upload_url(task_run_id).await
             {
                 if self
                     .api_client
@@ -102,9 +103,13 @@ impl StepRunner {
                 captured_r: captured_data.captured_r,
                 captured_g: captured_data.captured_g,
                 captured_b: captured_data.captured_b,
-                captured_rgb: captured_data
-                    .captured_r
-                    .map(|r| vec![r, captured_data.captured_g.unwrap_or(0), captured_data.captured_b.unwrap_or(0)]),
+                captured_rgb: captured_data.captured_r.map(|r| {
+                    vec![
+                        r,
+                        captured_data.captured_g.unwrap_or(0),
+                        captured_data.captured_b.unwrap_or(0),
+                    ]
+                }),
                 captured_found: captured_data.captured_found,
                 captured_x: captured_data.captured_x,
                 captured_y: captured_data.captured_y,
@@ -118,13 +123,19 @@ impl StepRunner {
                 variable_updates: updates,
             };
 
-            self.api_client.post_step_result(task_run_id, &step_req).await?;
+            self.api_client
+                .post_step_result(task_run_id, &step_req)
+                .await?;
 
             seq += 1;
 
             if result_status == "failed" {
                 self.api_client
-                    .complete_task_run(task_run_id, "failed", Some("Step execution failed".to_string()))
+                    .complete_task_run(
+                        task_run_id,
+                        "failed",
+                        Some("Step execution failed".to_string()),
+                    )
                     .await?;
                 return Ok(());
             }
@@ -139,7 +150,10 @@ impl StepRunner {
             .complete_task_run(task_run_id, "succeeded", None)
             .await?;
 
-        info!(task_run_id = task_run_id, "Automation execution completed successfully");
+        info!(
+            task_run_id = task_run_id,
+            "Automation execution completed successfully"
+        );
         Ok(())
     }
 
@@ -209,7 +223,8 @@ impl StepRunner {
                     }
                 }
 
-                self.input.mouse_click(target_x, target_y, button, click_type)?;
+                self.input
+                    .mouse_click(target_x, target_y, button, click_type)?;
                 captured.captured_x = Some(target_x);
                 captured.captured_y = Some(target_y);
 
@@ -260,7 +275,11 @@ impl StepRunner {
 
                 tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
 
-                let updates_opt = if updates.is_empty() { None } else { Some(updates) };
+                let updates_opt = if updates.is_empty() {
+                    None
+                } else {
+                    Some(updates)
+                };
                 Ok((None, *id, "success".to_string(), updates_opt, captured))
             }
 
@@ -279,7 +298,10 @@ impl StepRunner {
                 output_region_variable_id,
                 ..
             } => {
-                let template_img = match self.get_or_download_bitmap(reference_bitmap_key.as_deref()).await {
+                let template_img = match self
+                    .get_or_download_bitmap(reference_bitmap_key.as_deref())
+                    .await
+                {
                     Ok(img) => img,
                     Err(e) => {
                         warn!("Failed to load reference bitmap: {}", e);
@@ -344,7 +366,11 @@ impl StepRunner {
                 tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
 
                 let status = if match_res.found { "success" } else { "failed" };
-                let updates_opt = if updates.is_empty() { None } else { Some(updates) };
+                let updates_opt = if updates.is_empty() {
+                    None
+                } else {
+                    Some(updates)
+                };
                 Ok((None, *id, status.to_string(), updates_opt, captured))
             }
 
@@ -400,8 +426,9 @@ impl StepRunner {
                         match_threshold,
                         ..
                     } => {
-                        if let Ok(template_img) =
-                            self.get_or_download_bitmap(reference_bitmap_key.as_deref()).await
+                        if let Ok(template_img) = self
+                            .get_or_download_bitmap(reference_bitmap_key.as_deref())
+                            .await
                         {
                             let screen = capture_screen(
                                 &self.config.display,

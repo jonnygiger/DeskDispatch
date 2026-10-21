@@ -1552,11 +1552,21 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                reference_bitmap_id: query.reference_bitmap_id.or_else(|| fb.as_ref().and_then(|r| r.reference_bitmap_id)),
-                search_x: query.search_x.or_else(|| fb.as_ref().and_then(|r| r.search_x)),
-                search_y: query.search_y.or_else(|| fb.as_ref().and_then(|r| r.search_y)),
-                search_width: query.search_width.or_else(|| fb.as_ref().and_then(|r| r.search_width)),
-                search_height: query.search_height.or_else(|| fb.as_ref().and_then(|r| r.search_height)),
+                reference_bitmap_id: query
+                    .reference_bitmap_id
+                    .or_else(|| fb.as_ref().and_then(|r| r.reference_bitmap_id)),
+                search_x: query
+                    .search_x
+                    .or_else(|| fb.as_ref().and_then(|r| r.search_x)),
+                search_y: query
+                    .search_y
+                    .or_else(|| fb.as_ref().and_then(|r| r.search_y)),
+                search_width: query
+                    .search_width
+                    .or_else(|| fb.as_ref().and_then(|r| r.search_width)),
+                search_height: query
+                    .search_height
+                    .or_else(|| fb.as_ref().and_then(|r| r.search_height)),
                 match_threshold: fb.as_ref().map(|r| r.match_threshold).unwrap_or(0.95),
                 output_found_variable_id: fb.as_ref().and_then(|r| r.output_found_variable_id),
                 output_x_variable_id: fb.as_ref().and_then(|r| r.output_x_variable_id),
@@ -1590,18 +1600,31 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                condition_type: br.as_ref().map(|r| r.condition_type.clone()).unwrap_or_else(|| "pixel_rgb".to_string()),
+                condition_type: br
+                    .as_ref()
+                    .map(|r| r.condition_type.clone())
+                    .unwrap_or_else(|| "pixel_rgb".to_string()),
                 x: query.search_x.or_else(|| br.as_ref().and_then(|r| r.x)),
                 y: query.search_y.or_else(|| br.as_ref().and_then(|r| r.y)),
                 expected_r: br.as_ref().and_then(|r| r.expected_r).or(Some(0)),
                 expected_g: br.as_ref().and_then(|r| r.expected_g).or(Some(0)),
                 expected_b: br.as_ref().and_then(|r| r.expected_b).or(Some(0)),
                 tolerance: br.as_ref().and_then(|r| r.tolerance).or(Some(10)),
-                reference_bitmap_id: query.reference_bitmap_id.or_else(|| br.as_ref().and_then(|r| r.reference_bitmap_id)),
-                search_x: query.search_x.or_else(|| br.as_ref().and_then(|r| r.search_x)),
-                search_y: query.search_y.or_else(|| br.as_ref().and_then(|r| r.search_y)),
-                search_width: query.search_width.or_else(|| br.as_ref().and_then(|r| r.search_width)),
-                search_height: query.search_height.or_else(|| br.as_ref().and_then(|r| r.search_height)),
+                reference_bitmap_id: query
+                    .reference_bitmap_id
+                    .or_else(|| br.as_ref().and_then(|r| r.reference_bitmap_id)),
+                search_x: query
+                    .search_x
+                    .or_else(|| br.as_ref().and_then(|r| r.search_x)),
+                search_y: query
+                    .search_y
+                    .or_else(|| br.as_ref().and_then(|r| r.search_y)),
+                search_width: query
+                    .search_width
+                    .or_else(|| br.as_ref().and_then(|r| r.search_width)),
+                search_height: query
+                    .search_height
+                    .or_else(|| br.as_ref().and_then(|r| r.search_height)),
                 match_threshold: br.as_ref().and_then(|r| r.match_threshold).or(Some(0.95)),
                 on_match_step_id: br.as_ref().and_then(|r| r.on_match_step_id),
                 on_no_match_step_id: br.as_ref().and_then(|r| r.on_no_match_step_id),
