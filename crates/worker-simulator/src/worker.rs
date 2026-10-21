@@ -494,6 +494,15 @@ impl SimulatedWorker {
                                 Some(matched),
                             )
                         }
+                        "window_control" => (
+                            "success",
+                            Some(100),
+                            Some(150),
+                            Some(200),
+                            Some(0),
+                            Some(0),
+                            Some(true),
+                        ),
                         _ => (
                             "success",
                             Some(random_range(0..=255)),
