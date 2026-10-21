@@ -36,13 +36,12 @@ async fn test_schema_queries_syntax() {
 
         if let Some(ref pool) = pool_opt {
             let explain_sql = format!("EXPLAIN {}", sql);
-            let explain_plan: Vec<String> =
-                sqlx::query_scalar(sqlx::AssertSqlSafe(explain_sql))
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_else(|e| {
-                        panic!("Schema validation query failed for SQL '{}': {:?}", sql, e)
-                    });
+            let explain_plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(explain_sql))
+                .fetch_all(pool)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Schema validation query failed for SQL '{}': {:?}", sql, e)
+                });
 
             assert!(
                 !explain_plan.is_empty(),

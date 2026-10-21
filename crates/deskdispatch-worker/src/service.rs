@@ -115,7 +115,11 @@ WantedBy=multi-user.target
             .map_err(|e| format!("Failed to execute systemctl {:?}: {}", args, e))?;
 
         if !status.success() {
-            return Err(format!("systemctl {:?} exited with code {:?}", args, status.code()));
+            return Err(format!(
+                "systemctl {:?} exited with code {:?}",
+                args,
+                status.code()
+            ));
         }
         Ok(())
     }
