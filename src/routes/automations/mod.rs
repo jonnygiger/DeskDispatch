@@ -68,6 +68,10 @@ pub fn router() -> Router<AppState> {
             get(get_new_key_press_step_handler),
         )
         .route(
+            "/automations/{id}/steps/new/type_text",
+            get(get_new_type_text_step_handler),
+        )
+        .route(
             "/automations/{id}/steps/new/mouse_click",
             get(get_new_mouse_click_step_handler),
         )

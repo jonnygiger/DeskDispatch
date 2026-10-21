@@ -569,6 +569,21 @@ pub struct StepKeyPressTemplate {
     pub is_edit: bool,
 }
 
+#[derive(Template)]
+#[template(path = "automations/step_type_text.html")]
+pub struct StepTypeTextTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub text_to_type: String,
+    pub delay_between_keys_ms: i32,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
 #[derive(Deserialize)]
 pub struct KeyPressStepForm {
     pub label: Option<String>,
@@ -698,6 +713,9 @@ pub struct MouseClickStepForm {
     pub button: Option<String>,
     pub click_type: Option<String>,
     pub key_combo: Option<String>,
+    pub text_to_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub delay_between_keys_ms: Option<i32>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub output_variable_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
