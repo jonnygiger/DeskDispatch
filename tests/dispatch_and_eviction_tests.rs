@@ -20,6 +20,7 @@ struct DispatchCleanupGuard {
     user_ids: Vec<i64>,
     auto_ids: Vec<i64>,
     worker_ids: Vec<i64>,
+    worker_group_ids: Vec<i64>,
     task_run_ids: Vec<i64>,
     recording_session_ids: Vec<i64>,
 }
@@ -31,6 +32,7 @@ impl DispatchCleanupGuard {
             user_ids: Vec::new(),
             auto_ids: Vec::new(),
             worker_ids: Vec::new(),
+            worker_group_ids: Vec::new(),
             task_run_ids: Vec::new(),
             recording_session_ids: Vec::new(),
         }
@@ -43,6 +45,7 @@ impl Drop for DispatchCleanupGuard {
         let user_ids = self.user_ids.clone();
         let auto_ids = self.auto_ids.clone();
         let worker_ids = self.worker_ids.clone();
+        let worker_group_ids = self.worker_group_ids.clone();
         let task_run_ids = self.task_run_ids.clone();
         let recording_session_ids = self.recording_session_ids.clone();
 
@@ -60,8 +63,18 @@ impl Drop for DispatchCleanupGuard {
                     .await;
             }
             if !worker_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM worker_group_members WHERE worker_id = ANY($1)")
+                    .bind(&worker_ids)
+                    .execute(&pool)
+                    .await;
                 let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = ANY($1)")
                     .bind(&worker_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !worker_group_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM worker_groups WHERE id = ANY($1)")
+                    .bind(&worker_group_ids)
                     .execute(&pool)
                     .await;
             }
@@ -137,26 +150,19 @@ async fn test_concurrent_dispatch_claiming() {
     cleanup_guard.user_ids.push(user_id);
     cleanup_guard.auto_ids.push(auto_id);
 
-    // Batch seed 10 queued task runs in a single query using UNNEST
-    let auto_ids_repeat = vec![auto_id; 10];
-    let queued_run_ids: Vec<i64> = sqlx::query_scalar(
-        r#"
-        INSERT INTO task_runs (automation_id, status, queued_at)
-        SELECT a_id, 'queued', now()
-        FROM UNNEST($1::int8[]) AS a_id
-        RETURNING id
-        "#,
+    // Seed worker group A
+    let group_a_name = format!("GroupA_{}", uuid::Uuid::new_v4().simple());
+    let group_a_id: i64 = sqlx::query_scalar(
+        "INSERT INTO worker_groups (name, description) VALUES ($1, 'Group A Desc') RETURNING id",
     )
-    .bind(&auto_ids_repeat)
-    .fetch_all(&pool)
+    .bind(&group_a_name)
+    .fetch_one(&pool)
     .await
     .unwrap();
 
-    cleanup_guard
-        .task_run_ids
-        .extend(queued_run_ids.iter().copied());
+    cleanup_guard.worker_group_ids.push(group_a_id);
 
-    // Batch seed 5 workers in a single query using UNNEST
+    // Seed 5 workers
     let hostnames: Vec<String> = (1..=5)
         .map(|i| format!("worker_{}_{}", i, uuid::Uuid::new_v4().simple()))
         .collect();
@@ -178,13 +184,72 @@ async fn test_concurrent_dispatch_claiming() {
         .worker_ids
         .extend(worker_ids.iter().copied());
 
-    // Spawn concurrent claiming tasks using SELECT FOR UPDATE OF tr SKIP LOCKED
+    let group_a_worker_ids = vec![worker_ids[0], worker_ids[1]];
+
+    // Add Workers 1 and 2 to Group A
+    for &w_id in &group_a_worker_ids {
+        sqlx::query(
+            "INSERT INTO worker_group_members (group_id, worker_id) VALUES ($1, $2)",
+        )
+        .bind(group_a_id)
+        .bind(w_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Batch seed 5 targeted task runs (targeting group_a_id)
+    let auto_ids_5 = vec![auto_id; 5];
+    let group_ids_5 = vec![group_a_id; 5];
+
+    let targeted_run_ids: Vec<i64> = sqlx::query_scalar(
+        r#"
+        INSERT INTO task_runs (automation_id, target_worker_group_id, status, queued_at)
+        SELECT a_id, g_id, 'queued', now()
+        FROM UNNEST($1::int8[], $2::int8[]) AS u(a_id, g_id)
+        RETURNING id
+        "#,
+    )
+    .bind(&auto_ids_5)
+    .bind(&group_ids_5)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    // Batch seed 5 untargeted task runs (target_worker_group_id IS NULL)
+    let untargeted_run_ids: Vec<i64> = sqlx::query_scalar(
+        r#"
+        INSERT INTO task_runs (automation_id, status, queued_at)
+        SELECT a_id, 'queued', now()
+        FROM UNNEST($1::int8[]) AS a_id
+        RETURNING id
+        "#,
+    )
+    .bind(&auto_ids_5)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let all_queued_run_ids: Vec<i64> = targeted_run_ids
+        .iter()
+        .chain(untargeted_run_ids.iter())
+        .copied()
+        .collect();
+
+    cleanup_guard
+        .task_run_ids
+        .extend(all_queued_run_ids.iter().copied());
+
+    // Spawn concurrent claiming tasks synchronized by a Barrier so all 5 workers enter claiming simultaneously
+    let barrier = Arc::new(tokio::sync::Barrier::new(worker_ids.len()));
     let mut join_set = JoinSet::new();
     let shared_pool = Arc::new(pool.clone());
 
     for &worker_id in &worker_ids {
         let pool_clone = Arc::clone(&shared_pool);
+        let barrier_clone = Arc::clone(&barrier);
         join_set.spawn(async move {
+            barrier_clone.wait().await;
             let mut claimed_ids = Vec::new();
 
             // Attempt claiming multiple times per worker
@@ -198,11 +263,10 @@ async fn test_concurrent_dispatch_claiming() {
                     LEFT JOIN schedules s ON tr.schedule_id = s.id
                     WHERE tr.status = 'queued'
                       AND (
-                        tr.schedule_id IS NULL
-                        OR s.worker_group_id IS NULL
+                        COALESCE(tr.target_worker_group_id, s.worker_group_id) IS NULL
                         OR EXISTS (
                           SELECT 1 FROM worker_group_members wgm
-                          WHERE wgm.worker_id = $1 AND wgm.group_id = s.worker_group_id
+                          WHERE wgm.worker_id = $1 AND wgm.group_id = COALESCE(tr.target_worker_group_id, s.worker_group_id)
                         )
                       )
                     ORDER BY tr.queued_at ASC, tr.id ASC
@@ -265,8 +329,32 @@ async fn test_concurrent_dispatch_claiming() {
         "Claimed task run IDs should be strictly unique"
     );
 
-    // Verify in database that all 10 queued_run_ids are now 'running' and assigned to workers
-    for run_id in queued_run_ids {
+    // Verify targeted task runs were ONLY claimed by Group A members (Workers 1 and 2)
+    for run_id in targeted_run_ids {
+        let (status, assigned_worker_id): (String, Option<i64>) =
+            sqlx::query_as("SELECT status, worker_id FROM task_runs WHERE id = $1")
+                .bind(run_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(status, "running");
+        assert!(
+            assigned_worker_id.is_some(),
+            "Targeted task run {} should be assigned",
+            run_id
+        );
+        let assigned = assigned_worker_id.unwrap();
+        assert!(
+            group_a_worker_ids.contains(&assigned),
+            "Targeted task run {} assigned to worker {} who is not in Group A",
+            run_id,
+            assigned
+        );
+    }
+
+    // Verify untargeted task runs were claimed and assigned to valid online workers
+    for run_id in untargeted_run_ids {
         let (status, assigned_worker_id): (String, Option<i64>) =
             sqlx::query_as("SELECT status, worker_id FROM task_runs WHERE id = $1")
                 .bind(run_id)
