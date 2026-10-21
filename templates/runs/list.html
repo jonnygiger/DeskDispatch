@@ -71,6 +71,7 @@
                     <th>Automation</th>
                     <th>Worker</th>
                     <th>Status</th>
+                    <th>Task Output</th>
                     <th>Triggered By</th>
                     <th>Queued At</th>
                     <th>Duration</th>
@@ -99,6 +100,29 @@
                         {% endif %}
                     </td>
                     <td><span class="badge {{ run.status_badge_class() }}">{{ run.status }}</span></td>
+                    <td>
+                        {% if let Some(out_type) = run.output_type %}
+                            {% if let Some(out_val) = run.output_value %}
+                                {% if out_type == "boolean" %}
+                                    {% if out_val == "true" %}
+                                        <span class="badge badge-success">TRUE</span>
+                                    {% else %}
+                                        <span class="badge badge-danger">FALSE</span>
+                                    {% endif %}
+                                {% else if out_type == "ocr_text" %}
+                                    <code style="font-size: 0.75rem; background: rgba(0,0,0,0.05); padding: 0.2rem 0.4rem; border-radius: 4px;">{{ out_val }}</code>
+                                {% else if out_type == "image" %}
+                                    <a href="/media/screenshots/{{ out_val }}" target="_blank" class="btn btn-outline" style="padding: 0.1rem 0.4rem; font-size: 0.75rem;">🖼️ Image</a>
+                                {% else %}
+                                    <code style="font-size: 0.75rem;">{{ out_val }}</code>
+                                {% endif %}
+                            {% else %}
+                                <span style="color: var(--color-text-muted);">-</span>
+                            {% endif %}
+                        {% else %}
+                            <span style="color: var(--color-text-muted);">-</span>
+                        {% endif %}
+                    </td>
                     <td>{{ run.triggered_by }}</td>
                     <td>{{ run.formatted_queued_at() }}</td>
                     <td>{{ run.duration_display() }}</td>

@@ -925,13 +925,17 @@ pub async fn post_complete_task_run_handler(
         UPDATE task_runs
         SET status = CASE WHEN status = 'cancelling' THEN 'cancelled' ELSE $1 END,
             completed_at = now(),
-            error_message = COALESCE($2, error_message)
-        WHERE id = $3 AND worker_id = $4 AND status IN ('running', 'cancelling')
+            error_message = COALESCE($2, error_message),
+            output_type = COALESCE($3, output_type),
+            output_value = COALESCE($4, output_value)
+        WHERE id = $5 AND worker_id = $6 AND status IN ('running', 'cancelling')
         RETURNING id
         "#,
     )
     .bind(final_status)
     .bind(payload.error_message.as_deref())
+    .bind(payload.output_type.as_deref())
+    .bind(payload.output_value.as_deref())
     .bind(task_run_id)
     .bind(worker.id)
     .fetch_optional(&state.db)

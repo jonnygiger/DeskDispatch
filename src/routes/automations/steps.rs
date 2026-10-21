@@ -102,6 +102,17 @@ struct MouseClickDetailRow {
     click_type: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct OcrExtractDetailRow {
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_variable_id: Option<i64>,
+    output_variable_id: Option<i64>,
+    set_as_task_output: bool,
+}
+
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
 // ============================================================================
@@ -789,6 +800,37 @@ pub async fn get_new_key_press_step_handler(
     })
 }
 
+/// GET /automations/{id}/steps/new/ocr_extract
+#[tracing::instrument(skip(state, user))]
+pub async fn get_new_ocr_extract_step_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<NewOcrExtractQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let variables = fetch_automation_variables(&state.db, id).await;
+
+    HtmlTemplate(StepOcrExtractTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        search_x: query.search_x,
+        search_y: query.search_y,
+        search_width: query.search_width,
+        search_height: query.search_height,
+        region_variable_id: None,
+        output_variable_id: None,
+        set_as_task_output: true,
+        variables,
+        error: None,
+        is_edit: false,
+    })
+}
+
 /// GET /automations/{id}/steps/new/branch
 #[tracing::instrument(skip(state, user))]
 pub async fn get_new_branch_step_handler(
@@ -1159,6 +1201,37 @@ async fn save_step_details(
             .execute(&mut **tx)
             .await?;
         }
+        "ocr_extract" => {
+            let set_task_out = form.set_as_task_output.as_deref() == Some("on")
+                || form.set_as_task_output.as_deref() == Some("true")
+                || form.set_as_task_output.as_deref() == Some("1");
+
+            sqlx::query(
+                r#"
+                INSERT INTO step_ocr_extracts
+                    (step_id, search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    search_x = EXCLUDED.search_x,
+                    search_y = EXCLUDED.search_y,
+                    search_width = EXCLUDED.search_width,
+                    search_height = EXCLUDED.search_height,
+                    region_variable_id = EXCLUDED.region_variable_id,
+                    output_variable_id = EXCLUDED.output_variable_id,
+                    set_as_task_output = EXCLUDED.set_as_task_output
+                "#,
+            )
+            .bind(step_id)
+            .bind(form.search_x)
+            .bind(form.search_y)
+            .bind(form.search_width)
+            .bind(form.search_height)
+            .bind(form.region_variable_id)
+            .bind(form.output_variable_id)
+            .bind(set_task_out)
+            .execute(&mut **tx)
+            .await?;
+        }
         _ => {}
     }
     Ok(())
@@ -1301,6 +1374,32 @@ async fn render_step_error(
             })
             .into_response()
         }
+        "ocr_extract" => {
+            let variables = fetch_automation_variables(db, automation_id).await;
+            let set_task_out = form.set_as_task_output.as_deref() == Some("on")
+                || form.set_as_task_output.as_deref() == Some("true")
+                || form.set_as_task_output.as_deref() == Some("1");
+
+            HtmlTemplate(StepOcrExtractTemplate {
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
+                label,
+                post_delay_seconds,
+                search_x: form.search_x,
+                search_y: form.search_y,
+                search_width: form.search_width,
+                search_height: form.search_height,
+                region_variable_id: form.region_variable_id,
+                output_variable_id: form.output_variable_id,
+                set_as_task_output: set_task_out,
+                variables,
+                error: Some(error),
+                is_edit,
+            })
+            .into_response()
+        }
         _ => return Redirect::to(&format!("/automations/{}", automation_id)).into_response(),
     };
 
@@ -1394,6 +1493,17 @@ async fn validate_step_form(
                 form.output_x_variable_id,
                 form.output_y_variable_id,
                 form.output_region_variable_id,
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+
+            validate_automation_variables_exist(db, automation_id, &out_vars).await?;
+        }
+        "ocr_extract" => {
+            let out_vars: Vec<i64> = [
+                form.region_variable_id,
+                form.output_variable_id,
             ]
             .into_iter()
             .flatten()
@@ -1657,6 +1767,38 @@ pub async fn get_edit_step_handler(
                 x: fp.as_ref().and_then(|r| r.x),
                 y: fp.as_ref().and_then(|r| r.y),
                 output_variable_id: fp.as_ref().and_then(|r| r.output_variable_id),
+                variables,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "ocr_extract" => {
+            let (ocr_row, variables) = tokio::join!(
+                sqlx::query_as::<_, OcrExtractDetailRow>(
+                    "SELECT search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts WHERE step_id = $1"
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id),
+            );
+
+            let ocr = ocr_row.ok().flatten();
+
+            HtmlTemplate(StepOcrExtractTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                search_x: query.search_x.or_else(|| ocr.as_ref().and_then(|r| r.search_x)),
+                search_y: query.search_y.or_else(|| ocr.as_ref().and_then(|r| r.search_y)),
+                search_width: query.search_width.or_else(|| ocr.as_ref().and_then(|r| r.search_width)),
+                search_height: query.search_height.or_else(|| ocr.as_ref().and_then(|r| r.search_height)),
+                region_variable_id: ocr.as_ref().and_then(|r| r.region_variable_id),
+                output_variable_id: ocr.as_ref().and_then(|r| r.output_variable_id),
+                set_as_task_output: ocr.as_ref().map(|r| r.set_as_task_output).unwrap_or(true),
                 variables,
                 error: None,
                 is_edit: true,

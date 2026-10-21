@@ -19,6 +19,29 @@ impl CapturedImage {
         }
     }
 
+    pub fn crop(&self, crop_x: u32, crop_y: u32, crop_w: u32, crop_h: u32) -> Self {
+        let x1 = crop_x.min(self.width);
+        let y1 = crop_y.min(self.height);
+        let x2 = (crop_x + crop_w).min(self.width);
+        let y2 = (crop_y + crop_h).min(self.height);
+
+        let w = x2.saturating_sub(x1).max(1);
+        let h = y2.saturating_sub(y1).max(1);
+
+        let mut data = Vec::with_capacity((w * h * 4) as usize);
+        for y in y1..y2 {
+            let start = ((y * self.width + x1) * 4) as usize;
+            let end = ((y * self.width + x2) * 4) as usize;
+            if start < self.data.len() && end <= self.data.len() {
+                data.extend_from_slice(&self.data[start..end]);
+            }
+        }
+        if data.is_empty() {
+            data = vec![0u8; (w * h * 4) as usize];
+        }
+        Self::new(w, h, data)
+    }
+
     pub fn get_pixel_rgb(&self, x: u32, y: u32) -> Option<(u8, u8, u8)> {
         if x >= self.width || y >= self.height {
             return None;

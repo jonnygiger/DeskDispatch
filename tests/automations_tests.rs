@@ -1578,3 +1578,105 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         html_edit
     );
 }
+
+#[tokio::test]
+async fn test_ocr_extract_step_crud_and_task_output() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_ocr_extract_step_crud_and_task_output");
+        return;
+    };
+
+    let row = sqlx::query(
+        "INSERT INTO users (username, password_hash, display_name, role) VALUES ('ocr_editor', 'hash', 'Test', 'editor') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let user_id: i64 = sqlx::Row::get(&row, "id");
+
+    let session_row = sqlx::query(
+        "INSERT INTO sessions (user_id, expires_at) VALUES ($1, now() + interval '1 hour') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let session_uuid: uuid::Uuid = sqlx::Row::get(&session_row, "id");
+    let cookie_header = format!("__Host-session_id={}", session_uuid);
+
+    let config = Config::from_env().unwrap();
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
+
+    let state = AppState {
+        db: pool.clone(),
+        storage,
+        config: config.clone(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+
+    let app = deskdispatch::routes::automations::router().with_state(state);
+
+    let automation_id: i64 = sqlx::query_scalar("INSERT INTO automations (name, description, status, created_by) VALUES ('OCR Flow', 'Test OCR', 'draft', $1) RETURNING id")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let csrf = generate_csrf_token(session_uuid, config.session_secret.expose_secret());
+
+    // 1. GET /automations/{id}/steps/new/ocr_extract
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}/steps/new/ocr_extract", automation_id))
+        .header(header::COOKIE, &cookie_header)
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 2. POST /automations/{id}/steps creating ocr_extract step
+    let form_body = format!(
+        "csrf_token={}&step_type=ocr_extract&label=Read+Header&search_x=10&search_y=20&search_width=200&search_height=50&set_as_task_output=true&post_delay_seconds=0.5",
+        csrf
+    );
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, &cookie_header)
+        .header(
+            header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .body(Body::from(form_body))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // 3. GET /automations/{id} and verify OCR step is listed
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}", automation_id))
+        .header(header::COOKIE, &cookie_header)
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    assert!(html.contains("Read Header"));
+    assert!(html.contains("ocr_extract"));
+    assert!(html.contains("Extract text via OCR"));
+}

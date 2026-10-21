@@ -99,6 +99,8 @@ pub struct StepResultResponse {
 pub struct CompleteTaskRunRequest {
     pub status: String,
     pub error_message: Option<String>,
+    pub output_type: Option<String>,
+    pub output_value: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -262,6 +264,20 @@ pub enum StepPayload {
         condition: BranchConditionPayload,
         on_match_step_id: Option<i64>,
         on_no_match_step_id: Option<i64>,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
+    OcrExtract {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        search_x: Option<i32>,
+        search_y: Option<i32>,
+        search_width: Option<i32>,
+        search_height: Option<i32>,
+        region_variable_id: Option<i64>,
+        output_variable_id: Option<i64>,
+        set_as_task_output: bool,
         timeout_ms: u64,
         retry_interval_ms: u64,
     },

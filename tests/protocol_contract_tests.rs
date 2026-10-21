@@ -80,6 +80,8 @@ fn test_protocol_dto_serialization_roundtrip() {
     let complete_req = CompleteTaskRunRequest {
         status: "completed".to_string(),
         error_message: None,
+        output_type: Some("ocr_text".to_string()),
+        output_value: Some("Invoice #9821".to_string()),
     };
     let complete_req_str = serde_json::to_string(&complete_req).unwrap();
     let complete_req_roundtrip: CompleteTaskRunRequest =
@@ -142,12 +144,28 @@ fn test_protocol_dto_serialization_roundtrip() {
             var_type: "boolean".to_string(),
             description: "Default success status".to_string(),
         }],
-        steps: vec![StepPayload::KeyPress {
-            id: 10,
-            label: Some("Press Enter".to_string()),
-            post_delay_ms: 100,
-            key_combo: "Enter".to_string(),
-        }],
+        steps: vec![
+            StepPayload::KeyPress {
+                id: 10,
+                label: Some("Press Enter".to_string()),
+                post_delay_ms: 100,
+                key_combo: "Enter".to_string(),
+            },
+            StepPayload::OcrExtract {
+                id: 11,
+                label: Some("Extract Amount".to_string()),
+                post_delay_ms: 200,
+                search_x: Some(100),
+                search_y: Some(200),
+                search_width: Some(300),
+                search_height: Some(150),
+                region_variable_id: None,
+                output_variable_id: Some(1),
+                set_as_task_output: true,
+                timeout_ms: 5000,
+                retry_interval_ms: 250,
+            },
+        ],
     };
     let full_auto_str = serde_json::to_string(&full_auto).unwrap();
     let full_auto_roundtrip: FullAutomationPayload = serde_json::from_str(&full_auto_str).unwrap();

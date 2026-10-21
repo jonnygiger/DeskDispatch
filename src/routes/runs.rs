@@ -66,6 +66,8 @@ pub struct TaskRunListItem {
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub error_message: Option<String>,
     pub screenshot_step_id: Option<i64>,
+    pub output_type: Option<String>,
+    pub output_value: Option<String>,
 }
 
 impl TaskRunListItem {
@@ -378,6 +380,8 @@ pub async fn get_runs_handler(
             completed_at: r.get("completed_at"),
             error_message: r.get("error_message"),
             screenshot_step_id: r.get("screenshot_step_id"),
+            output_type: r.get("output_type"),
+            output_value: r.get("output_value"),
         })
         .collect();
 
@@ -464,6 +468,8 @@ pub async fn get_run_status_frame_handler(
         completed_at: run_row.get("completed_at"),
         error_message: run_row.get("error_message"),
         screenshot_step_id: None,
+        output_type: run_row.get("output_type"),
+        output_value: run_row.get("output_value"),
     };
 
     let paused = query.paused.unwrap_or(false);
@@ -600,6 +606,8 @@ pub async fn get_run_detail_handler(
         completed_at: run_row.get("completed_at"),
         error_message: run_row.get("error_message"),
         screenshot_step_id: None,
+        output_type: run_row.get("output_type"),
+        output_value: run_row.get("output_value"),
     };
 
     let auto_refresh = run_item.status == "queued"
@@ -1020,6 +1028,8 @@ mod tests {
             completed_at: Some(now + chrono::Duration::seconds(45)),
             error_message: None,
             screenshot_step_id: None,
+            output_type: None,
+            output_value: None,
         };
 
         assert_eq!(item.status_badge_class(), "badge-success");
@@ -1104,6 +1114,8 @@ mod tests {
             completed_at: Some(now + chrono::Duration::seconds(125)), // 2m 5s
             error_message: None,
             screenshot_step_id: None,
+            output_type: None,
+            output_value: None,
         };
         assert_eq!(item.duration_display(), "2m 5s");
 

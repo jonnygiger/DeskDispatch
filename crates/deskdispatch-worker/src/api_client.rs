@@ -175,6 +175,8 @@ impl WorkerApiClient {
         task_run_id: i64,
         status: &str,
         error_message: Option<String>,
+        output_type: Option<String>,
+        output_value: Option<String>,
     ) -> Result<CompleteTaskRunResponse, String> {
         let api_key = self
             .api_key
@@ -189,6 +191,8 @@ impl WorkerApiClient {
         let req = CompleteTaskRunRequest {
             status: status.to_string(),
             error_message,
+            output_type,
+            output_value,
         };
 
         let resp = self
