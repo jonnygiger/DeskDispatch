@@ -465,15 +465,12 @@ async fn generate_bitmap_upload_policy(
     };
 
     let storage = state.storage_service();
-    let presigned_post = match storage
-        .generate_presigned_post(
-            &object_key,
-            Duration::from_secs(900),
-            10_485_760,
-            Some(&redirect_url),
-        )
-        .await
-    {
+    let presigned_post = match storage.generate_presigned_post(
+        &object_key,
+        Duration::from_secs(900),
+        10_485_760,
+        Some(&redirect_url),
+    ) {
         Ok(post) => post,
         Err(e) => {
             tracing::error!("Failed to generate presigned POST policy: {}", e);

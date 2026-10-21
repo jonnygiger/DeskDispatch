@@ -626,7 +626,6 @@ pub async fn get_run_detail_handler(
             let presigned_url = match state
                 .storage_service()
                 .generate_presigned_get_url(key, Duration::from_secs(900))
-                .await
             {
                 Ok(url) => url,
                 Err(_) => format!("/media/screenshots/{}", step_id),

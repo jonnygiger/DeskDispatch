@@ -1059,7 +1059,6 @@ pub async fn get_task_run_screenshot_upload_url_handler(
 
     let upload_url = storage
         .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
-        .await
         .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
 
     Ok(Json(ScreenshotUploadUrlResponse {
@@ -1188,7 +1187,6 @@ pub async fn get_recording_screenshot_upload_url_handler(
 
     let upload_url = storage
         .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
-        .await
         .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
 
     Ok(Json(ScreenshotUploadUrlResponse {
@@ -1245,7 +1243,6 @@ pub async fn get_bitmap_upload_url_handler(
 
     let upload_url = storage
         .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
-        .await
         .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
 
     Ok(Json(ScreenshotUploadUrlResponse {

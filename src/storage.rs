@@ -803,8 +803,7 @@ impl StorageService {
     }
 
     /// Generates a presigned GET URL for an object key in S3 / RustFS with the given expiration duration.
-    #[tracing::instrument(skip(self))]
-    pub async fn generate_presigned_get_url(
+    pub fn generate_presigned_get_url(
         &self,
         object_key: &str,
         expires_in: Duration,
@@ -826,8 +825,7 @@ impl StorageService {
     }
 
     /// Generates a presigned PUT URL for worker node file uploads in S3 / RustFS with the given expiration duration.
-    #[tracing::instrument(skip(self))]
-    pub async fn generate_presigned_put_url(
+    pub fn generate_presigned_put_url(
         &self,
         object_key: &str,
         expires_in: Duration,
@@ -849,8 +847,7 @@ impl StorageService {
     }
 
     /// Generates a presigned POST policy for browser-direct file uploads in S3 / RustFS.
-    #[tracing::instrument(skip(self))]
-    pub async fn generate_presigned_post(
+    pub fn generate_presigned_post(
         &self,
         object_key: &str,
         expires_in: Duration,
@@ -995,8 +992,8 @@ mod tests {
         assert_eq!(encode_hex(&hmac_sha256(&key6, data6)), expected6);
     }
 
-    #[tokio::test]
-    async fn test_generate_presigned_get_url() {
+    #[test]
+    fn test_generate_presigned_get_url() {
         let storage = StorageService::new("test-bucket")
             .with_credentials(
                 "test_access_key",
@@ -1013,7 +1010,6 @@ mod tests {
 
         let url = storage
             .generate_presigned_get_url(object_key, expires_in)
-            .await
             .unwrap();
 
         assert!(url.contains("http://localhost:9000/test-bucket/screenshots/step_123.png"));
@@ -1043,8 +1039,8 @@ mod tests {
         assert_eq!(extract_sig(&url), extract_sig(&direct_url));
     }
 
-    #[tokio::test]
-    async fn test_generate_presigned_put_url() {
+    #[test]
+    fn test_generate_presigned_put_url() {
         let storage = StorageService::new("test-bucket")
             .with_credentials(
                 "test_access_key",
@@ -1061,7 +1057,6 @@ mod tests {
 
         let url = storage
             .generate_presigned_put_url(object_key, expires_in)
-            .await
             .unwrap();
 
         assert!(url.contains("http://localhost:9000/test-bucket/uploads/worker_run_456.png"));
