@@ -142,12 +142,21 @@ fn test_protocol_dto_serialization_roundtrip() {
             var_type: "boolean".to_string(),
             description: "Default success status".to_string(),
         }],
-        steps: vec![StepPayload::KeyPress {
-            id: 10,
-            label: Some("Press Enter".to_string()),
-            post_delay_ms: 100,
-            key_combo: "Enter".to_string(),
-        }],
+        steps: vec![
+            StepPayload::KeyPress {
+                id: 10,
+                label: Some("Press Enter".to_string()),
+                post_delay_ms: 100,
+                key_combo: "Enter".to_string(),
+            },
+            StepPayload::TypeText {
+                id: 11,
+                label: Some("Type Welcome".to_string()),
+                post_delay_ms: 200,
+                text_to_type: "Hello World".to_string(),
+                delay_between_keys_ms: 50,
+            },
+        ],
     };
     let full_auto_str = serde_json::to_string(&full_auto).unwrap();
     let full_auto_roundtrip: FullAutomationPayload = serde_json::from_str(&full_auto_str).unwrap();

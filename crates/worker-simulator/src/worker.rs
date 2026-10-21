@@ -445,7 +445,24 @@ impl SimulatedWorker {
             );
 
             let started_at = Utc::now();
-            tokio::time::sleep(Duration::from_millis(post_delay_ms.min(1000))).await;
+            let typing_delay = if step_type == "type_text" {
+                let key_delay = step
+                    .get("delay_between_keys_ms")
+                    .and_then(|d| d.as_u64())
+                    .unwrap_or(0);
+                let char_count = step
+                    .get("text_to_type")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.chars().count())
+                    .unwrap_or(0);
+                (key_delay * char_count as u64).min(500)
+            } else {
+                0
+            };
+            tokio::time::sleep(Duration::from_millis(
+                post_delay_ms.min(1000) + typing_delay,
+            ))
+            .await;
 
             // Determine step result based on profile
             let (result_str, captured_r, captured_g, captured_b, captured_x, captured_y, found) =

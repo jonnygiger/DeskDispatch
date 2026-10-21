@@ -116,6 +116,13 @@ struct KeyPressRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct TypeTextRow {
+    step_id: i64,
+    text_to_type: String,
+    delay_between_keys_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
 struct FindPixelRow {
     step_id: i64,
     x: i32,
@@ -253,6 +260,17 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(db);
 
+    let tt_fut = sqlx::query_as::<_, TypeTextRow>(
+        r#"
+        SELECT stt.step_id, stt.text_to_type, stt.delay_between_keys_ms
+        FROM step_type_texts stt
+        JOIN automation_steps s ON stt.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
     let fp_fut = sqlx::query_as::<_, FindPixelRow>(
         r#"
         SELECT sfp.step_id, sfp.x, sfp.y, sfp.output_variable_id
@@ -299,11 +317,12 @@ pub async fn fetch_full_automation_json_with_overrides(
         step_rows,
         mouse_clicks_rows,
         key_presses_rows,
+        type_texts_rows,
         find_pixel_rows,
         find_bitmap_rows,
         branch_rows,
     ) = tokio::try_join!(
-        params_fut, vars_fut, steps_fut, mc_fut, kp_fut, fp_fut, fb_fut, branch_fut
+        params_fut, vars_fut, steps_fut, mc_fut, kp_fut, tt_fut, fp_fut, fb_fut, branch_fut
     )?;
 
     let mut parameters_map = HashMap::with_capacity(param_rows.len());
@@ -342,6 +361,7 @@ pub async fn fetch_full_automation_json_with_overrides(
     enum StepDetail {
         MouseClick(MouseClickRow),
         KeyPress(String),
+        TypeText(TypeTextRow),
         FindPixel(FindPixelRow),
         FindBitmap(FindBitmapRow),
         Branch(BranchRow),
@@ -353,6 +373,9 @@ pub async fn fetch_full_automation_json_with_overrides(
     }
     for r in key_presses_rows {
         details_map.insert(r.step_id, StepDetail::KeyPress(r.key_combo));
+    }
+    for r in type_texts_rows {
+        details_map.insert(r.step_id, StepDetail::TypeText(r));
     }
     for r in find_pixel_rows {
         details_map.insert(r.step_id, StepDetail::FindPixel(r));
@@ -392,6 +415,15 @@ pub async fn fetch_full_automation_json_with_overrides(
                         label,
                         post_delay_ms,
                         key_combo,
+                    });
+                }
+                StepDetail::TypeText(r) => {
+                    steps_list.push(StepPayload::TypeText {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        text_to_type: r.text_to_type,
+                        delay_between_keys_ms: r.delay_between_keys_ms,
                     });
                 }
                 StepDetail::FindPixel(r) => {

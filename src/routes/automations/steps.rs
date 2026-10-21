@@ -102,6 +102,12 @@ struct MouseClickDetailRow {
     click_type: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct TypeTextDetailRow {
+    text_to_type: String,
+    delay_between_keys_ms: i32,
+}
+
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
 // ============================================================================
@@ -364,6 +370,27 @@ pub fn generate_mouse_click_summary(
     buf
 }
 
+pub fn generate_type_text_summary(text_to_type: &str, delay_between_keys_ms: i32) -> String {
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(64);
+    let trimmed = text_to_type.trim();
+    let display_text = if trimmed.len() > 30 {
+        format!("{}...", &trimmed[..30])
+    } else {
+        trimmed.to_string()
+    };
+
+    if delay_between_keys_ms > 0 {
+        let _ = write!(
+            buf,
+            "Type \"{display_text}\" ({delay_between_keys_ms}ms key delay)"
+        );
+    } else {
+        let _ = write!(buf, "Type \"{display_text}\"");
+    }
+    buf
+}
+
 pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&str>) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
@@ -445,6 +472,13 @@ struct KeyPressViewRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct TypeTextViewRow {
+    step_id: i64,
+    text_to_type: String,
+    delay_between_keys_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
 struct MouseClickViewRow {
     step_id: i64,
     x: Option<i32>,
@@ -518,12 +552,23 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         return Vec::new();
     }
 
-    let (kp_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
+    let (kp_res, tt_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
         sqlx::query_as::<_, KeyPressViewRow>(
             r#"
             SELECT skp.step_id, skp.key_combo
             FROM step_key_presses skp
             JOIN automation_steps s ON skp.step_id = s.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query_as::<_, TypeTextViewRow>(
+            r#"
+            SELECT stt.step_id, stt.text_to_type, stt.delay_between_keys_ms
+            FROM step_type_texts stt
+            JOIN automation_steps s ON stt.step_id = s.id
             WHERE s.automation_id = $1 AND s.deleted_at IS NULL
             "#,
         )
@@ -596,6 +641,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     );
 
     let kp_rows = kp_res.unwrap_or_default();
+    let tt_rows = tt_res.unwrap_or_default();
     let mc_rows = mc_res.unwrap_or_default();
     let fp_rows = fp_res.unwrap_or_default();
     let fb_rows = fb_res.unwrap_or_default();
@@ -604,6 +650,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
     enum StepDetailView {
         KeyPress(KeyPressViewRow),
+        TypeText(TypeTextViewRow),
         MouseClick(MouseClickViewRow),
         FindPixel(FindPixelViewRow),
         FindBitmap(FindBitmapViewRow),
@@ -642,6 +689,9 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     for r in kp_rows {
         details_map.insert(r.step_id, StepDetailView::KeyPress(r));
     }
+    for r in tt_rows {
+        details_map.insert(r.step_id, StepDetailView::TypeText(r));
+    }
     for r in mc_rows {
         details_map.insert(r.step_id, StepDetailView::MouseClick(r));
     }
@@ -672,6 +722,11 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
         let (description, ref_bitmap_id, ref_bitmap_key) = match detail_opt {
             Some(StepDetailView::KeyPress(r)) => (format!("Press {}", r.key_combo), None, None),
+            Some(StepDetailView::TypeText(r)) => (
+                generate_type_text_summary(&r.text_to_type, r.delay_between_keys_ms),
+                None,
+                None,
+            ),
             Some(StepDetailView::MouseClick(r)) => (
                 generate_mouse_click_summary(
                     r.x,
@@ -723,6 +778,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             None => (
                 match step_type.as_str() {
                     "key_press" => "Press key".to_string(),
+                    "type_text" => "Type text".to_string(),
                     "mouse_click" => "Click mouse".to_string(),
                     "find_pixel_rgb" => "Read pixel at coordinate".to_string(),
                     "find_bitmap" => "Search for bitmap on screen".to_string(),
@@ -784,6 +840,27 @@ pub async fn get_new_key_press_step_handler(
         label: String::new(),
         post_delay_seconds: 0.0,
         key_combo: String::new(),
+        error: None,
+        is_edit: false,
+    })
+}
+
+/// GET /automations/{id}/steps/new/type_text
+#[tracing::instrument(skip(user))]
+pub async fn get_new_type_text_step_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    HtmlTemplate(StepTypeTextTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        text_to_type: String::new(),
+        delay_between_keys_ms: 0,
         error: None,
         is_edit: false,
     })
@@ -1038,6 +1115,24 @@ async fn save_step_details(
             .execute(&mut **tx)
             .await?;
         }
+        "type_text" => {
+            let text_to_type = form.text_to_type.as_deref().unwrap_or("").trim();
+            let delay_between_keys_ms = form.delay_between_keys_ms.unwrap_or(0).max(0);
+            sqlx::query(
+                r#"
+                INSERT INTO step_type_texts (step_id, text_to_type, delay_between_keys_ms)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    text_to_type = EXCLUDED.text_to_type,
+                    delay_between_keys_ms = EXCLUDED.delay_between_keys_ms
+                "#,
+            )
+            .bind(step_id)
+            .bind(text_to_type)
+            .bind(delay_between_keys_ms)
+            .execute(&mut **tx)
+            .await?;
+        }
         "key_press" => {
             let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
             sqlx::query(
@@ -1229,6 +1324,19 @@ async fn render_step_error(
             is_edit,
         })
         .into_response(),
+        "type_text" => HtmlTemplate(StepTypeTextTemplate {
+            user,
+            csrf_token,
+            automation_id,
+            step_id,
+            label,
+            post_delay_seconds,
+            text_to_type: form.text_to_type.unwrap_or_default(),
+            delay_between_keys_ms: form.delay_between_keys_ms.unwrap_or(0).max(0),
+            error: Some(error),
+            is_edit,
+        })
+        .into_response(),
         "mouse_click" => {
             let variables = fetch_automation_variables(db, automation_id).await;
             HtmlTemplate(StepMouseClickTemplate {
@@ -1352,6 +1460,17 @@ async fn validate_step_form(
             let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
             if key_combo.is_empty() {
                 return Err("Key combination cannot be empty.".to_string());
+            }
+        }
+        "type_text" => {
+            let text = form.text_to_type.as_deref().unwrap_or("").trim();
+            if text.is_empty() {
+                return Err("Text to type cannot be empty.".to_string());
+            }
+            if let Some(delay) = form.delay_between_keys_ms
+                && delay < 0
+            {
+                return Err("Delay between key presses cannot be negative.".to_string());
             }
         }
         "mouse_click" => {
@@ -1527,6 +1646,39 @@ pub async fn get_edit_step_handler(
                 label,
                 post_delay_seconds,
                 key_combo,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "type_text" => {
+            let tt_row = sqlx::query_as::<_, TypeTextDetailRow>(
+                "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
+            let text_to_type = tt_row
+                .as_ref()
+                .map(|r| r.text_to_type.clone())
+                .unwrap_or_default();
+            let delay_between_keys_ms = tt_row
+                .as_ref()
+                .map(|r| r.delay_between_keys_ms)
+                .unwrap_or(0);
+
+            HtmlTemplate(StepTypeTextTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                text_to_type,
+                delay_between_keys_ms,
                 error: None,
                 is_edit: true,
             })

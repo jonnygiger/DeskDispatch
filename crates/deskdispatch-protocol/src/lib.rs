@@ -227,6 +227,13 @@ pub enum StepPayload {
         post_delay_ms: i32,
         key_combo: String,
     },
+    TypeText {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        text_to_type: String,
+        delay_between_keys_ms: i32,
+    },
     FindPixelRgb {
         id: i64,
         label: Option<String>,

@@ -1,0 +1,55 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}{% if is_edit %}Edit Type Text Step{% else %}New Type Text Step{% endif %} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">{% if is_edit %}Edit Type Text Step{% else %}New Type Text Step{% endif %}</h1>
+    <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    {% if let Some(err) = error %}
+        <div class="alert alert-danger" style="margin-bottom: 1rem; color: var(--color-danger);">
+            {{ err }}
+        </div>
+    {% endif %}
+
+    <form method="post" action="{% if let Some(sid) = step_id %}/automations/{{ automation_id }}/steps/{{ sid }}{% else %}/automations/{{ automation_id }}/steps{% endif %}">
+        {% call macros::csrf_field(csrf_token) %}{% endcall %}
+        <input type="hidden" name="step_type" value="type_text">
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="label" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Step Label (Optional)</label>
+            <input type="text" id="label" name="label" value="{{ label }}" class="form-control" style="width: 100%;" placeholder="e.g. Type Greeting">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="text_to_type" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Text to Type *</label>
+            <textarea id="text_to_type" name="text_to_type" required class="form-control" style="width: 100%; min-height: 100px; font-family: monospace;" placeholder="Enter text string to type out...">{{ text_to_type }}</textarea>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Enter the entire text string to type automatically</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="delay_between_keys_ms" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Delay between key presses (ms)</label>
+            <input type="number" min="0" id="delay_between_keys_ms" name="delay_between_keys_ms" value="{{ delay_between_keys_ms }}" class="form-control" style="width: 100%;" placeholder="0">
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Configurable delay between individual key strokes in milliseconds (0 for default fast typing)</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label for="post_delay_seconds" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Wait after this step (seconds)</label>
+            <input type="number" step="0.1" min="0" id="post_delay_seconds" name="post_delay_seconds" value="{{ post_delay_seconds }}" class="form-control" style="width: 100%;" placeholder="0.0">
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">{% if is_edit %}Save Changes{% else %}Add Step{% endif %}</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

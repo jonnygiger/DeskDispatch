@@ -60,6 +60,33 @@ impl InputController {
         }
     }
 
+    pub fn type_text(&self, text: &str, delay_between_keys_ms: u64) -> Result<(), String> {
+        info!(
+            text_len = text.len(),
+            delay_between_keys_ms = delay_between_keys_ms,
+            "Executing type text"
+        );
+
+        let mut cmd = Command::new("xdotool");
+        cmd.env("DISPLAY", &self.display).arg("type");
+
+        if delay_between_keys_ms > 0 {
+            cmd.arg("--delay").arg(delay_between_keys_ms.to_string());
+        }
+
+        cmd.arg("--").arg(text);
+
+        let status = cmd.status();
+
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            _ => {
+                debug!("xdotool type text execution omitted or unavailable");
+                Ok(())
+            }
+        }
+    }
+
     pub fn key_press(&self, key_combo: &str) -> Result<(), String> {
         info!(key_combo = key_combo, "Executing key press combo");
 

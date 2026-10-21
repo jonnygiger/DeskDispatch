@@ -233,6 +233,21 @@ impl StepRunner {
                 Ok((None, *id, "success".to_string(), None, captured))
             }
 
+            StepPayload::TypeText {
+                id,
+                post_delay_ms,
+                text_to_type,
+                delay_between_keys_ms,
+                ..
+            } => {
+                self.input
+                    .type_text(text_to_type, (*delay_between_keys_ms).max(0) as u64)?;
+
+                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
+
+                Ok((None, *id, "success".to_string(), None, captured))
+            }
+
             StepPayload::KeyPress {
                 id,
                 post_delay_ms,
@@ -467,6 +482,7 @@ impl StepRunner {
                     all_steps.iter().position(|s| match s {
                         StepPayload::MouseClick { id, .. } => *id == sid,
                         StepPayload::KeyPress { id, .. } => *id == sid,
+                        StepPayload::TypeText { id, .. } => *id == sid,
                         StepPayload::FindPixelRgb { id, .. } => *id == sid,
                         StepPayload::FindBitmap { id, .. } => *id == sid,
                         StepPayload::Branch { id, .. } => *id == sid,
