@@ -2652,7 +2652,10 @@ mod tests {
         assert_eq!(sanitize_label(None), None);
         assert_eq!(sanitize_label(Some("")), None);
         assert_eq!(sanitize_label(Some("   ")), None);
-        assert_eq!(sanitize_label(Some("  Click Submit  ")), Some("Click Submit"));
+        assert_eq!(
+            sanitize_label(Some("  Click Submit  ")),
+            Some("Click Submit")
+        );
 
         // 2. Seconds to post delay ms conversion
         assert_eq!(seconds_to_post_delay_ms(None), 0);
@@ -2667,7 +2670,10 @@ mod tests {
             "Type \"Hello World\""
         );
         assert_eq!(
-            generate_type_text_summary("Type text with long content exceeding thirty chars limit", 0),
+            generate_type_text_summary(
+                "Type text with long content exceeding thirty chars limit",
+                0
+            ),
             "Type \"Type text with long content ex...\""
         );
         assert_eq!(
@@ -2732,14 +2738,20 @@ mod tests {
         // Missing on_match_step_id
         assert_eq!(
             validate_branch_form(&form, "pixel_rgb"),
-            Some("Both match and no-match target steps are required for branch conditions.".to_string())
+            Some(
+                "Both match and no-match target steps are required for branch conditions."
+                    .to_string()
+            )
         );
 
         // Target step ID <= 0
         form.on_match_step_id = Some(0);
         assert_eq!(
             validate_branch_form(&form, "pixel_rgb"),
-            Some("Both match and no-match target steps are required for branch conditions.".to_string())
+            Some(
+                "Both match and no-match target steps are required for branch conditions."
+                    .to_string()
+            )
         );
 
         // Valid targets, missing X for pixel_rgb
