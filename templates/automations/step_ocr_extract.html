@@ -1,0 +1,102 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}{% if is_edit %}Edit Extract Text (OCR) Step{% else %}New Extract Text (OCR) Step{% endif %} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">{% if is_edit %}Edit Extract Text (OCR) Step{% else %}New Extract Text (OCR) Step{% endif %}</h1>
+    <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    {% if let Some(err) = error %}
+        <div class="alert alert-danger" style="margin-bottom: 1rem; color: var(--color-danger);">
+            {{ err }}
+        </div>
+    {% endif %}
+
+    <form method="post" action="{% if let Some(sid) = step_id %}/automations/{{ automation_id }}/steps/{{ sid }}{% else %}/automations/{{ automation_id }}/steps{% endif %}">
+        {% call macros::csrf_field(csrf_token) %}{% endcall %}
+        <input type="hidden" name="step_type" value="ocr_extract">
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="label" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Step Label (Optional)</label>
+            <input type="text" id="label" name="label" value="{{ label }}" class="form-control" style="width: 100%;" placeholder="e.g. Extract Invoice Amount">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="region_variable_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Region Variable (Optional)</label>
+            <select name="region_variable_id" id="region_variable_id" class="form-control" style="width: 100%;">
+                <option value="">-- Fixed Coordinates / Full Screen --</option>
+                {% for var in variables %}
+                    <option value="{{ var.id }}" {% if var.is_selected_region(region_variable_id) %}selected{% endif %}>
+                        {{ var.name }} ({{ var.var_type }})
+                    </option>
+                {% endfor %}
+            </select>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Use a previously found or declared bounding region variable for OCR extraction.</span>
+        </div>
+
+        <div style="border: 1px solid var(--color-border); border-radius: 6px; padding: 1rem; margin-bottom: 1.25rem; background-color: var(--color-bg-secondary);">
+            <div style="font-weight: 600; margin-bottom: 0.5rem;">Fixed Bounding Box (If Region Variable Not Used)</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                <div>
+                    <label for="search_x" style="display: block; font-size: 0.875rem; margin-bottom: 0.25rem;">Search X</label>
+                    <input type="number" id="search_x" name="search_x" value="{% if let Some(v) = search_x %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="0">
+                </div>
+                <div>
+                    <label for="search_y" style="display: block; font-size: 0.875rem; margin-bottom: 0.25rem;">Search Y</label>
+                    <input type="number" id="search_y" name="search_y" value="{% if let Some(v) = search_y %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="0">
+                </div>
+                <div>
+                    <label for="search_width" style="display: block; font-size: 0.875rem; margin-bottom: 0.25rem;">Width</label>
+                    <input type="number" id="search_width" name="search_width" value="{% if let Some(v) = search_width %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="e.g. 400">
+                </div>
+                <div>
+                    <label for="search_height" style="display: block; font-size: 0.875rem; margin-bottom: 0.25rem;">Height</label>
+                    <input type="number" id="search_height" name="search_height" value="{% if let Some(v) = search_height %}{{ v }}{% endif %}" class="form-control" style="width: 100%;" placeholder="e.g. 200">
+                </div>
+            </div>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted); display: block; margin-top: 0.5rem;">Leave empty to extract text from full screen.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="output_variable_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Store Text in Variable (Optional)</label>
+            <select name="output_variable_id" id="output_variable_id" class="form-control" style="width: 100%;">
+                <option value="">-- Do Not Store --</option>
+                {% for var in variables %}
+                    <option value="{{ var.id }}" {% if var.is_selected_output(output_variable_id) %}selected{% endif %}>
+                        {{ var.name }} ({{ var.var_type }})
+                    </option>
+                {% endfor %}
+            </select>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Store extracted OCR string into a string variable.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600;">
+                <input type="checkbox" name="set_as_task_output" value="true" {% if set_as_task_output %}checked{% endif %}>
+                Set Extracted Text as Final Task Output
+            </label>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted); display: block; margin-top: 0.25rem; margin-left: 1.5rem;">
+                Automatically set the extracted text value as the task run output upon completion.
+            </span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label for="post_delay_seconds" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Wait after this step (seconds)</label>
+            <input type="number" step="0.1" min="0" id="post_delay_seconds" name="post_delay_seconds" value="{{ post_delay_seconds }}" class="form-control" style="width: 100%;" placeholder="0.0">
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">{% if is_edit %}Save Changes{% else %}Add Step{% endif %}</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

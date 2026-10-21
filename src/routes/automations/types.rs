@@ -708,6 +708,35 @@ pub struct StepFindBitmapTemplate {
     pub is_edit: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NewOcrExtractQuery {
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+}
+
+#[derive(Template)]
+#[template(path = "automations/step_ocr_extract.html")]
+pub struct StepOcrExtractTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub region_variable_id: Option<i64>,
+    pub output_variable_id: Option<i64>,
+    pub set_as_task_output: bool,
+    pub variables: Vec<VariableOption>,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
 #[derive(Deserialize)]
 pub struct MouseClickStepForm {
     pub step_type: Option<String>,
@@ -768,6 +797,7 @@ pub struct MouseClickStepForm {
     pub on_match_step_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub on_no_match_step_id: Option<i64>,
+    pub set_as_task_output: Option<String>,
     pub action: Option<String>,
     pub match_pattern: Option<String>,
     pub match_type: Option<String>,

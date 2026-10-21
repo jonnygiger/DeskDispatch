@@ -21,3 +21,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 png = "0.18"
+rusty-tesseract = "1.1"
+uuid = { version = "1.28", features = ["v4"] }

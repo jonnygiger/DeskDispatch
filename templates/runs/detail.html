@@ -22,6 +22,35 @@
 </div>
 {% endif %}
 
+{% if let Some(out_type) = run.output_type %}
+<div class="card" style="margin-bottom: 1.5rem; background: var(--color-bg-secondary); border-left: 4px solid var(--color-primary);">
+    <h2 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem;">Task Output</h2>
+    <div style="font-size: 0.875rem; display: flex; flex-direction: column; gap: 0.5rem;">
+        <div><strong>Type:</strong> <code>{{ out_type }}</code></div>
+        <div>
+            <strong>Value:</strong>
+            {% if let Some(out_val) = run.output_value %}
+                {% if out_type == "boolean" %}
+                    {% if out_val == "true" %}
+                        <span class="badge badge-success" style="font-size: 0.875rem;">TRUE</span>
+                    {% else %}
+                        <span class="badge badge-danger" style="font-size: 0.875rem;">FALSE</span>
+                    {% endif %}
+                {% else if out_type == "ocr_text" %}
+                    <div style="margin-top: 0.5rem; background: var(--color-bg-card); border: 1px solid var(--color-border); padding: 0.75rem; border-radius: 6px; font-family: monospace; white-space: pre-wrap;">{{ out_val }}</div>
+                {% else if out_type == "image" %}
+                    <a href="/media/screenshots/{{ out_val }}" target="_blank" class="btn btn-outline" style="font-size: 0.875rem; margin-top: 0.25rem;">🖼️ View Output Image</a>
+                {% else %}
+                    <code>{{ out_val }}</code>
+                {% endif %}
+            {% else %}
+                <span style="color: var(--color-text-muted);">None</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card" style="margin-bottom: 1.5rem;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
         <h2 style="font-size: 1.125rem; font-weight: 600; margin: 0;">Run Overview</h2>

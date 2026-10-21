@@ -13,6 +13,8 @@ pub struct StepRunner {
     pub input: InputController,
     pub variables: HashMap<i64, serde_json::Value>,
     pub bitmap_cache: HashMap<String, CapturedImage>,
+    pub task_output_type: Option<String>,
+    pub task_output_value: Option<String>,
 }
 
 impl StepRunner {
@@ -24,6 +26,8 @@ impl StepRunner {
             input,
             variables: HashMap::new(),
             bitmap_cache: HashMap::new(),
+            task_output_type: None,
+            task_output_value: None,
         }
     }
 
@@ -36,6 +40,8 @@ impl StepRunner {
             .map_err(|e| format!("Failed to parse FullAutomationPayload: {}", e))?;
 
         self.variables.clear();
+        self.task_output_type = None;
+        self.task_output_value = None;
 
         info!(
             task_run_id = task_run_id,
@@ -135,6 +141,8 @@ impl StepRunner {
                         task_run_id,
                         "failed",
                         Some("Step execution failed".to_string()),
+                        self.task_output_type.clone(),
+                        self.task_output_value.clone(),
                     )
                     .await?;
                 return Ok(());
@@ -147,7 +155,13 @@ impl StepRunner {
         }
 
         self.api_client
-            .complete_task_run(task_run_id, "succeeded", None)
+            .complete_task_run(
+                task_run_id,
+                "succeeded",
+                None,
+                self.task_output_type.clone(),
+                self.task_output_value.clone(),
+            )
             .await?;
 
         info!(
@@ -509,6 +523,7 @@ impl StepRunner {
                         StepPayload::FindPixelRgb { id, .. } => *id == sid,
                         StepPayload::FindBitmap { id, .. } => *id == sid,
                         StepPayload::Branch { id, .. } => *id == sid,
+                        StepPayload::OcrExtract { id, .. } => *id == sid,
                     })
                 });
 
@@ -521,6 +536,77 @@ impl StepRunner {
                 tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
 
                 Ok((next_step_idx, *id, status.to_string(), None, captured))
+            }
+
+            StepPayload::OcrExtract {
+                id,
+                post_delay_ms,
+                search_x,
+                search_y,
+                search_width,
+                search_height,
+                region_variable_id,
+                output_variable_id,
+                set_as_task_output,
+                ..
+            } => {
+                let screen = capture_screen(
+                    &self.config.display,
+                    self.config.screen_width,
+                    self.config.screen_height,
+                );
+
+                let mut crop_x = search_x.unwrap_or(0).max(0) as u32;
+                let mut crop_y = search_y.unwrap_or(0).max(0) as u32;
+                let mut crop_w = search_width
+                    .unwrap_or(screen.width as i32 - crop_x as i32)
+                    .max(1) as u32;
+                let mut crop_h = search_height
+                    .unwrap_or(screen.height as i32 - crop_y as i32)
+                    .max(1) as u32;
+
+                if let Some(vid) = region_variable_id
+                    && let Some(val) = self.variables.get(vid)
+                {
+                    if let Some(tl) = val.get("top_left").and_then(|v| v.as_array())
+                        && let Some(br) = val.get("bottom_right").and_then(|v| v.as_array())
+                    {
+                        if tl.len() >= 2 && br.len() >= 2 {
+                            let x1 = tl[0].as_i64().unwrap_or(0).max(0) as u32;
+                            let y1 = tl[1].as_i64().unwrap_or(0).max(0) as u32;
+                            let x2 = br[0].as_i64().unwrap_or(0).max(0) as u32;
+                            let y2 = br[1].as_i64().unwrap_or(0).max(0) as u32;
+                            crop_x = x1;
+                            crop_y = y1;
+                            crop_w = x2.saturating_sub(x1).max(1);
+                            crop_h = y2.saturating_sub(y1).max(1);
+                        }
+                    }
+                }
+
+                let cropped = screen.crop(crop_x, crop_y, crop_w, crop_h);
+                let ocr_text = perform_ocr_on_captured_image(&cropped);
+
+                if let Some(vid) = output_variable_id {
+                    updates.push(VariableUpdateItem {
+                        variable_id: *vid,
+                        value: serde_json::json!(ocr_text),
+                    });
+                }
+
+                if *set_as_task_output {
+                    self.task_output_type = Some("ocr_text".to_string());
+                    self.task_output_value = Some(ocr_text);
+                }
+
+                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
+
+                let updates_opt = if updates.is_empty() {
+                    None
+                } else {
+                    Some(updates)
+                };
+                Ok((None, *id, "success".to_string(), updates_opt, captured))
             }
         }
     }
@@ -539,6 +625,25 @@ impl StepRunner {
         self.bitmap_cache.insert(key_str.to_string(), img.clone());
         Ok(img)
     }
+}
+
+fn perform_ocr_on_captured_image(img: &CapturedImage) -> String {
+    if let Ok(png_bytes) = img.encode_png() {
+        let temp_dir = std::env::temp_dir();
+        let tmp_file = temp_dir.join(format!("deskdispatch_ocr_{}.png", uuid::Uuid::new_v4()));
+        if std::fs::write(&tmp_file, &png_bytes).is_ok() {
+            let res = if let Ok(timg) = rusty_tesseract::Image::from_path(&tmp_file) {
+                rusty_tesseract::image_to_string(&timg, &rusty_tesseract::Args::default()).ok()
+            } else {
+                None
+            };
+            let _ = std::fs::remove_file(tmp_file);
+            if let Some(txt) = res {
+                return txt.trim().to_string();
+            }
+        }
+    }
+    String::new()
 }
 
 #[derive(Default)]

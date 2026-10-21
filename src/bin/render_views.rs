@@ -410,6 +410,8 @@ fn main() {
         completed_at: Some(Utc::now()),
         error_message: None,
         screenshot_step_id: None,
+        output_type: Some("ocr_text".to_string()),
+        output_value: Some("Invoice #10293".to_string()),
     };
 
     let runs_list_tmpl = RunsListTemplate {

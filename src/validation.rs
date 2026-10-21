@@ -128,11 +128,33 @@ struct BranchMeta {
 }
 
 #[derive(Debug, Clone)]
+struct OcrExtractMeta {
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_variable_id: Option<i64>,
+    output_variable_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct OcrExtractRow {
+    step_id: i64,
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_variable_id: Option<i64>,
+    output_variable_id: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
 enum StepSubtype {
     MouseClick(MouseClickMeta),
     FindPixel(FindPixelMeta),
     FindBitmap(FindBitmapMeta),
     Branch(BranchMeta),
+    OcrExtract(OcrExtractMeta),
     Other,
 }
 
@@ -319,11 +341,22 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
+    let ocr_fut = sqlx::query_as::<_, OcrExtractRow>(
+        r#"
+        SELECT soe.step_id, soe.search_x, soe.search_y, soe.search_width, soe.search_height, soe.region_variable_id, soe.output_variable_id
+        FROM step_ocr_extracts soe
+        JOIN automation_steps s ON soe.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
     let bitmap_fut = sqlx::query_as::<_, BitmapRow>("SELECT id FROM bitmaps").fetch_all(db);
 
-    let (raw_steps, var_rows, param_rows, mc_rows, fp_rows, fb_rows, branch_rows, bitmap_rows) =
+    let (raw_steps, var_rows, param_rows, mc_rows, fp_rows, fb_rows, branch_rows, ocr_rows, bitmap_rows) =
         match tokio::try_join!(
-            steps_fut, vars_fut, params_fut, mc_fut, fp_fut, fb_fut, branch_fut, bitmap_fut
+            steps_fut, vars_fut, params_fut, mc_fut, fp_fut, fb_fut, branch_fut, ocr_fut, bitmap_fut
         ) {
             Ok(tuple) => tuple,
             Err(e) => {
@@ -364,6 +397,19 @@ pub async fn validate_automation_for_activation(
                 x_var_id: r.x_variable_id,
                 y_var_id: r.y_variable_id,
                 region_var_id: r.region_variable_id,
+            });
+        }
+    }
+
+    for r in ocr_rows {
+        if let Some(&idx) = step_id_to_idx.get(&r.step_id) {
+            subtypes[idx] = StepSubtype::OcrExtract(OcrExtractMeta {
+                search_x: r.search_x,
+                search_y: r.search_y,
+                search_width: r.search_width,
+                search_height: r.search_height,
+                region_variable_id: r.region_variable_id,
+                output_variable_id: r.output_variable_id,
             });
         }
     }
@@ -462,6 +508,15 @@ pub async fn validate_automation_for_activation(
                     b,
                     &step_id_to_idx,
                     &existing_bitmaps,
+                    &mut errors,
+                );
+            }
+            StepSubtype::OcrExtract(ocr) => {
+                validate_ocr_extract(
+                    step.id,
+                    step.step_number,
+                    ocr,
+                    &vars_map,
                     &mut errors,
                 );
             }
@@ -658,6 +713,54 @@ pub async fn validate_automation_for_activation(
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+fn validate_ocr_extract(
+    sid: i64,
+    step_num: usize,
+    ocr: &OcrExtractMeta,
+    vars_map: &HashMap<i64, VarMeta>,
+    errors: &mut Vec<AutomationLintError>,
+) {
+    for (label, val) in [
+        ("Search X", ocr.search_x),
+        ("Search Y", ocr.search_y),
+        ("Search Width", ocr.search_width),
+        ("Search Height", ocr.search_height),
+    ] {
+        check_coord_bounds(val, label, sid, step_num, errors);
+    }
+
+    if let Some(vid) = ocr.region_variable_id {
+        if let Some(meta) = vars_map.get(&vid) {
+            if meta.var_type != "region" {
+                errors.push(AutomationLintError {
+                    step_id: Some(sid),
+                    step_number: Some(step_num),
+                    message: format!(
+                        "Region variable must be of type 'region' (got '{}').",
+                        meta.var_type
+                    ),
+                });
+            }
+        } else {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: format!("Referenced region variable ID {vid} not found."),
+            });
+        }
+    }
+
+    if let Some(vid) = ocr.output_variable_id {
+        if !vars_map.contains_key(&vid) {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: format!("Output variable ID {vid} not found."),
+            });
+        }
     }
 }
 

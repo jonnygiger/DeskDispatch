@@ -407,6 +407,8 @@ impl SimulatedWorker {
             .unwrap_or(&empty_steps);
 
         let mut overall_success = true;
+        let mut task_output_type: Option<String> = None;
+        let mut task_output_value: Option<String> = None;
 
         for (seq, step) in (1..).zip(steps.iter()) {
             if self.cancel_flag.load(Ordering::Relaxed) {
@@ -564,6 +566,7 @@ impl SimulatedWorker {
                         captured_g.unwrap_or(150),
                         captured_b.unwrap_or(100)
                     ]),
+                    "ocr_extract" => serde_json::json!("SIMULATED_OCR_TEXT"),
                     _ => serde_json::json!({
                         "x": captured_x.unwrap_or(800),
                         "y": captured_y.unwrap_or(600),
@@ -574,6 +577,13 @@ impl SimulatedWorker {
                     variable_id: var_id,
                     value: var_val,
                 });
+            }
+
+            if step_type == "ocr_extract"
+                && step.get("set_as_task_output").and_then(|b| b.as_bool()).unwrap_or(true)
+            {
+                task_output_type = Some("ocr_text".to_string());
+                task_output_value = Some("SIMULATED_OCR_TEXT".to_string());
             }
 
             if let Some(var_id) = step
@@ -705,6 +715,8 @@ impl SimulatedWorker {
             } else {
                 Some("Simulated execution step failure".to_string())
             },
+            output_type: task_output_type,
+            output_value: task_output_value,
         };
 
         let complete_res = self
