@@ -13,8 +13,8 @@ async fn get_test_pool() -> Option<PgPool> {
         .ok()
 }
 
-#[test]
-fn test_schema_queries_syntax() {
+#[tokio::test]
+async fn test_schema_queries_syntax() {
     let queries = [
         "SELECT id, username, password_hash, display_name, role, is_active FROM users",
         "SELECT id, name, description, status FROM automations",
@@ -26,9 +26,30 @@ fn test_schema_queries_syntax() {
         "SELECT id, automation_id, cron_expression, timezone, is_enabled, next_run_at FROM schedules",
     ];
 
+    let pool_opt = get_test_pool().await;
+
     for sql in queries {
         let q = sqlx::query::<sqlx::Postgres>(sql);
         assert_eq!(q.sql(), sql);
+        assert!(sql.starts_with("SELECT "));
+        assert!(sql.contains(" FROM "));
+
+        if let Some(ref pool) = pool_opt {
+            let explain_sql = format!("EXPLAIN {}", sql);
+            let explain_plan: Vec<String> =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(explain_sql))
+                    .fetch_all(pool)
+                    .await
+                    .unwrap_or_else(|e| {
+                        panic!("Schema validation query failed for SQL '{}': {:?}", sql, e)
+                    });
+
+            assert!(
+                !explain_plan.is_empty(),
+                "EXPLAIN plan for '{}' returned empty output",
+                sql
+            );
+        }
     }
 }
 
