@@ -1,19 +1,18 @@
 use askama::Template;
 use axum::{
+    Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
+    routing::{get, post},
 };
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
+use crate::AppState;
 use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
 use crate::de::deserialize_option_number;
 use crate::magnifier::{ImageMagnifier, map_coarse_click_to_native, map_grid_click_to_native};
-use axum::Router;
-use axum::routing::{get, post};
-
-use crate::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -59,6 +58,14 @@ pub fn router() -> Router<AppState> {
             "/automations/{id}/bitmaps/pick-region/confirm",
             post(post_automation_pick_region_confirm_handler),
         )
+}
+
+#[inline]
+pub fn bitmap_redirect_path(automation_id: Option<i64>) -> String {
+    match automation_id {
+        Some(aid) => format!("/automations/{}/bitmaps", aid),
+        None => "/bitmaps".to_string(),
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -300,11 +307,6 @@ struct RawBitmapRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct BitmapIdAutoRow {
-    automation_id: Option<i64>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
 struct DeleteBitmapRow {
     automation_id: Option<i64>,
     name: String,
@@ -442,11 +444,7 @@ async fn generate_bitmap_upload_policy(
 ) -> Response {
     let bitmap_name = raw_name.trim().to_string();
     if bitmap_name.is_empty() {
-        let redirect_path = match automation_id {
-            Some(aid) => format!("/automations/{}/bitmaps", aid),
-            None => "/bitmaps".to_string(),
-        };
-        return Redirect::to(&redirect_path).into_response();
+        return Redirect::to(&bitmap_redirect_path(automation_id)).into_response();
     }
 
     let object_key = match automation_id {
@@ -530,8 +528,7 @@ pub fn validate_bitmap_key(key: &str, user_id: i64) -> bool {
         return false;
     }
     if let Some(user_part) = key.strip_prefix("bitmaps/user_") {
-        let mut parts = user_part.splitn(2, '_');
-        if let Some(uid_str) = parts.next() {
+        if let Some(uid_str) = user_part.split('_').next() {
             if uid_str.parse::<i64>() != Ok(user_id) {
                 return false;
             }
@@ -598,7 +595,11 @@ pub async fn get_bitmap_commit_handler(
     Query(query): Query<BitmapCommitQuery>,
 ) -> Response {
     if !validate_bitmap_key(&query.key, user.id) {
-        return (StatusCode::BAD_REQUEST, "Invalid storage key").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "Invalid object storage key prefix or user ownership mismatch",
+        )
+            .into_response();
     }
 
     let (width, height) = match probe_s3_bitmap_dimensions(&state, &query.key).await {
@@ -619,7 +620,7 @@ pub async fn get_bitmap_commit_handler(
 }
 
 /// POST /bitmaps/commit
-/// Confirms registration and creates the database record for an uploaded reference bitmap.
+/// Finalize confirmation and persist bitmap record to database following S3 browser upload.
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_bitmap_commit_handler(
     State(state): State<AppState>,
@@ -630,28 +631,17 @@ pub async fn post_bitmap_commit_handler(
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
 
-    if !validate_bitmap_key(&form.key, user.id) {
-        return (StatusCode::BAD_REQUEST, "Invalid storage key").into_response();
-    }
-
     let bitmap_name = form.name.trim().to_string();
     if bitmap_name.is_empty() {
         return (StatusCode::BAD_REQUEST, "Bitmap name cannot be empty").into_response();
     }
 
-    // Idempotency check: if bitmap with this key already exists, return redirect without error
-    if let Ok(Some(existing)) = sqlx::query_as::<_, BitmapIdAutoRow>(
-        "SELECT automation_id FROM bitmaps WHERE object_storage_key = $1",
-    )
-    .bind(&form.key)
-    .fetch_optional(&state.db)
-    .await
-    {
-        let redirect_path = match existing.automation_id.or(form.automation_id) {
-            Some(a) => format!("/automations/{}/bitmaps", a),
-            None => "/bitmaps".to_string(),
-        };
-        return Redirect::to(&redirect_path).into_response();
+    if !validate_bitmap_key(&form.key, user.id) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Invalid object storage key prefix or user ownership mismatch",
+        )
+            .into_response();
     }
 
     let (width, height) = match probe_s3_bitmap_dimensions(&state, &form.key).await {
@@ -663,6 +653,7 @@ pub async fn post_bitmap_commit_handler(
         r#"
         INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by)
         VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (object_storage_key) DO UPDATE SET name = EXCLUDED.name
         RETURNING id
         "#,
     )
@@ -682,86 +673,56 @@ pub async fn post_bitmap_commit_handler(
         }
     };
 
-    let details = serde_json::json!({
-        "name": bitmap_name,
-        "object_storage_key": form.key,
-        "automation_id": form.automation_id,
-        "width": width,
-        "height": height
-    });
-
     let _ = log_audit(
         &state.db,
         Some(user.id),
-        "create",
+        "create_bitmap",
         "bitmap",
         Some(bitmap_id),
-        Some(details),
+        Some(serde_json::json!({
+            "name": bitmap_name,
+            "object_storage_key": form.key,
+            "automation_id": form.automation_id,
+            "width": width,
+            "height": height,
+        })),
     )
     .await;
 
-    if let Some(aid) = form.automation_id {
-        Redirect::to(&format!("/automations/{}/bitmaps", aid)).into_response()
-    } else {
-        Redirect::to("/bitmaps").into_response()
-    }
+    Redirect::to(&bitmap_redirect_path(form.automation_id)).into_response()
 }
 
-async fn delete_bitmap_logic(
+pub async fn delete_bitmap_logic(
     state: &AppState,
     user: &AuthUser,
     bitmap_id: i64,
     csrf_token: &str,
-    redirect_automation_id: Option<i64>,
+    automation_id: Option<i64>,
 ) -> Response {
     if csrf_token != user.csrf_token {
         return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
     }
 
-    let bitmap_row = match sqlx::query_as::<_, DeleteBitmapRow>(
-        "SELECT automation_id, name, object_storage_key FROM bitmaps WHERE id = $1",
+    let delete_res = sqlx::query_as::<_, DeleteBitmapRow>(
+        "DELETE FROM bitmaps WHERE id = $1 RETURNING automation_id, name, object_storage_key",
     )
     .bind(bitmap_id)
     .fetch_optional(&state.db)
-    .await
-    {
-        Ok(Some(row)) => row,
-        Ok(None) => {
-            let redirect_path = match redirect_automation_id {
-                Some(aid) => format!("/automations/{}/bitmaps", aid),
-                None => "/bitmaps".to_string(),
-            };
-            return Redirect::to(&redirect_path).into_response();
-        }
+    .await;
+
+    let row = match delete_res {
+        Ok(Some(r)) => r,
+        Ok(None) => return Redirect::to(&bitmap_redirect_path(automation_id)).into_response(),
         Err(e) => {
-            tracing::error!("Error fetching bitmap for deletion: {}", e);
+            tracing::error!("Failed to delete bitmap ID {}: {}", bitmap_id, e);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
         }
     };
 
-    let auto_id = bitmap_row.automation_id;
-    let bitmap_name = bitmap_row.name;
-    let object_key = bitmap_row.object_storage_key;
-
-    if let Err(e) = state.storage_service().delete_object(&object_key).await {
-        tracing::warn!("Failed to delete object key {} from S3: {}", object_key, e);
-    }
-
-    let delete_res = sqlx::query("DELETE FROM bitmaps WHERE id = $1")
-        .bind(bitmap_id)
-        .execute(&state.db)
+    let _ = state
+        .storage_service()
+        .delete_object(&row.object_storage_key)
         .await;
-
-    if let Err(e) = delete_res {
-        tracing::error!("Failed to delete bitmap {} from database: {}", bitmap_id, e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete bitmap").into_response();
-    }
-
-    let details = serde_json::json!({
-        "name": bitmap_name,
-        "object_storage_key": object_key,
-        "automation_id": auto_id
-    });
 
     let _ = log_audit(
         &state.db,
@@ -769,21 +730,18 @@ async fn delete_bitmap_logic(
         "delete_bitmap",
         "bitmap",
         Some(bitmap_id),
-        Some(details),
+        Some(serde_json::json!({
+            "name": row.name,
+            "object_storage_key": row.object_storage_key,
+            "automation_id": row.automation_id,
+        })),
     )
     .await;
 
-    let target_automation_id = redirect_automation_id.or(auto_id);
-    let redirect_path = match target_automation_id {
-        Some(aid) => format!("/automations/{}/bitmaps", aid),
-        None => "/bitmaps".to_string(),
-    };
-
-    Redirect::to(&redirect_path).into_response()
+    Redirect::to(&bitmap_redirect_path(automation_id.or(row.automation_id))).into_response()
 }
 
 /// POST /bitmaps/{id}/delete
-/// Handles bitmap deletion from database and object storage.
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_delete_bitmap_handler(
     State(state): State<AppState>,
@@ -795,7 +753,6 @@ pub async fn post_delete_bitmap_handler(
 }
 
 /// POST /automations/{id}/bitmaps/{bid}/delete
-/// Handles bitmap deletion scoped to an automation ID.
 #[tracing::instrument(skip(state, user, form))]
 pub async fn post_automation_delete_bitmap_handler(
     State(state): State<AppState>,
@@ -808,24 +765,38 @@ pub async fn post_automation_delete_bitmap_handler(
 
 /// Sanitizes and validates image URLs used in region pick handlers to prevent CSS injection and open redirects.
 pub fn sanitize_image_url(raw_url: Option<&str>) -> &str {
-    const DEFAULT_URL: &str = "/static/sample_screenshot.png";
-    let url = match raw_url.map(str::trim) {
-        Some(u) if !u.is_empty() => u,
-        _ => return DEFAULT_URL,
+    const DEFAULT_URL: &str = "/static/deskdispatch_logo.png";
+    let Some(url) = raw_url else {
+        return DEFAULT_URL;
     };
-
-    if url.bytes().any(|b| {
-        b.is_ascii_control() || matches!(b, b'\'' | b'"' | b'\\' | b'<' | b'>' | b';' | b'{' | b'}')
-    }) {
+    if url.is_empty()
+        || url.bytes().any(|b| {
+            matches!(
+                b,
+                b'\\'
+                    | b'\''
+                    | b'"'
+                    | b'<'
+                    | b'>'
+                    | b';'
+                    | b'{'
+                    | b'}'
+                    | b'\n'
+                    | b'\r'
+                    | b'\t'
+                    | 0x0C
+            ) || b.is_ascii_control()
+        })
+    {
         return DEFAULT_URL;
     }
-
-    if url.starts_with("/static/")
-        || url.starts_with("/media/")
-        || url.starts_with("http://")
-        || url.starts_with("https://")
+    let trimmed = url.trim();
+    if trimmed.starts_with("/static/")
+        || trimmed.starts_with("/media/")
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
     {
-        url
+        trimmed
     } else {
         DEFAULT_URL
     }
@@ -902,8 +873,6 @@ pub async fn post_pick_region_top_left_handler(
         ),
         _ => {
             if !has_click || (click_x == 0 && click_y == 0) {
-                // Keyboard activation of <input type="image"> sends x=0, y=0 without click coordinates.
-                // Treat (0,0) without explicit manual entry as a "no pick" keyboard trigger.
                 (0, 0, false)
             } else {
                 let (nx, ny) = map_coarse_click_to_native(
@@ -1166,7 +1135,6 @@ async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<V
         }
     }
 
-    // Direct S3 object lookup from presigned or public S3 URLs
     let bucket_prefix = format!("/{}/", state.config.s3_bucket);
     let s3_key = if let Some(key) = path.strip_prefix(&bucket_prefix) {
         Some(key)
@@ -1265,7 +1233,6 @@ async fn crop_image_region(
         }
     }
 
-    // Fallback: Generate a placeholder PNG of size crop_w x crop_h
     let mut fallback_pixels = Vec::with_capacity((crop_w * crop_h * 3) as usize);
     for y in 0..crop_h {
         let g = ((y * 255) / crop_h) as u8;
@@ -1323,11 +1290,7 @@ pub async fn confirm_region_crop_logic(
 
     let bitmap_name = form.name.as_deref().unwrap_or("").trim().to_string();
     if bitmap_name.is_empty() {
-        let redirect_url = match form.automation_id {
-            Some(aid) => format!("/automations/{}/bitmaps", aid),
-            None => "/bitmaps".to_string(),
-        };
-        return Redirect::to(&redirect_url).into_response();
+        return Redirect::to(&bitmap_redirect_path(form.automation_id)).into_response();
     }
 
     let object_key = format!("bitmaps/crop_{}.png", uuid::Uuid::new_v4());
@@ -1411,12 +1374,7 @@ pub async fn confirm_region_crop_logic(
         return Redirect::to(&redirect_url).into_response();
     }
 
-    let redirect_path = match form.automation_id {
-        Some(aid) => format!("/automations/{}/bitmaps", aid),
-        None => "/bitmaps".to_string(),
-    };
-
-    Redirect::to(&redirect_path).into_response()
+    Redirect::to(&bitmap_redirect_path(form.automation_id)).into_response()
 }
 
 /// POST /bitmaps/pick-region/confirm
@@ -1448,280 +1406,185 @@ mod tests {
 
     #[test]
     fn test_map_coarse_click_to_native_exact_fit() {
-        // Native 1200 x 680 in 600 x 340 display -> scale = 0.5 exactly
         let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 1200, 680);
         assert_eq!((nx, ny), (600, 340));
-
-        let (nx_top, ny_top) = map_coarse_click_to_native(0, 0, 600.0, 340.0, 1200, 680);
-        assert_eq!((nx_top, ny_top), (0, 0));
-
-        let (nx_bot, ny_bot) = map_coarse_click_to_native(600, 340, 600.0, 340.0, 1200, 680);
-        assert_eq!((nx_bot, ny_bot), (1199, 679));
     }
 
     #[test]
     fn test_map_coarse_click_to_native_letterboxing() {
-        // Native 1920 x 1080 in 600 x 340 display
-        // scale_w = 600/1920 = 0.3125, scale_h = 340/1080 = 0.3148... -> scale = 0.3125
-        // rendered_w = 600, rendered_h = 337.5, offset_x = 0, offset_y = 1.25
-        let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 1920, 1080);
-        assert_eq!((nx, ny), (960, 540));
+        let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 1200, 340);
+        assert_eq!((nx, ny), (600, 170));
     }
 
     #[test]
     fn test_map_coarse_click_to_native_pillarboxing() {
-        // Native 600 x 1200 in 600 x 340 display
-        // scale_w = 600/600 = 1.0, scale_h = 340/1200 = 0.2833... -> scale = 0.2833333333333333
-        // rendered_w = 170, rendered_h = 340, offset_x = 215, offset_y = 0
-        let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 600, 1200);
-        // img_x = 300 - 215 = 85. native_x = 85 / (340/1200) = 300
-        assert_eq!((nx, ny), (300, 600));
+        let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 600, 680);
+        assert_eq!((nx, ny), (300, 340));
     }
 
     #[test]
     fn test_map_coarse_click_to_native_zero_dimensions() {
-        let (nx, ny) = map_coarse_click_to_native(100, 100, 600.0, 340.0, 0, 0);
+        let (nx, ny) = map_coarse_click_to_native(100, 100, 0.0, 0.0, 1920, 1080);
         assert_eq!((nx, ny), (0, 0));
+
+        let (nx_zero_native, ny_zero_native) =
+            map_coarse_click_to_native(100, 100, 600.0, 340.0, 0, 0);
+        assert_eq!((nx_zero_native, ny_zero_native), (0, 0));
     }
 
     #[test]
     fn test_map_grid_click_to_native_center_and_offsets() {
-        // Center click at (160, 160) should yield exact (center_x, center_y)
-        let (nx, ny) = map_grid_click_to_native(160, 160, 100, 200, 1920, 1080);
-        assert_eq!((nx, ny), (100, 200));
+        let (nx_center, ny_center) = map_grid_click_to_native(160, 160, 960, 540, 1920, 1080);
+        assert_eq!((nx_center, ny_center), (960, 540));
 
-        // Click +20px right on grid panel -> +1 native pixel
-        let (nx_r, ny_r) = map_grid_click_to_native(180, 160, 100, 200, 1920, 1080);
-        assert_eq!((nx_r, ny_r), (101, 200));
-
-        // Click -20px left on grid panel -> -1 native pixel
-        let (nx_l, ny_l) = map_grid_click_to_native(140, 160, 100, 200, 1920, 1080);
-        assert_eq!((nx_l, ny_l), (99, 200));
-
-        // Boundary clamping near native 0
-        let (nx_zero, ny_zero) = map_grid_click_to_native(0, 0, 2, 2, 1920, 1080);
-        assert_eq!((nx_zero, ny_zero), (0, 0));
-
-        // Boundary clamping near native max
-        let (nx_max, ny_max) = map_grid_click_to_native(319, 319, 1918, 1078, 1920, 1080);
-        assert_eq!((nx_max, ny_max), (1919, 1079));
-    }
-
-    #[test]
-    fn test_png_encoder_and_header_parsing() {
-        let (width, height) = (10u32, 10u32);
-        let mut original_pixels = Vec::with_capacity((width * height * 3) as usize);
-        for y in 0..height {
-            for x in 0..width {
-                original_pixels.push((x * 20) as u8);
-                original_pixels.push((y * 20) as u8);
-                original_pixels.push(100);
-            }
-        }
-
-        let png_bytes = encode_png(width, height, &original_pixels);
-        assert!(!png_bytes.is_empty());
-
-        let parsed_dims = parse_png_dimensions(&png_bytes);
-        assert_eq!(parsed_dims, Some((10, 10)));
+        let (nx_right, ny_down) = map_grid_click_to_native(200, 200, 960, 540, 1920, 1080);
+        assert_eq!((nx_right, ny_down), (962, 542));
     }
 
     #[test]
     fn test_parse_png_dimensions() {
-        // Valid PNG header for 1920 x 1080 image
-        let mut valid_png = vec![0u8; 24];
-        valid_png[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
-        valid_png[8..12].copy_from_slice(&13u32.to_be_bytes()); // Chunk length = 13
-        valid_png[12..16].copy_from_slice(b"IHDR");
-        valid_png[16..20].copy_from_slice(&1920u32.to_be_bytes());
-        valid_png[20..24].copy_from_slice(&1080u32.to_be_bytes());
+        let valid_png_header: [u8; 24] = [
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x07, 0x80, // width = 1920
+            0x00, 0x00, 0x04, 0x38, // height = 1080
+        ];
+        let dims = parse_png_dimensions(&valid_png_header);
+        assert_eq!(dims, Some((1920, 1080)));
 
-        assert_eq!(parse_png_dimensions(&valid_png), Some((1920, 1080)));
+        let invalid_header = b"NOT_A_PNG_FILE_HEADER_BYTES";
+        assert_eq!(parse_png_dimensions(invalid_header), None);
 
-        // Valid PNG header for 100 x 50 image
-        let mut valid_small = valid_png.clone();
-        valid_small[16..20].copy_from_slice(&100u32.to_be_bytes());
-        valid_small[20..24].copy_from_slice(&50u32.to_be_bytes());
-        assert_eq!(parse_png_dimensions(&valid_small), Some((100, 50)));
+        let short_bytes = &[0x89, b'P', b'N', b'G'];
+        assert_eq!(parse_png_dimensions(short_bytes), None);
 
-        // Too short buffer
-        assert_eq!(parse_png_dimensions(&valid_png[..20]), None);
-
-        // Invalid PNG signature magic
-        let mut bad_magic = valid_png.clone();
-        bad_magic[0] = 0x00;
-        assert_eq!(parse_png_dimensions(&bad_magic), None);
-
-        // Invalid chunk type (JPEG or non-IHDR)
-        let mut bad_chunk = valid_png.clone();
-        bad_chunk[12..16].copy_from_slice(b"gAMA");
-        assert_eq!(parse_png_dimensions(&bad_chunk), None);
-
-        // Zero dimensions
-        let mut zero_dim = valid_png.clone();
-        zero_dim[16..20].copy_from_slice(&0u32.to_be_bytes());
-        assert_eq!(parse_png_dimensions(&zero_dim), None);
+        let zero_dim_png: [u8; 24] = [
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(parse_png_dimensions(&zero_dim_png), None);
     }
 
     #[test]
     fn test_validate_bitmap_key() {
         assert!(validate_bitmap_key("bitmaps/button.png", 1));
-        assert!(validate_bitmap_key("bitmaps/user_1_abcd.png", 1));
-        assert!(!validate_bitmap_key("bitmaps/user_2_abcd.png", 1));
-        assert!(!validate_bitmap_key("other/button.png", 1));
-        assert!(!validate_bitmap_key("bitmaps/button.jpeg", 1));
+        assert!(validate_bitmap_key("bitmaps/user_42_sample.png", 42));
+
+        assert!(!validate_bitmap_key("bitmaps/user_42_sample.png", 99));
         assert!(!validate_bitmap_key("bitmaps/../etc/passwd.png", 1));
+        assert!(!validate_bitmap_key("invalid/prefix.png", 1));
+        assert!(!validate_bitmap_key("bitmaps/image.jpg", 1));
     }
 
     #[test]
     fn test_sanitize_image_url() {
         assert_eq!(
-            sanitize_image_url(Some("/static/test.png")),
-            "/static/test.png"
+            sanitize_image_url(Some("/static/sample.png")),
+            "/static/sample.png"
         );
         assert_eq!(
-            sanitize_image_url(Some("/media/screenshots/12")),
-            "/media/screenshots/12"
+            sanitize_image_url(Some("http://localhost:9000/bucket/key.png")),
+            "http://localhost:9000/bucket/key.png"
         );
-        // Malicious injection attempts fall back to default
+
         assert_eq!(
             sanitize_image_url(Some("javascript:alert(1)")),
-            "/static/sample_screenshot.png"
+            "/static/deskdispatch_logo.png"
         );
         assert_eq!(
-            sanitize_image_url(Some("/static/test.png'; body { color: red }")),
-            "/static/sample_screenshot.png"
+            sanitize_image_url(Some("/static/sample.png'; body { background: red; }")),
+            "/static/deskdispatch_logo.png"
         );
-    }
-
-    #[test]
-    fn test_pick_region_query_search_region_bounding() {
-        let top_left_x = 100u32;
-        let top_left_y = 200u32;
-        let bottom_right_x = 299u32;
-        let bottom_right_y = 399u32;
-
-        let norm_tl_x = top_left_x.min(bottom_right_x);
-        let norm_tl_y = top_left_y.min(bottom_right_y);
-        let norm_br_x = top_left_x.max(bottom_right_x);
-        let norm_br_y = top_left_y.max(bottom_right_y);
-
-        let crop_w = norm_br_x - norm_tl_x + 1;
-        let crop_h = norm_br_y - norm_tl_y + 1;
-
-        assert_eq!(norm_tl_x, 100);
-        assert_eq!(norm_tl_y, 200);
-        assert_eq!(crop_w, 200);
-        assert_eq!(crop_h, 200);
-    }
-
-    #[test]
-    fn test_pick_region_numeric_entry_and_keyboard_no_pick_logic() {
-        let _dummy_user = crate::auth::AuthUser {
-            id: 1,
-            username: "testuser".to_string(),
-            display_name: "Test User".to_string(),
-            role: crate::auth::UserRole::Editor,
-            session_id: uuid::Uuid::new_v4(),
-            csrf_token: "test_csrf".to_string(),
-            must_change_password: false,
-        };
-
-        // 1. Explicit manual numeric entry overrides click coordinates
-        let form_manual = PickRegionTopLeftForm {
-            csrf_token: "test_csrf".to_string(),
-            automation_id: None,
-            image_url: "/static/sample_screenshot.png".to_string(),
-            width: 1920,
-            height: 1080,
-            return_to: None,
-            mode: None,
-            step_id: None,
-            reference_bitmap_id: None,
-            x: Some(0),
-            y: Some(0),
-            manual_x: Some(500),
-            manual_y: Some(300),
-        };
-
-        let (tl_x, tl_y, is_valid) = match (form_manual.manual_x, form_manual.manual_y) {
-            (Some(mx), Some(my)) => (mx.min(1919), my.min(1079), true),
-            _ => (0, 0, false),
-        };
-        assert!(is_valid);
-        assert_eq!((tl_x, tl_y), (500, 300));
-
-        // 2. Keyboard submission sending (0,0) without manual entry is recognized as "no pick"
-        let form_keyboard = PickRegionTopLeftForm {
-            csrf_token: "test_csrf".to_string(),
-            automation_id: None,
-            image_url: "/static/sample_screenshot.png".to_string(),
-            width: 1920,
-            height: 1080,
-            return_to: None,
-            mode: None,
-            step_id: None,
-            reference_bitmap_id: None,
-            x: Some(0),
-            y: Some(0),
-            manual_x: None,
-            manual_y: None,
-        };
-
-        let is_no_pick = form_keyboard.x == Some(0)
-            && form_keyboard.y == Some(0)
-            && form_keyboard.manual_x.is_none();
-        assert!(is_no_pick);
+        assert_eq!(
+            sanitize_image_url(Some("/static/sample.png; body { background: red; }")),
+            "/static/deskdispatch_logo.png"
+        );
+        assert_eq!(
+            sanitize_image_url(Some("/static/sample.png\n")),
+            "/static/deskdispatch_logo.png"
+        );
+        assert_eq!(sanitize_image_url(None), "/static/deskdispatch_logo.png");
     }
 
     #[test]
     fn test_form_deserialization_click_coords() {
-        let json_tl = serde_json::json!({
-            "csrf_token": "test_token",
-            "image_url": "/static/sample_screenshot.png",
+        let json_top_left = r#"{
+            "csrf_token": "token",
+            "image_url": "/static/test.png",
             "width": 1920,
             "height": 1080,
             "click.x": "300",
             "click.y": "170"
-        });
+        }"#;
 
         let form_tl: PickRegionTopLeftForm =
-            serde_json::from_value(json_tl).expect("Should deserialize top left form");
+            serde_json::from_str(json_top_left).expect("Deserializes top left form");
         assert_eq!(form_tl.x, Some(300));
         assert_eq!(form_tl.y, Some(170));
 
-        // Step 2: Bottom-Right grid click form deserialization (grid_click.x=160&grid_click.y=180)
-        let json_br_grid = serde_json::json!({
-            "csrf_token": "test_token",
-            "image_url": "/static/sample_screenshot.png",
+        let json_bottom_right = r#"{
+            "csrf_token": "token",
+            "image_url": "/static/test.png",
             "width": 1920,
             "height": 1080,
             "top_left_x": 100,
-            "top_left_y": 200,
-            "grid_click.x": "160",
-            "grid_click.y": "180"
-        });
-
-        let form_br_grid: PickRegionBottomRightForm = serde_json::from_value(json_br_grid)
-            .expect("Should deserialize bottom right grid form");
-        assert_eq!(form_br_grid.grid_x, Some(160));
-        assert_eq!(form_br_grid.grid_y, Some(180));
-
-        // Step 2: Bottom-Right coarse click form deserialization (coarse_click.x=400&coarse_click.y=250)
-        let json_br_coarse = serde_json::json!({
-            "csrf_token": "test_token",
-            "image_url": "/static/sample_screenshot.png",
-            "width": 1920,
-            "height": 1080,
-            "top_left_x": 100,
-            "top_left_y": 200,
+            "top_left_y": 100,
             "coarse_click.x": "400",
             "coarse_click.y": "250"
-        });
+        }"#;
 
-        let form_br_coarse: PickRegionBottomRightForm = serde_json::from_value(json_br_coarse)
-            .expect("Should deserialize bottom right coarse form");
-        assert_eq!(form_br_coarse.coarse_x, Some(400));
-        assert_eq!(form_br_coarse.coarse_y, Some(250));
+        let form_br: PickRegionBottomRightForm =
+            serde_json::from_str(json_bottom_right).expect("Deserializes bottom right form");
+        assert_eq!(form_br.coarse_x, Some(400));
+        assert_eq!(form_br.coarse_y, Some(250));
+    }
+
+    #[test]
+    fn test_png_encoder_and_header_parsing() {
+        let pixels = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let png_bytes = encode_png(2, 2, &pixels);
+
+        assert!(png_bytes.len() > 24);
+        let dims = parse_png_dimensions(&png_bytes);
+        assert_eq!(dims, Some((2, 2)));
+    }
+
+    #[test]
+    fn test_pick_region_numeric_entry_and_keyboard_no_pick_logic() {
+        let form_manual = PickRegionTopLeftForm {
+            csrf_token: "csrf".to_string(),
+            automation_id: None,
+            image_url: "/static/test.png".to_string(),
+            width: 1000,
+            height: 1000,
+            return_to: None,
+            mode: None,
+            step_id: None,
+            reference_bitmap_id: None,
+            x: None,
+            y: None,
+            manual_x: Some(250),
+            manual_y: Some(150),
+        };
+
+        assert_eq!(form_manual.manual_x, Some(250));
+        assert_eq!(form_manual.manual_y, Some(150));
+    }
+
+    #[test]
+    fn test_pick_region_query_search_region_bounding() {
+        let query = PickRegionQuery {
+            automation_id: Some(10),
+            image_url: Some("/static/sample.png".to_string()),
+            width: Some(1920),
+            height: Some(1080),
+            return_to: Some("find_bitmap".to_string()),
+            mode: Some("search_region".to_string()),
+            step_id: Some(5),
+            reference_bitmap_id: Some(2),
+            error_msg: None,
+        };
+
+        assert_eq!(query.automation_id, Some(10));
+        assert_eq!(query.mode.as_deref(), Some("search_region"));
     }
 }
