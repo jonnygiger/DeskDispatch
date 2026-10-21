@@ -69,6 +69,7 @@ pub async fn prune_task_run_steps(pool: &PgPool, retention_days: u32) -> Result<
     Ok(rows_affected)
 }
 
+#[derive(Debug, sqlx::FromRow)]
 struct OldScreenshot {
     step_id: i64,
     object_storage_key: String,
@@ -81,7 +82,7 @@ pub async fn prune_old_screenshots(
     storage: &StorageService,
     retention_days: u32,
 ) -> Result<(u64, u64), String> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, OldScreenshot>(
         r#"
         SELECT step_id, object_storage_key
         FROM step_screenshots
@@ -91,16 +92,7 @@ pub async fn prune_old_screenshots(
     .bind(retention_days as i32)
     .fetch_all(pool)
     .await
-    .map_err(|e| format!("Failed to query old screenshots: {}", e))?
-    .into_iter()
-    .map(|row| {
-        use sqlx::Row;
-        OldScreenshot {
-            step_id: row.get("step_id"),
-            object_storage_key: row.get("object_storage_key"),
-        }
-    })
-    .collect::<Vec<_>>();
+    .map_err(|e| format!("Failed to query old screenshots: {}", e))?;
 
     let mut db_deleted = 0u64;
     let mut s3_deleted = 0u64;
@@ -190,19 +182,19 @@ pub async fn cleanup_abandoned_tmp_uploads(
 /// Scans S3 `bitmaps/` and `screenshots/` prefixes and deletes orphan S3 objects not referenced in DB.
 #[instrument(skip(pool, storage))]
 pub async fn gc_orphan_s3_objects(pool: &PgPool, storage: &StorageService) -> Result<u64, String> {
-    // 1. Fetch valid keys from DB
-    let bitmap_keys: Vec<String> = sqlx::query_scalar("SELECT object_storage_key FROM bitmaps")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("Failed to fetch bitmap keys: {}", e))?;
+    // 1. Fetch valid keys from DB in a single UNION query
+    let valid_keys: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT object_storage_key FROM bitmaps
+        UNION
+        SELECT object_storage_key FROM step_screenshots
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch DB storage keys: {}", e))?;
 
-    let screenshot_keys: Vec<String> =
-        sqlx::query_scalar("SELECT object_storage_key FROM step_screenshots")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| format!("Failed to fetch screenshot keys: {}", e))?;
-
-    let db_keys: HashSet<String> = bitmap_keys.into_iter().chain(screenshot_keys).collect();
+    let db_keys: HashSet<String> = valid_keys.into_iter().collect();
 
     let mut deleted_count = 0u64;
 
