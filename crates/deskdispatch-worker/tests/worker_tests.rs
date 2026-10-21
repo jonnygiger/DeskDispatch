@@ -29,6 +29,7 @@ fn test_worker_config_default_and_loading() {
 }
 
 #[test]
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn test_image_capture_and_bitmap_search() {
     // Construct 100x100 synthetic screen image
     let mut screen_data = vec![0u8; 100 * 100 * 4];

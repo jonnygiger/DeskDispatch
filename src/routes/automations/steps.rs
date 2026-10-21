@@ -145,11 +145,8 @@ fn validate_branch_form(form: &MouseClickStepForm, condition_type: &str) -> Opti
 }
 
 #[inline]
-pub fn sanitize_label(label: Option<&str>) -> Option<String> {
-    label
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
+pub fn sanitize_label(label: Option<&str>) -> Option<&str> {
+    label.map(str::trim).filter(|s| !s.is_empty())
 }
 
 pub fn validate_literal_or_reference<T>(
@@ -224,7 +221,7 @@ async fn insert_base_step(
     .bind(automation_id)
     .bind(next_pos)
     .bind(step_type)
-    .bind(&clean_label)
+    .bind(clean_label)
     .bind(post_delay_ms)
     .fetch_one(&mut **tx)
     .await?;
@@ -245,7 +242,7 @@ async fn update_base_step(
     sqlx::query(
         "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
     )
-    .bind(&clean_label)
+    .bind(clean_label)
     .bind(post_delay_ms)
     .bind(step_id)
     .bind(automation_id)
@@ -615,8 +612,32 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
     use std::collections::HashMap;
 
+    let step_target_map = if !br_rows.is_empty() {
+        let target_ids: std::collections::HashSet<i64> = br_rows
+            .iter()
+            .flat_map(|r| [r.on_match_step_id, r.on_no_match_step_id])
+            .flatten()
+            .collect();
+
+        let mut target_map = HashMap::with_capacity(target_ids.len());
+        for (idx, row) in raw_steps.iter().enumerate() {
+            if target_ids.contains(&row.id) {
+                let step_num = idx + 1;
+                let target_str = match &row.label {
+                    Some(lbl) if !lbl.trim().is_empty() => {
+                        format!("Step {step_num} ({})", lbl.trim())
+                    }
+                    _ => format!("Step {step_num} ({})", row.step_type),
+                };
+                target_map.insert(row.id, target_str);
+            }
+        }
+        target_map
+    } else {
+        HashMap::new()
+    };
+
     let mut details_map: HashMap<i64, StepDetailView> = HashMap::with_capacity(raw_steps.len());
-    let mut has_branch = false;
 
     for r in kp_rows {
         details_map.insert(r.step_id, StepDetailView::KeyPress(r));
@@ -631,7 +652,6 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         details_map.insert(r.step_id, StepDetailView::FindBitmap(r));
     }
     for r in br_rows {
-        has_branch = true;
         details_map.insert(r.step_id, StepDetailView::Branch(r));
     }
 
@@ -639,23 +659,6 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     for r in ss_rows {
         step_screenshot_map.insert(r.step_id, r.object_storage_key);
     }
-
-    let step_target_map = if has_branch {
-        let mut target_map = HashMap::with_capacity(raw_steps.len());
-        for (idx, row) in raw_steps.iter().enumerate() {
-            let step_num = idx + 1;
-            let target_str = match &row.label {
-                Some(lbl) if !lbl.trim().is_empty() => {
-                    format!("Step {step_num} ({})", lbl.trim())
-                }
-                _ => format!("Step {step_num} ({})", row.step_type),
-            };
-            target_map.insert(row.id, target_str);
-        }
-        target_map
-    } else {
-        HashMap::new()
-    };
 
     let mut steps = Vec::with_capacity(raw_steps.len());
     for (idx, row) in raw_steps.into_iter().enumerate() {
@@ -1304,6 +1307,34 @@ async fn render_step_error(
     (StatusCode::BAD_REQUEST, html_body).into_response()
 }
 
+async fn validate_automation_variables_exist(
+    db: &PgPool,
+    automation_id: i64,
+    var_ids: &[i64],
+) -> Result<(), String> {
+    if var_ids.is_empty() {
+        return Ok(());
+    }
+    let mut vars = var_ids.to_vec();
+    vars.sort_unstable();
+    vars.dedup();
+
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
+    )
+    .bind(&vars)
+    .bind(automation_id)
+    .fetch_one(db)
+    .await
+    .unwrap_or(0);
+
+    if count as usize != vars.len() {
+        Err("Selected output variable is invalid for this automation.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 async fn validate_step_form(
     db: &PgPool,
     automation_id: i64,
@@ -1330,20 +1361,19 @@ async fn validate_step_form(
                 if form.region_variable_id.is_none() {
                     return Err("Please select a valid Region variable.".to_string());
                 }
-            } else if let Err(err) = validate_literal_or_reference(
-                form.x_mode.as_deref(),
-                form.x,
-                form.x_variable_id,
-                "X coordinate",
-            ) {
-                return Err(err.to_string());
-            } else if let Err(err) = validate_literal_or_reference(
-                form.y_mode.as_deref(),
-                form.y,
-                form.y_variable_id,
-                "Y coordinate",
-            ) {
-                return Err(err.to_string());
+            } else {
+                validate_literal_or_reference(
+                    form.x_mode.as_deref(),
+                    form.x,
+                    form.x_variable_id,
+                    "X coordinate",
+                )?;
+                validate_literal_or_reference(
+                    form.y_mode.as_deref(),
+                    form.y,
+                    form.y_variable_id,
+                    "Y coordinate",
+                )?;
             }
         }
         "find_pixel_rgb" => {
@@ -1351,20 +1381,7 @@ async fn validate_step_form(
                 return Err("Please provide valid X and Y coordinates.".to_string());
             }
             if let Some(var_id) = form.output_variable_id {
-                let exists = sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM automation_variables WHERE id = $1 AND automation_id = $2)",
-                )
-                .bind(var_id)
-                .bind(automation_id)
-                .fetch_one(db)
-                .await
-                .unwrap_or(false);
-
-                if !exists {
-                    return Err(
-                        "Selected output variable is invalid for this automation.".to_string()
-                    );
-                }
+                validate_automation_variables_exist(db, automation_id, &[var_id]).await?;
             }
         }
         "find_bitmap" => {
@@ -1372,7 +1389,7 @@ async fn validate_step_form(
                 return Err("Please select a reference bitmap.".to_string());
             }
 
-            let mut out_vars: Vec<i64> = [
+            let out_vars: Vec<i64> = [
                 form.output_found_variable_id,
                 form.output_x_variable_id,
                 form.output_y_variable_id,
@@ -1382,25 +1399,7 @@ async fn validate_step_form(
             .flatten()
             .collect();
 
-            if !out_vars.is_empty() {
-                out_vars.sort_unstable();
-                out_vars.dedup();
-
-                let count = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
-                )
-                .bind(&out_vars)
-                .bind(automation_id)
-                .fetch_one(db)
-                .await
-                .unwrap_or(0);
-
-                if count != out_vars.len() as i64 {
-                    return Err(
-                        "Selected output variable is invalid for this automation.".to_string()
-                    );
-                }
-            }
+            validate_automation_variables_exist(db, automation_id, &out_vars).await?;
         }
         _ => return Err("Invalid step type.".to_string()),
     }
@@ -1544,32 +1543,7 @@ pub async fn get_edit_step_handler(
                 fetch_automation_variables(&state.db, id),
             );
 
-            let (
-                db_ref_id,
-                db_sx,
-                db_sy,
-                db_sw,
-                db_sh,
-                match_threshold,
-                out_f,
-                out_x,
-                out_y,
-                out_r,
-            ) = match fb_row.ok().flatten() {
-                Some(r) => (
-                    r.reference_bitmap_id,
-                    r.search_x,
-                    r.search_y,
-                    r.search_width,
-                    r.search_height,
-                    r.match_threshold,
-                    r.output_found_variable_id,
-                    r.output_x_variable_id,
-                    r.output_y_variable_id,
-                    r.output_region_variable_id,
-                ),
-                None => (None, None, None, None, None, 0.95, None, None, None, None),
-            };
+            let fb = fb_row.ok().flatten();
 
             HtmlTemplate(StepFindBitmapTemplate {
                 user,
@@ -1578,16 +1552,16 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                reference_bitmap_id: query.reference_bitmap_id.or(db_ref_id),
-                search_x: query.search_x.or(db_sx),
-                search_y: query.search_y.or(db_sy),
-                search_width: query.search_width.or(db_sw),
-                search_height: query.search_height.or(db_sh),
-                match_threshold,
-                output_found_variable_id: out_f,
-                output_x_variable_id: out_x,
-                output_y_variable_id: out_y,
-                output_region_variable_id: out_r,
+                reference_bitmap_id: query.reference_bitmap_id.or_else(|| fb.as_ref().and_then(|r| r.reference_bitmap_id)),
+                search_x: query.search_x.or_else(|| fb.as_ref().and_then(|r| r.search_x)),
+                search_y: query.search_y.or_else(|| fb.as_ref().and_then(|r| r.search_y)),
+                search_width: query.search_width.or_else(|| fb.as_ref().and_then(|r| r.search_width)),
+                search_height: query.search_height.or_else(|| fb.as_ref().and_then(|r| r.search_height)),
+                match_threshold: fb.as_ref().map(|r| r.match_threshold).unwrap_or(0.95),
+                output_found_variable_id: fb.as_ref().and_then(|r| r.output_found_variable_id),
+                output_x_variable_id: fb.as_ref().and_then(|r| r.output_x_variable_id),
+                output_y_variable_id: fb.as_ref().and_then(|r| r.output_y_variable_id),
+                output_region_variable_id: fb.as_ref().and_then(|r| r.output_region_variable_id),
                 bitmaps,
                 variables,
                 error: None,
@@ -1607,58 +1581,7 @@ pub async fn get_edit_step_handler(
                 fetch_available_bitmaps(&state.db, id),
             );
 
-            let (
-                condition_type,
-                db_x,
-                db_y,
-                expected_r,
-                expected_g,
-                expected_b,
-                tolerance,
-                db_ref_id,
-                db_sx,
-                db_sy,
-                db_sw,
-                db_sh,
-                match_threshold,
-                on_match_step_id,
-                on_no_match_step_id,
-            ) = match branch_row.ok().flatten() {
-                Some(r) => (
-                    r.condition_type,
-                    r.x,
-                    r.y,
-                    r.expected_r,
-                    r.expected_g,
-                    r.expected_b,
-                    r.tolerance,
-                    r.reference_bitmap_id,
-                    r.search_x,
-                    r.search_y,
-                    r.search_width,
-                    r.search_height,
-                    r.match_threshold,
-                    r.on_match_step_id,
-                    r.on_no_match_step_id,
-                ),
-                None => (
-                    "pixel_rgb".to_string(),
-                    None,
-                    None,
-                    Some(0),
-                    Some(0),
-                    Some(0),
-                    Some(10),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(0.95),
-                    None,
-                    None,
-                ),
-            };
+            let br = branch_row.ok().flatten();
 
             HtmlTemplate(StepBranchTemplate {
                 user,
@@ -1667,21 +1590,21 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                condition_type,
-                x: query.search_x.or(db_x),
-                y: query.search_y.or(db_y),
-                expected_r,
-                expected_g,
-                expected_b,
-                tolerance,
-                reference_bitmap_id: query.reference_bitmap_id.or(db_ref_id),
-                search_x: query.search_x.or(db_sx),
-                search_y: query.search_y.or(db_sy),
-                search_width: query.search_width.or(db_sw),
-                search_height: query.search_height.or(db_sh),
-                match_threshold,
-                on_match_step_id,
-                on_no_match_step_id,
+                condition_type: br.as_ref().map(|r| r.condition_type.clone()).unwrap_or_else(|| "pixel_rgb".to_string()),
+                x: query.search_x.or_else(|| br.as_ref().and_then(|r| r.x)),
+                y: query.search_y.or_else(|| br.as_ref().and_then(|r| r.y)),
+                expected_r: br.as_ref().and_then(|r| r.expected_r).or(Some(0)),
+                expected_g: br.as_ref().and_then(|r| r.expected_g).or(Some(0)),
+                expected_b: br.as_ref().and_then(|r| r.expected_b).or(Some(0)),
+                tolerance: br.as_ref().and_then(|r| r.tolerance).or(Some(10)),
+                reference_bitmap_id: query.reference_bitmap_id.or_else(|| br.as_ref().and_then(|r| r.reference_bitmap_id)),
+                search_x: query.search_x.or_else(|| br.as_ref().and_then(|r| r.search_x)),
+                search_y: query.search_y.or_else(|| br.as_ref().and_then(|r| r.search_y)),
+                search_width: query.search_width.or_else(|| br.as_ref().and_then(|r| r.search_width)),
+                search_height: query.search_height.or_else(|| br.as_ref().and_then(|r| r.search_height)),
+                match_threshold: br.as_ref().and_then(|r| r.match_threshold).or(Some(0.95)),
+                on_match_step_id: br.as_ref().and_then(|r| r.on_match_step_id),
+                on_no_match_step_id: br.as_ref().and_then(|r| r.on_no_match_step_id),
                 steps,
                 bitmaps,
                 error: None,
