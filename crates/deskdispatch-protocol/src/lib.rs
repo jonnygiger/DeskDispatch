@@ -287,6 +287,7 @@ pub enum StepPayload {
         set_as_task_output: bool,
         timeout_ms: u64,
         retry_interval_ms: u64,
+    },
     WindowControl {
         id: i64,
         label: Option<String>,

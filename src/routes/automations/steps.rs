@@ -111,6 +111,9 @@ struct OcrExtractDetailRow {
     region_variable_id: Option<i64>,
     output_variable_id: Option<i64>,
     set_as_task_output: bool,
+}
+
+#[derive(sqlx::FromRow)]
 struct TypeTextDetailRow {
     text_to_type: String,
     delay_between_keys_ms: i32,
@@ -946,6 +949,25 @@ pub async fn get_new_ocr_extract_step_handler(
     let variables = fetch_automation_variables(&state.db, id).await;
 
     HtmlTemplate(StepOcrExtractTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        search_x: query.search_x,
+        search_y: query.search_y,
+        search_width: query.search_width,
+        search_height: query.search_height,
+        region_variable_id: None,
+        output_variable_id: None,
+        set_as_task_output: true,
+        variables,
+        error: None,
+        is_edit: false,
+    })
+}
+
 /// GET /automations/{id}/steps/new/window_control
 #[tracing::instrument(skip(user))]
 pub async fn get_new_window_control_step_handler(
@@ -983,14 +1005,6 @@ pub async fn get_new_type_text_step_handler(
         step_id: None,
         label: String::new(),
         post_delay_seconds: 0.0,
-        search_x: query.search_x,
-        search_y: query.search_y,
-        search_width: query.search_width,
-        search_height: query.search_height,
-        region_variable_id: None,
-        output_variable_id: None,
-        set_as_task_output: true,
-        variables,
         text_to_type: String::new(),
         delay_between_keys_ms: 0,
         error: None,
@@ -3052,6 +3066,7 @@ mod tests {
             match_threshold: None,
             on_match_step_id: None,
             on_no_match_step_id: Some(2),
+            set_as_task_output: None,
             output_variable_id: None,
             output_found_variable_id: None,
             output_x_variable_id: None,
