@@ -1,6 +1,5 @@
 use chrono::Utc;
 use deskdispatch_protocol::*;
-use rand::Rng;
 use reqwest::{Client, StatusCode};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,22 +7,32 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::image_gen::generate_random_screenshot;
+use crate::prng::FastPrng;
 use crate::profile::WorkerProfile;
 
+#[inline]
 fn random_bool(p: f64) -> bool {
-    rand::thread_rng().gen_bool(p)
+    FastPrng::gen_bool(p)
 }
 
-fn random_range<T, R>(range: R) -> T
-where
-    T: rand::distributions::uniform::SampleUniform,
-    R: rand::distributions::uniform::SampleRange<T>,
-{
-    rand::thread_rng().gen_range(range)
+#[inline]
+fn random_range_i32(min: i32, max: i32) -> i32 {
+    FastPrng::gen_range_i32(min, max)
 }
 
+#[inline]
+fn random_range_u64(min: u64, max: u64) -> u64 {
+    FastPrng::gen_range_u64(min, max)
+}
+
+#[inline]
+fn random_range_usize(min: usize, max: usize) -> usize {
+    FastPrng::gen_range_usize(min, max)
+}
+
+#[inline]
 fn random_flag() -> bool {
-    rand::thread_rng().r#gen()
+    FastPrng::gen_bool(0.5)
 }
 
 #[derive(Debug, Clone)]
@@ -232,7 +241,7 @@ impl SimulatedWorker {
             }
 
             if self.config.profile == WorkerProfile::LaggyNetwork {
-                let extra_delay = random_range(2..8);
+                let extra_delay = random_range_u64(2, 8);
                 tokio::time::sleep(Duration::from_secs(extra_delay)).await;
             }
 
@@ -447,18 +456,35 @@ impl SimulatedWorker {
             );
 
             let started_at = Utc::now();
-            tokio::time::sleep(Duration::from_millis(post_delay_ms.min(1000))).await;
+            let typing_delay = if step_type == "type_text" {
+                let key_delay = step
+                    .get("delay_between_keys_ms")
+                    .and_then(|d| d.as_u64())
+                    .unwrap_or(0);
+                let char_count = step
+                    .get("text_to_type")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.chars().count())
+                    .unwrap_or(0);
+                (key_delay * char_count as u64).min(500)
+            } else {
+                0
+            };
+            tokio::time::sleep(Duration::from_millis(
+                post_delay_ms.min(1000) + typing_delay,
+            ))
+            .await;
 
             // Determine step result based on profile
             let (result_str, captured_r, captured_g, captured_b, captured_x, captured_y, found) =
                 match self.config.profile {
                     WorkerProfile::Flaky if random_bool(0.3) => (
                         "failed",
-                        Some(random_range(0..=255)),
-                        Some(random_range(0..=255)),
-                        Some(random_range(0..=255)),
-                        Some(random_range(0..1920)),
-                        Some(random_range(0..1080)),
+                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                        Some(random_range_i32(0, 1920)),
+                        Some(random_range_i32(0, 1080)),
                         Some(false),
                     ),
                     _ => match step_type {
@@ -479,13 +505,22 @@ impl SimulatedWorker {
                                 Some(matched),
                             )
                         }
+                        "window_control" => (
+                            "success",
+                            Some(100),
+                            Some(150),
+                            Some(200),
+                            Some(0),
+                            Some(0),
+                            Some(true),
+                        ),
                         _ => (
                             "success",
-                            Some(random_range(0..=255)),
-                            Some(random_range(0..=255)),
-                            Some(random_range(0..=255)),
-                            Some(random_range(0..1920)),
-                            Some(random_range(0..1080)),
+                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                            Some(random_range_i32(0, 1920)),
+                            Some(random_range_i32(0, 1080)),
                             Some(true),
                         ),
                     },
@@ -1017,18 +1052,18 @@ impl SimulatedWorker {
                 }
             }
 
-            let ev_type = event_types[random_range(0..event_types.len())];
+            let ev_type = event_types[random_range_usize(0, event_types.len())];
             let (x_opt, y_opt, btn_opt, key_opt) = match ev_type {
                 "key_press" => (
                     None,
                     None,
                     None,
-                    Some(key_combos[random_range(0..key_combos.len())].to_string()),
+                    Some(key_combos[random_range_usize(0, key_combos.len())].to_string()),
                 ),
                 _ => (
-                    Some(random_range(50..1800)),
-                    Some(random_range(50..1000)),
-                    Some(buttons[random_range(0..buttons.len())].to_string()),
+                    Some(random_range_i32(50, 1800)),
+                    Some(random_range_i32(50, 1000)),
+                    Some(buttons[random_range_usize(0, buttons.len())].to_string()),
                     None,
                 ),
             };

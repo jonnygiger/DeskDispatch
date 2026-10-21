@@ -556,6 +556,23 @@ pub struct StepMouseClickTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "automations/step_window_control.html")]
+pub struct StepWindowControlTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub action: String,
+    pub match_pattern: String,
+    pub match_type: String,
+    pub timeout_seconds: f64,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
+#[derive(Template)]
 #[template(path = "automations/step_key_press.html")]
 pub struct StepKeyPressTemplate {
     pub user: AuthUser,
@@ -565,6 +582,21 @@ pub struct StepKeyPressTemplate {
     pub label: String,
     pub post_delay_seconds: f64,
     pub key_combo: String,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
+#[derive(Template)]
+#[template(path = "automations/step_type_text.html")]
+pub struct StepTypeTextTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub text_to_type: String,
+    pub delay_between_keys_ms: i32,
     pub error: Option<String>,
     pub is_edit: bool,
 }
@@ -727,6 +759,9 @@ pub struct MouseClickStepForm {
     pub button: Option<String>,
     pub click_type: Option<String>,
     pub key_combo: Option<String>,
+    pub text_to_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub delay_between_keys_ms: Option<i32>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub output_variable_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
@@ -763,6 +798,11 @@ pub struct MouseClickStepForm {
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub on_no_match_step_id: Option<i64>,
     pub set_as_task_output: Option<String>,
+    pub action: Option<String>,
+    pub match_pattern: Option<String>,
+    pub match_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub timeout_seconds: Option<f64>,
 }
 
 #[cfg(test)]

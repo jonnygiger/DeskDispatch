@@ -111,6 +111,26 @@ struct OcrExtractDetailRow {
     region_variable_id: Option<i64>,
     output_variable_id: Option<i64>,
     set_as_task_output: bool,
+struct TypeTextDetailRow {
+    text_to_type: String,
+    delay_between_keys_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct WindowControlViewRow {
+    step_id: i64,
+    action: String,
+    match_pattern: String,
+    match_type: String,
+    timeout_ms: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct WindowControlDetailRow {
+    action: String,
+    match_pattern: String,
+    match_type: String,
+    timeout_ms: i64,
 }
 
 // ============================================================================
@@ -375,6 +395,64 @@ pub fn generate_mouse_click_summary(
     buf
 }
 
+pub fn generate_type_text_summary(text_to_type: &str, delay_between_keys_ms: i32) -> String {
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(64);
+    let trimmed = text_to_type.trim();
+    let display_text = if trimmed.len() > 30 {
+        format!("{}...", &trimmed[..30])
+    } else {
+        trimmed.to_string()
+    };
+
+    if delay_between_keys_ms > 0 {
+        let _ = write!(
+            buf,
+            "Type \"{display_text}\" ({delay_between_keys_ms}ms key delay)"
+        );
+    } else {
+        let _ = write!(buf, "Type \"{display_text}\"");
+    }
+    buf
+}
+
+pub fn generate_window_control_summary(
+    action: &str,
+    match_pattern: &str,
+    match_type: &str,
+    timeout_ms: i64,
+) -> String {
+    let action_str = match action.to_lowercase().as_str() {
+        "activate" => "Focus",
+        "close" => "Close",
+        "minimize" => "Minimize",
+        "maximize" => "Maximize",
+        "wait" => "Wait for",
+        _ => "Control",
+    };
+    let pattern_trimmed = match_pattern.trim();
+    let display_pattern = if pattern_trimmed.chars().count() > 30 {
+        let truncated: String = pattern_trimmed.chars().take(27).collect();
+        format!("{}...", truncated)
+    } else {
+        pattern_trimmed.to_string()
+    };
+
+    if action == "wait" {
+        format!(
+            "Wait for window matching \"{}\" ({}) [timeout {:.1}s]",
+            display_pattern,
+            match_type,
+            timeout_ms as f64 / 1000.0
+        )
+    } else {
+        format!(
+            "{} window matching \"{}\" ({})",
+            action_str, display_pattern, match_type
+        )
+    }
+}
+
 pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&str>) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
@@ -456,6 +534,13 @@ struct KeyPressViewRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct TypeTextViewRow {
+    step_id: i64,
+    text_to_type: String,
+    delay_between_keys_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
 struct MouseClickViewRow {
     step_id: i64,
     x: Option<i32>,
@@ -529,12 +614,34 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         return Vec::new();
     }
 
-    let (kp_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
+    let (kp_res, wc_res, tt_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
         sqlx::query_as::<_, KeyPressViewRow>(
             r#"
             SELECT skp.step_id, skp.key_combo
             FROM step_key_presses skp
             JOIN automation_steps s ON skp.step_id = s.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query_as::<_, WindowControlViewRow>(
+            r#"
+            SELECT swc.step_id, swc.action, swc.match_pattern, swc.match_type, swc.timeout_ms
+            FROM step_window_controls swc
+            JOIN automation_steps s ON swc.step_id = s.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query_as::<_, TypeTextViewRow>(
+            r#"
+            SELECT stt.step_id, stt.text_to_type, stt.delay_between_keys_ms
+            FROM step_type_texts stt
+            JOIN automation_steps s ON stt.step_id = s.id
             WHERE s.automation_id = $1 AND s.deleted_at IS NULL
             "#,
         )
@@ -607,6 +714,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     );
 
     let kp_rows = kp_res.unwrap_or_default();
+    let wc_rows = wc_res.unwrap_or_default();
+    let tt_rows = tt_res.unwrap_or_default();
     let mc_rows = mc_res.unwrap_or_default();
     let fp_rows = fp_res.unwrap_or_default();
     let fb_rows = fb_res.unwrap_or_default();
@@ -615,6 +724,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
     enum StepDetailView {
         KeyPress(KeyPressViewRow),
+        TypeText(TypeTextViewRow),
+        WindowControl(WindowControlViewRow),
         MouseClick(MouseClickViewRow),
         FindPixel(FindPixelViewRow),
         FindBitmap(FindBitmapViewRow),
@@ -653,6 +764,12 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     for r in kp_rows {
         details_map.insert(r.step_id, StepDetailView::KeyPress(r));
     }
+    for r in tt_rows {
+        details_map.insert(r.step_id, StepDetailView::TypeText(r));
+    }
+    for r in wc_rows {
+        details_map.insert(r.step_id, StepDetailView::WindowControl(r));
+    }
     for r in mc_rows {
         details_map.insert(r.step_id, StepDetailView::MouseClick(r));
     }
@@ -683,6 +800,21 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
         let (description, ref_bitmap_id, ref_bitmap_key) = match detail_opt {
             Some(StepDetailView::KeyPress(r)) => (format!("Press {}", r.key_combo), None, None),
+            Some(StepDetailView::TypeText(r)) => (
+                generate_type_text_summary(&r.text_to_type, r.delay_between_keys_ms),
+                None,
+                None,
+            ),
+            Some(StepDetailView::WindowControl(r)) => (
+                generate_window_control_summary(
+                    &r.action,
+                    &r.match_pattern,
+                    &r.match_type,
+                    r.timeout_ms,
+                ),
+                None,
+                None,
+            ),
             Some(StepDetailView::MouseClick(r)) => (
                 generate_mouse_click_summary(
                     r.x,
@@ -734,6 +866,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             None => (
                 match step_type.as_str() {
                     "key_press" => "Press key".to_string(),
+                    "type_text" => "Type text".to_string(),
+                    "window_control" => "Control window".to_string(),
                     "mouse_click" => "Click mouse".to_string(),
                     "find_pixel_rgb" => "Read pixel at coordinate".to_string(),
                     "find_bitmap" => "Search for bitmap on screen".to_string(),
@@ -812,6 +946,37 @@ pub async fn get_new_ocr_extract_step_handler(
     let variables = fetch_automation_variables(&state.db, id).await;
 
     HtmlTemplate(StepOcrExtractTemplate {
+/// GET /automations/{id}/steps/new/window_control
+#[tracing::instrument(skip(user))]
+pub async fn get_new_window_control_step_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    HtmlTemplate(StepWindowControlTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        action: "activate".to_string(),
+        match_pattern: String::new(),
+        match_type: "contains".to_string(),
+        timeout_seconds: 5.0,
+        error: None,
+        is_edit: false,
+    })
+}
+
+/// GET /automations/{id}/steps/new/type_text
+#[tracing::instrument(skip(user))]
+pub async fn get_new_type_text_step_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    HtmlTemplate(StepTypeTextTemplate {
         user,
         csrf_token,
         automation_id: id,
@@ -826,6 +991,8 @@ pub async fn get_new_ocr_extract_step_handler(
         output_variable_id: None,
         set_as_task_output: true,
         variables,
+        text_to_type: String::new(),
+        delay_between_keys_ms: 0,
         error: None,
         is_edit: false,
     })
@@ -1080,6 +1247,59 @@ async fn save_step_details(
             .execute(&mut **tx)
             .await?;
         }
+        "window_control" => {
+            let action = match form.action.as_deref().unwrap_or("activate").to_lowercase().as_str() {
+                "close" => "close",
+                "minimize" => "minimize",
+                "maximize" => "maximize",
+                "wait" => "wait",
+                _ => "activate",
+            };
+            let match_pattern = form.match_pattern.as_deref().unwrap_or("").trim();
+            let match_type = match form.match_type.as_deref().unwrap_or("contains").to_lowercase().as_str() {
+                "exact" => "exact",
+                "starts_with" => "starts_with",
+                _ => "contains",
+            };
+            let timeout_ms = ((form.timeout_seconds.unwrap_or(5.0).max(0.0)) * 1000.0) as i64;
+
+            sqlx::query(
+                r#"
+                INSERT INTO step_window_controls (step_id, action, match_pattern, match_type, timeout_ms)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    action = EXCLUDED.action,
+                    match_pattern = EXCLUDED.match_pattern,
+                    match_type = EXCLUDED.match_type,
+                    timeout_ms = EXCLUDED.timeout_ms
+                "#,
+            )
+            .bind(step_id)
+            .bind(action)
+            .bind(match_pattern)
+            .bind(match_type)
+            .bind(timeout_ms)
+            .execute(&mut **tx)
+            .await?;
+        }
+        "type_text" => {
+            let text_to_type = form.text_to_type.as_deref().unwrap_or("").trim();
+            let delay_between_keys_ms = form.delay_between_keys_ms.unwrap_or(0).max(0);
+            sqlx::query(
+                r#"
+                INSERT INTO step_type_texts (step_id, text_to_type, delay_between_keys_ms)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    text_to_type = EXCLUDED.text_to_type,
+                    delay_between_keys_ms = EXCLUDED.delay_between_keys_ms
+                "#,
+            )
+            .bind(step_id)
+            .bind(text_to_type)
+            .bind(delay_between_keys_ms)
+            .execute(&mut **tx)
+            .await?;
+        }
         "key_press" => {
             let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
             sqlx::query(
@@ -1302,6 +1522,34 @@ async fn render_step_error(
             is_edit,
         })
         .into_response(),
+        "window_control" => HtmlTemplate(StepWindowControlTemplate {
+            user,
+            csrf_token,
+            automation_id,
+            step_id,
+            label,
+            post_delay_seconds,
+            action: form.action.unwrap_or_else(|| "activate".to_string()),
+            match_pattern: form.match_pattern.unwrap_or_default(),
+            match_type: form.match_type.unwrap_or_else(|| "contains".to_string()),
+            timeout_seconds: form.timeout_seconds.unwrap_or(5.0),
+            error: Some(error),
+            is_edit,
+        })
+        .into_response(),
+        "type_text" => HtmlTemplate(StepTypeTextTemplate {
+            user,
+            csrf_token,
+            automation_id,
+            step_id,
+            label,
+            post_delay_seconds,
+            text_to_type: form.text_to_type.unwrap_or_default(),
+            delay_between_keys_ms: form.delay_between_keys_ms.unwrap_or(0).max(0),
+            error: Some(error),
+            is_edit,
+        })
+        .into_response(),
         "mouse_click" => {
             let variables = fetch_automation_variables(db, automation_id).await;
             HtmlTemplate(StepMouseClickTemplate {
@@ -1451,6 +1699,28 @@ async fn validate_step_form(
             let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
             if key_combo.is_empty() {
                 return Err("Key combination cannot be empty.".to_string());
+            }
+        }
+        "type_text" => {
+            let text = form.text_to_type.as_deref().unwrap_or("").trim();
+            if text.is_empty() {
+                return Err("Text to type cannot be empty.".to_string());
+            }
+            if let Some(delay) = form.delay_between_keys_ms
+                && delay < 0
+            {
+                return Err("Delay between key presses cannot be negative.".to_string());
+            }
+        }
+        "window_control" => {
+            let pattern = form.match_pattern.as_deref().unwrap_or("").trim();
+            if pattern.is_empty() {
+                return Err("Window title match pattern cannot be empty.".to_string());
+            }
+            if let Some(t) = form.timeout_seconds
+                && t < 0.0
+            {
+                return Err("Timeout cannot be negative.".to_string());
             }
         }
         "mouse_click" => {
@@ -1637,6 +1907,70 @@ pub async fn get_edit_step_handler(
                 label,
                 post_delay_seconds,
                 key_combo,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "window_control" => {
+            let wc_row = sqlx::query_as::<_, WindowControlDetailRow>(
+                "SELECT action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
+            let action = wc_row.as_ref().map(|r| r.action.clone()).unwrap_or_else(|| "activate".to_string());
+            let match_pattern = wc_row.as_ref().map(|r| r.match_pattern.clone()).unwrap_or_default();
+            let match_type = wc_row.as_ref().map(|r| r.match_type.clone()).unwrap_or_else(|| "contains".to_string());
+            let timeout_seconds = wc_row.as_ref().map(|r| r.timeout_ms as f64 / 1000.0).unwrap_or(5.0);
+
+            HtmlTemplate(StepWindowControlTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                action,
+                match_pattern,
+                match_type,
+                timeout_seconds,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "type_text" => {
+            let tt_row = sqlx::query_as::<_, TypeTextDetailRow>(
+                "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
+            let text_to_type = tt_row
+                .as_ref()
+                .map(|r| r.text_to_type.clone())
+                .unwrap_or_default();
+            let delay_between_keys_ms = tt_row
+                .as_ref()
+                .map(|r| r.delay_between_keys_ms)
+                .unwrap_or(0);
+
+            HtmlTemplate(StepTypeTextTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                text_to_type,
+                delay_between_keys_ms,
                 error: None,
                 is_edit: true,
             })
@@ -2634,5 +2968,142 @@ mod tests {
             "single",
         );
         assert_eq!(summary3, "Click (500, «target_y») [middle, single]");
+    }
+
+    #[test]
+    fn test_step_helpers_sanitization_summaries_and_branch_validation() {
+        // 1. Label sanitization
+        assert_eq!(sanitize_label(None), None);
+        assert_eq!(sanitize_label(Some("")), None);
+        assert_eq!(sanitize_label(Some("   ")), None);
+        assert_eq!(
+            sanitize_label(Some("  Click Submit  ")),
+            Some("Click Submit")
+        );
+
+        // 2. Seconds to post delay ms conversion
+        assert_eq!(seconds_to_post_delay_ms(None), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(0.0)), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(-1.5)), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(0.25)), 250);
+        assert_eq!(seconds_to_post_delay_ms(Some(3.0)), 3000);
+
+        // 3. Type text summary formatting and truncation
+        assert_eq!(
+            generate_type_text_summary("Hello World", 0),
+            "Type \"Hello World\""
+        );
+        assert_eq!(
+            generate_type_text_summary(
+                "Type text with long content exceeding thirty chars limit",
+                0
+            ),
+            "Type \"Type text with long content ex...\""
+        );
+        assert_eq!(
+            generate_type_text_summary("Hello", 50),
+            "Type \"Hello\" (50ms key delay)"
+        );
+        assert_eq!(
+            generate_type_text_summary("  Padded text  ", 10),
+            "Type \"Padded text\" (10ms key delay)"
+        );
+
+        // 4. Mouse button & click type sanitization
+        assert_eq!(sanitize_mouse_button(Some("right")), "right");
+        assert_eq!(sanitize_mouse_button(Some("middle")), "middle");
+        assert_eq!(sanitize_mouse_button(Some("left")), "left");
+        assert_eq!(sanitize_mouse_button(Some("invalid")), "left");
+        assert_eq!(sanitize_mouse_button(None), "left");
+
+        assert_eq!(sanitize_click_type(Some("double")), "double");
+        assert_eq!(sanitize_click_type(Some("single")), "single");
+        assert_eq!(sanitize_click_type(Some("invalid")), "single");
+        assert_eq!(sanitize_click_type(None), "single");
+
+        // 5. Branch form validation
+        let mut form = MouseClickStepForm {
+            step_type: Some("branch".to_string()),
+            label: None,
+            post_delay_seconds: None,
+            x_mode: None,
+            x: Some(100),
+            x_variable_id: None,
+            y_mode: None,
+            y: Some(200),
+            y_variable_id: None,
+            click_mode: None,
+            region_variable_id: None,
+            button: None,
+            click_type: None,
+            key_combo: None,
+            text_to_type: None,
+            delay_between_keys_ms: None,
+            condition_type: Some("pixel_rgb".to_string()),
+            expected_r: Some(255),
+            expected_g: Some(255),
+            expected_b: Some(255),
+            tolerance: Some(5),
+            reference_bitmap_id: None,
+            search_x: None,
+            search_y: None,
+            search_width: None,
+            search_height: None,
+            match_threshold: None,
+            on_match_step_id: None,
+            on_no_match_step_id: Some(2),
+            output_variable_id: None,
+            output_found_variable_id: None,
+            output_x_variable_id: None,
+            output_y_variable_id: None,
+            output_region_variable_id: None,
+            action: None,
+            match_pattern: None,
+            match_type: None,
+            timeout_seconds: None,
+        };
+
+        // Missing on_match_step_id
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some(
+                "Both match and no-match target steps are required for branch conditions."
+                    .to_string()
+            )
+        );
+
+        // Target step ID <= 0
+        form.on_match_step_id = Some(0);
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some(
+                "Both match and no-match target steps are required for branch conditions."
+                    .to_string()
+            )
+        );
+
+        // Valid targets, missing X for pixel_rgb
+        form.on_match_step_id = Some(1);
+        form.x = None;
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string())
+        );
+
+        // Valid pixel_rgb branch form
+        form.x = Some(100);
+        assert_eq!(validate_branch_form(&form, "pixel_rgb"), None);
+
+        // Missing reference_bitmap_id for bitmap condition
+        form.condition_type = Some("bitmap".to_string());
+        form.reference_bitmap_id = None;
+        assert_eq!(
+            validate_branch_form(&form, "bitmap"),
+            Some("Please select a reference bitmap for bitmap condition.".to_string())
+        );
+
+        // Valid bitmap branch form
+        form.reference_bitmap_id = Some(10);
+        assert_eq!(validate_branch_form(&form, "bitmap"), None);
     }
 }

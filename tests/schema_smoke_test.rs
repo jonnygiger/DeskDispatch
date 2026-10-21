@@ -21,6 +21,8 @@ async fn test_schema_queries_syntax() {
         "SELECT id, automation_id, position, step_type, post_delay_ms FROM automation_steps",
         "SELECT step_id, x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks",
         "SELECT step_id, key_combo FROM step_key_presses",
+        "SELECT step_id, text_to_type, delay_between_keys_ms FROM step_type_texts",
+        "SELECT step_id, action, match_pattern, match_type, timeout_ms FROM step_window_controls",
         "SELECT step_id, automation_id, condition_type, on_match_step_id, on_no_match_step_id FROM step_branches",
         "SELECT step_id, search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts",
         "SELECT id, automation_id, schedule_id, worker_id, status, output_type, output_value FROM task_runs",

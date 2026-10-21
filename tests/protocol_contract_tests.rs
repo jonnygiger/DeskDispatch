@@ -164,6 +164,21 @@ fn test_protocol_dto_serialization_roundtrip() {
                 set_as_task_output: true,
                 timeout_ms: 5000,
                 retry_interval_ms: 250,
+            StepPayload::TypeText {
+                id: 11,
+                label: Some("Type Welcome".to_string()),
+                post_delay_ms: 200,
+                text_to_type: "Hello World".to_string(),
+                delay_between_keys_ms: 50,
+            },
+            StepPayload::WindowControl {
+                id: 12,
+                label: Some("Focus Window".to_string()),
+                post_delay_ms: 150,
+                action: "activate".to_string(),
+                match_pattern: "Firefox".to_string(),
+                match_type: "contains".to_string(),
+                timeout_ms: 5000,
             },
         ],
     };

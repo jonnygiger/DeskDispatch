@@ -1,4 +1,4 @@
-use rand::Rng;
+use crate::prng::FastPrng;
 
 /// Common resolution presets for random screenshot generation.
 const COMMON_RESOLUTIONS: &[(u32, u32)] = &[
@@ -66,8 +66,8 @@ fn write_png_chunk(buf: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]) {
 
 /// Generates a random PNG screenshot with random dimensions and colors.
 pub fn generate_random_screenshot() -> Vec<u8> {
-    let mut rng = rand::thread_rng();
-    let (width, height) = COMMON_RESOLUTIONS[rng.gen_range(0..COMMON_RESOLUTIONS.len())];
+    let idx = FastPrng::gen_range_usize(0, COMMON_RESOLUTIONS.len());
+    let (width, height) = COMMON_RESOLUTIONS[idx];
     generate_random_screenshot_with_dimensions(width, height)
 }
 
@@ -83,10 +83,9 @@ pub fn generate_random_screenshot_with_dimensions(width: u32, height: u32) -> Ve
     // Generate scanline raw data (filter byte 0x00 + RGB bytes per scanline)
     let mut scanlines = Vec::with_capacity(total_scanline_bytes);
 
-    let mut rng = rand::thread_rng();
-    let base_r: u8 = rng.gen_range(20..220);
-    let base_g: u8 = rng.gen_range(20..220);
-    let base_b: u8 = rng.gen_range(20..220);
+    let base_r: u8 = FastPrng::gen_range_u8_inclusive(20, 220);
+    let base_g: u8 = FastPrng::gen_range_u8_inclusive(20, 220);
+    let base_b: u8 = FastPrng::gen_range_u8_inclusive(20, 220);
 
     for y in 0..height {
         scanlines.push(0x00); // Filter type: None
