@@ -2645,4 +2645,125 @@ mod tests {
         );
         assert_eq!(summary3, "Click (500, «target_y») [middle, single]");
     }
+
+    #[test]
+    fn test_step_helpers_sanitization_summaries_and_branch_validation() {
+        // 1. Label sanitization
+        assert_eq!(sanitize_label(None), None);
+        assert_eq!(sanitize_label(Some("")), None);
+        assert_eq!(sanitize_label(Some("   ")), None);
+        assert_eq!(sanitize_label(Some("  Click Submit  ")), Some("Click Submit"));
+
+        // 2. Seconds to post delay ms conversion
+        assert_eq!(seconds_to_post_delay_ms(None), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(0.0)), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(-1.5)), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(0.25)), 250);
+        assert_eq!(seconds_to_post_delay_ms(Some(3.0)), 3000);
+
+        // 3. Type text summary formatting and truncation
+        assert_eq!(
+            generate_type_text_summary("Hello World", 0),
+            "Type \"Hello World\""
+        );
+        assert_eq!(
+            generate_type_text_summary("Type text with long content exceeding thirty chars limit", 0),
+            "Type \"Type text with long content ex...\""
+        );
+        assert_eq!(
+            generate_type_text_summary("Hello", 50),
+            "Type \"Hello\" (50ms key delay)"
+        );
+        assert_eq!(
+            generate_type_text_summary("  Padded text  ", 10),
+            "Type \"Padded text\" (10ms key delay)"
+        );
+
+        // 4. Mouse button & click type sanitization
+        assert_eq!(sanitize_mouse_button(Some("right")), "right");
+        assert_eq!(sanitize_mouse_button(Some("middle")), "middle");
+        assert_eq!(sanitize_mouse_button(Some("left")), "left");
+        assert_eq!(sanitize_mouse_button(Some("invalid")), "left");
+        assert_eq!(sanitize_mouse_button(None), "left");
+
+        assert_eq!(sanitize_click_type(Some("double")), "double");
+        assert_eq!(sanitize_click_type(Some("single")), "single");
+        assert_eq!(sanitize_click_type(Some("invalid")), "single");
+        assert_eq!(sanitize_click_type(None), "single");
+
+        // 5. Branch form validation
+        let mut form = MouseClickStepForm {
+            step_type: Some("branch".to_string()),
+            label: None,
+            post_delay_seconds: None,
+            x_mode: None,
+            x: Some(100),
+            x_variable_id: None,
+            y_mode: None,
+            y: Some(200),
+            y_variable_id: None,
+            click_mode: None,
+            region_variable_id: None,
+            button: None,
+            click_type: None,
+            key_combo: None,
+            text_to_type: None,
+            delay_between_keys_ms: None,
+            condition_type: Some("pixel_rgb".to_string()),
+            expected_r: Some(255),
+            expected_g: Some(255),
+            expected_b: Some(255),
+            tolerance: Some(5),
+            reference_bitmap_id: None,
+            search_x: None,
+            search_y: None,
+            search_width: None,
+            search_height: None,
+            match_threshold: None,
+            on_match_step_id: None,
+            on_no_match_step_id: Some(2),
+            output_variable_id: None,
+            output_found_variable_id: None,
+            output_x_variable_id: None,
+            output_y_variable_id: None,
+            output_region_variable_id: None,
+        };
+
+        // Missing on_match_step_id
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some("Both match and no-match target steps are required for branch conditions.".to_string())
+        );
+
+        // Target step ID <= 0
+        form.on_match_step_id = Some(0);
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some("Both match and no-match target steps are required for branch conditions.".to_string())
+        );
+
+        // Valid targets, missing X for pixel_rgb
+        form.on_match_step_id = Some(1);
+        form.x = None;
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string())
+        );
+
+        // Valid pixel_rgb branch form
+        form.x = Some(100);
+        assert_eq!(validate_branch_form(&form, "pixel_rgb"), None);
+
+        // Missing reference_bitmap_id for bitmap condition
+        form.condition_type = Some("bitmap".to_string());
+        form.reference_bitmap_id = None;
+        assert_eq!(
+            validate_branch_form(&form, "bitmap"),
+            Some("Please select a reference bitmap for bitmap condition.".to_string())
+        );
+
+        // Valid bitmap branch form
+        form.reference_bitmap_id = Some(10);
+        assert_eq!(validate_branch_form(&form, "bitmap"), None);
+    }
 }

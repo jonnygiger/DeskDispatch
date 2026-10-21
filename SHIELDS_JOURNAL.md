@@ -51,3 +51,7 @@ Action: Unit test `url_decode` boundary inputs, missing header options, default 
 ## 2025-03-22 Session Cookie Parsing & Clearing Edge Cases Coverage
 Learning: `extract_session_id` parses semicolon-separated cookie headers by stripping `__Host-session_id=` and `session_id=` prefixes. Key edge cases include invalid UUID values in `__Host-session_id=` gracefully falling back to subsequent valid `session_id=` pairs, precedence of `__Host-session_id` when valid, and avoiding false prefix matches (e.g. `not_session_id=`).
 Action: Test session ID cookie extraction and cookie clearing exact attributes directly in unit tests in `src/auth/session.rs` without requiring database connection fixtures.
+
+## 2025-03-23 Automation Step Helpers Sanitization, Summaries & Branch Validation Coverage
+Learning: Step creation and editing in `src/routes/automations/steps.rs` relies on internal helper functions (`sanitize_label`, `seconds_to_post_delay_ms`, `generate_type_text_summary`, `sanitize_mouse_button`, `sanitize_click_type`, `validate_branch_form`) to clean form inputs, calculate post-delays, format summary labels, and validate branch targets before database mutations.
+Action: Unit test label sanitization edge cases, delay float-to-int conversion clamping, 30-char text truncation formatting, mouse click option sanitization, and branch condition validation rules directly without requiring database fixtures.
