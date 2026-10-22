@@ -25,6 +25,35 @@ async fn test_protected_worker_route(worker: WorkerAuth) -> impl IntoResponse {
     )
 }
 
+struct WorkerAuthCleanupGuard {
+    pool: sqlx::PgPool,
+    worker_id: i64,
+}
+
+impl Drop for WorkerAuthCleanupGuard {
+    fn drop(&mut self) {
+        let pool = self.pool.clone();
+        let worker_id = self.worker_id;
+
+        let cleanup = async move {
+            let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1")
+                .bind(worker_id)
+                .execute(&pool)
+                .await;
+        };
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(cleanup);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
 async fn get_test_pool() -> Option<sqlx::PgPool> {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
@@ -64,6 +93,11 @@ async fn test_worker_auth_extractor_integration() {
     .fetch_one(&pool)
     .await
     .unwrap();
+
+    let _cleanup_guard = WorkerAuthCleanupGuard {
+        pool: pool.clone(),
+        worker_id,
+    };
 
     let config = Config::from_env().unwrap();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
@@ -150,9 +184,4 @@ async fn test_worker_auth_extractor_integration() {
     assert_eq!(resp_json["hostname"], hostname);
     assert_eq!(resp_json["display_name"], display_name);
 
-    // Clean up test worker
-    let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1")
-        .bind(worker_id)
-        .execute(&pool)
-        .await;
 }
