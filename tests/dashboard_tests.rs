@@ -79,6 +79,7 @@ async fn test_dashboard_stats_tiles() {
 
     // Seed test user with dummy hash (bypassing expensive password hashing)
     let username = format!("dashuser_{}", Uuid::new_v4().simple());
+
     let user_row = sqlx::query(
         r#"
         INSERT INTO users (username, password_hash, display_name, role, is_active)

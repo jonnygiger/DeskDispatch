@@ -547,6 +547,24 @@ pub fn generate_presigned_post_policy(
     })
 }
 
+#[cfg(test)]
+fn rewrite_url_with_public_endpoint(
+    url: String,
+    internal_endpoint: Option<&str>,
+    public_endpoint: Option<&str>,
+) -> String {
+    let (Some(internal_ep), Some(public_ep)) = (internal_endpoint, public_endpoint) else {
+        return url;
+    };
+    let clean_internal = internal_ep.trim_end_matches('/');
+    let clean_public = public_ep.trim_end_matches('/');
+    if let Some(rest) = url.strip_prefix(clean_internal) {
+        format!("{}{}", clean_public, rest)
+    } else {
+        url
+    }
+}
+
 /// Storage service wrapper for S3 / RustFS operations.
 #[derive(Clone, Debug)]
 pub struct StorageService {
