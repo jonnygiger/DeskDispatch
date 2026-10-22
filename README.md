@@ -358,7 +358,7 @@ stateDiagram-v2
 | **Web Server** | Axum & Tokio | Asynchronous HTTP routing, Tower middleware ecosystem, and non-blocking I/O |
 | **Database & ORM** | PostgreSQL 18 & SQLx | Async connection pooling, compile-time SQL query validation macro support |
 | **Templating Engine** | Askama | Build-time compiled HTML templates with zero runtime parsing overhead |
-| **Object Storage** | RustFS 1.0.1 / S3 (aws-sdk-s3) | S3-compatible storage for reference bitmaps and execution screenshots |
+| **Object Storage** | RustFS | S3-compatible storage for reference bitmaps and execution screenshots |
 | **Password Hashing** | Argon2id | Memory-hard key derivation function for operator passwords |
 | **API Authentication** | SHA-256 Hashes | Fast, high-entropy hashing for machine worker bearer tokens |
 | **Cron Math** | Croner | Standard 5-field cron parsing and next-run evaluation |
