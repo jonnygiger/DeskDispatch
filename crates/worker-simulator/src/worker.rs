@@ -526,7 +526,7 @@ impl SimulatedWorker {
                                 Some(matched),
                             )
                         }
-                        "window_control" => (
+                        "mouse_scroll" | "window_control" => (
                             "success",
                             Some(100),
                             Some(150),

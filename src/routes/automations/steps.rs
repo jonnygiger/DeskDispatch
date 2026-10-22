@@ -96,6 +96,17 @@ struct FindPixelDetailRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct MouseScrollDetailRow {
+    direction: String,
+    scroll_amount: i32,
+    x: Option<i32>,
+    y: Option<i32>,
+    x_variable_id: Option<i64>,
+    y_variable_id: Option<i64>,
+    region_variable_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
 struct MouseClickDetailRow {
     x: Option<i32>,
     y: Option<i32>,
@@ -392,6 +403,49 @@ pub async fn fetch_step_options_bundle(
     }
 }
 
+pub fn generate_mouse_scroll_summary(
+    direction: &str,
+    scroll_amount: i32,
+    x: Option<i32>,
+    y: Option<i32>,
+    x_var_name: Option<&str>,
+    y_var_name: Option<&str>,
+    region_var_name: Option<&str>,
+) -> String {
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(64);
+    let _ = write!(buf, "Scroll {direction} ({scroll_amount} ticks)");
+
+    if let Some(rname) = region_var_name.map(str::trim).filter(|n| !n.is_empty()) {
+        let _ = write!(buf, " at region «{rname}» center");
+        return buf;
+    }
+
+    if x.is_some() || y.is_some() || x_var_name.is_some() || y_var_name.is_some() {
+        buf.push_str(" at (");
+        if let Some(name) = x_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+            let _ = write!(buf, "«{name}»");
+        } else if let Some(val) = x {
+            let _ = write!(buf, "{val}");
+        } else {
+            buf.push('0');
+        }
+
+        buf.push_str(", ");
+        if let Some(name) = y_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+            let _ = write!(buf, "«{name}»");
+        } else if let Some(val) = y {
+            let _ = write!(buf, "{val}");
+        } else {
+            buf.push('0');
+        }
+
+        buf.push(')');
+    }
+
+    buf
+}
+
 pub fn generate_mouse_click_summary(
     x: Option<i32>,
     y: Option<i32>,
@@ -627,6 +681,18 @@ struct TypeTextViewRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct MouseScrollViewRow {
+    step_id: i64,
+    direction: String,
+    scroll_amount: i32,
+    x: Option<i32>,
+    y: Option<i32>,
+    x_var_name: Option<String>,
+    y_var_name: Option<String>,
+    region_var_name: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
 struct MouseClickViewRow {
     step_id: i64,
     x: Option<i32>,
@@ -704,12 +770,26 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         return Vec::new();
     }
 
-    let (kp_res, wc_res, tt_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
+    let (kp_res, ms_res, wc_res, tt_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
         sqlx::query_as::<_, KeyPressViewRow>(
             r#"
             SELECT skp.step_id, skp.key_combo
             FROM step_key_presses skp
             JOIN automation_steps s ON skp.step_id = s.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query_as::<_, MouseScrollViewRow>(
+            r#"
+            SELECT ms.step_id, ms.direction, ms.scroll_amount, ms.x, ms.y, vx.name AS x_var_name, vy.name AS y_var_name, vr.name AS region_var_name
+            FROM step_mouse_scrolls ms
+            JOIN automation_steps s ON ms.step_id = s.id
+            LEFT JOIN automation_variables vx ON ms.x_variable_id = vx.id
+            LEFT JOIN automation_variables vy ON ms.y_variable_id = vy.id
+            LEFT JOIN automation_variables vr ON ms.region_variable_id = vr.id
             WHERE s.automation_id = $1 AND s.deleted_at IS NULL
             "#,
         )
@@ -808,6 +888,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     let wc_rows = wc_res.unwrap_or_default();
     let tt_rows = tt_res.unwrap_or_default();
     let mc_rows = mc_res.unwrap_or_default();
+    let ms_rows = ms_res.unwrap_or_default();
     let fp_rows = fp_res.unwrap_or_default();
     let fb_rows = fb_res.unwrap_or_default();
     let br_rows = br_res.unwrap_or_default();
@@ -818,6 +899,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         TypeText(TypeTextViewRow),
         WindowControl(WindowControlViewRow),
         MouseClick(MouseClickViewRow),
+        MouseScroll(MouseScrollViewRow),
         FindPixel(FindPixelViewRow),
         FindBitmap(FindBitmapViewRow),
         Branch(BranchViewRow),
@@ -855,14 +937,17 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     for r in kp_rows {
         details_map.insert(r.step_id, StepDetailView::KeyPress(r));
     }
-    for r in tt_rows {
-        details_map.insert(r.step_id, StepDetailView::TypeText(r));
-    }
     for r in wc_rows {
         details_map.insert(r.step_id, StepDetailView::WindowControl(r));
     }
+    for r in tt_rows {
+        details_map.insert(r.step_id, StepDetailView::TypeText(r));
+    }
     for r in mc_rows {
         details_map.insert(r.step_id, StepDetailView::MouseClick(r));
+    }
+    for r in ms_rows {
+        details_map.insert(r.step_id, StepDetailView::MouseScroll(r));
     }
     for r in fp_rows {
         details_map.insert(r.step_id, StepDetailView::FindPixel(r));
@@ -893,6 +978,19 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             Some(StepDetailView::KeyPress(r)) => (format!("Press {}", r.key_combo), None, None),
             Some(StepDetailView::TypeText(r)) => (
                 generate_type_text_summary(&r.text_to_type, r.delay_between_keys_ms),
+                None,
+                None,
+            ),
+            Some(StepDetailView::MouseScroll(r)) => (
+                generate_mouse_scroll_summary(
+                    &r.direction,
+                    r.scroll_amount,
+                    r.x,
+                    r.y,
+                    r.x_var_name.as_deref(),
+                    r.y_var_name.as_deref(),
+                    r.region_var_name.as_deref(),
+                ),
                 None,
                 None,
             ),
@@ -962,6 +1060,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                     "type_text" => "Type text".to_string(),
                     "window_control" => "Control window".to_string(),
                     "mouse_click" => "Click mouse".to_string(),
+                    "mouse_scroll" => "Mouse scroll".to_string(),
                     "find_pixel_rgb" => "Read pixel at coordinate".to_string(),
                     "find_bitmap" => "Search for bitmap on screen".to_string(),
                     "branch" => "BRANCH evaluation".to_string(),
@@ -1216,6 +1315,39 @@ pub async fn get_new_find_pixel_rgb_step_handler(
     })
 }
 
+/// GET /automations/{id}/steps/new/mouse_scroll
+#[tracing::instrument(skip(state, user))]
+pub async fn get_new_mouse_scroll_step_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let variables = fetch_automation_variables(&state.db, id).await;
+
+    HtmlTemplate(StepMouseScrollTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        direction: "down".to_string(),
+        scroll_amount: 3,
+        x_mode: "fixed".to_string(),
+        x: None,
+        x_variable_id: None,
+        y_mode: "fixed".to_string(),
+        y: None,
+        y_variable_id: None,
+        click_mode: "coordinates".to_string(),
+        region_variable_id: None,
+        variables,
+        error: None,
+        is_edit: false,
+    })
+}
+
 /// GET /automations/{id}/steps/new/mouse_click
 #[tracing::instrument(skip(state, user))]
 pub async fn get_new_mouse_click_step_handler(
@@ -1369,6 +1501,78 @@ async fn save_step_details(
             .bind(win_ctype)
             .bind(form.on_match_step_id.filter(|&sid| sid > 0))
             .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .execute(&mut **tx)
+            .await?;
+        }
+        "mouse_scroll" => {
+            let direction = match form
+                .direction
+                .as_deref()
+                .unwrap_or("down")
+                .to_lowercase()
+                .as_str()
+            {
+                "up" => "up",
+                "left" => "left",
+                "right" => "right",
+                _ => "down",
+            };
+            let scroll_amount = form.scroll_amount.unwrap_or(3).clamp(1, 100);
+
+            let click_mode = form.click_mode.as_deref().unwrap_or("coordinates");
+            let (x_mode, y_mode) = (
+                form.x_mode.as_deref().unwrap_or("fixed"),
+                form.y_mode.as_deref().unwrap_or("fixed"),
+            );
+
+            let (x, x_var_id, y, y_var_id, region_var_id) = if click_mode == "region" {
+                (None, None, None, None, form.region_variable_id)
+            } else {
+                let x_val = if x_mode == "fixed" || x_mode == "literal" {
+                    form.x
+                } else {
+                    None
+                };
+                let x_var = if x_mode == "variable" {
+                    form.x_variable_id
+                } else {
+                    None
+                };
+                let y_val = if y_mode == "fixed" || y_mode == "literal" {
+                    form.y
+                } else {
+                    None
+                };
+                let y_var = if y_mode == "variable" {
+                    form.y_variable_id
+                } else {
+                    None
+                };
+                (x_val, x_var, y_val, y_var, None)
+            };
+
+            sqlx::query(
+                r#"
+                INSERT INTO step_mouse_scrolls (step_id, direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    direction = EXCLUDED.direction,
+                    scroll_amount = EXCLUDED.scroll_amount,
+                    x = EXCLUDED.x,
+                    y = EXCLUDED.y,
+                    x_variable_id = EXCLUDED.x_variable_id,
+                    y_variable_id = EXCLUDED.y_variable_id,
+                    region_variable_id = EXCLUDED.region_variable_id
+                "#,
+            )
+            .bind(step_id)
+            .bind(direction)
+            .bind(scroll_amount)
+            .bind(x)
+            .bind(y)
+            .bind(x_var_id)
+            .bind(y_var_id)
+            .bind(region_var_id)
             .execute(&mut **tx)
             .await?;
         }
@@ -1688,6 +1892,31 @@ async fn render_step_error(
             is_edit,
         })
         .into_response(),
+        "mouse_scroll" => {
+            let variables = fetch_automation_variables(db, automation_id).await;
+            HtmlTemplate(StepMouseScrollTemplate {
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
+                label,
+                post_delay_seconds,
+                direction: form.direction.unwrap_or_else(|| "down".to_string()),
+                scroll_amount: form.scroll_amount.unwrap_or(3).clamp(1, 100),
+                x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
+                x: form.x,
+                x_variable_id: form.x_variable_id,
+                y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
+                y: form.y,
+                y_variable_id: form.y_variable_id,
+                click_mode: form.click_mode.unwrap_or_else(|| "coordinates".to_string()),
+                region_variable_id: form.region_variable_id,
+                variables,
+                error: Some(error),
+                is_edit,
+            })
+            .into_response()
+        }
         "mouse_click" => {
             let variables = fetch_automation_variables(db, automation_id).await;
             HtmlTemplate(StepMouseClickTemplate {
@@ -2296,6 +2525,64 @@ pub async fn get_edit_step_handler(
                 region_variable_id: ocr.as_ref().and_then(|r| r.region_variable_id),
                 output_variable_id: ocr.as_ref().and_then(|r| r.output_variable_id),
                 set_as_task_output: ocr.as_ref().map(|r| r.set_as_task_output).unwrap_or(true),
+                variables,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "mouse_scroll" => {
+            let (ms_row, variables) = tokio::join!(
+                sqlx::query_as::<_, MouseScrollDetailRow>("SELECT direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id FROM step_mouse_scrolls WHERE step_id = $1")
+                    .bind(sid).fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id),
+            );
+
+            let ms = ms_row.ok().flatten();
+
+            let x_var_id = ms.as_ref().and_then(|r| r.x_variable_id);
+            let y_var_id = ms.as_ref().and_then(|r| r.y_variable_id);
+            let region_var_id = ms.as_ref().and_then(|r| r.region_variable_id);
+
+            let x_mode = if x_var_id.is_some() {
+                "variable"
+            } else {
+                "fixed"
+            }
+            .to_string();
+            let y_mode = if y_var_id.is_some() {
+                "variable"
+            } else {
+                "fixed"
+            }
+            .to_string();
+            let click_mode = if region_var_id.is_some() {
+                "region"
+            } else {
+                "coordinates"
+            }
+            .to_string();
+
+            HtmlTemplate(StepMouseScrollTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                direction: ms
+                    .as_ref()
+                    .map(|r| r.direction.clone())
+                    .unwrap_or_else(|| "down".to_string()),
+                scroll_amount: ms.as_ref().map(|r| r.scroll_amount).unwrap_or(3),
+                x_mode,
+                x: query.search_x.or_else(|| ms.as_ref().and_then(|r| r.x)),
+                x_variable_id: x_var_id,
+                y_mode,
+                y: query.search_y.or_else(|| ms.as_ref().and_then(|r| r.y)),
+                y_variable_id: y_var_id,
+                click_mode,
+                region_variable_id: region_var_id,
                 variables,
                 error: None,
                 is_edit: true,
@@ -3250,6 +3537,8 @@ mod tests {
             match_pattern: None,
             match_type: None,
             timeout_seconds: None,
+            direction: None,
+            scroll_amount: None,
             window_match_pattern: None,
             window_match_type: None,
             window_check_type: None,

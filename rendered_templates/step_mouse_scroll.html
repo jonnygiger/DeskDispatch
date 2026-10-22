@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Mouse Scroll Step - DeskDispatch</title>
+    <link rel="stylesheet" href="/static/style.css">
+
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+
+<header class="top-nav">
+    <a href="/" class="top-nav-brand">
+        DeskDispatch
+    </a>
+    <ul class="top-nav-menu">
+        <li><a href="/" >Dashboard</a></li>
+        <li><a href="/automations" class="active" aria-current="page">Automations</a></li>
+        <li><a href="/schedules" >Schedules</a></li>
+        <li><a href="/runs" >Runs</a></li>
+        <li><a href="/workers" >Workers</a></li>
+
+        <li><a href="/users" >Users</a></li>
+
+    </ul>
+    <div class="top-nav-user">
+        <a href="/account" >Admin User</a>
+        <form method="post" action="/logout" style="display:inline;">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+            <button type="submit" class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.8125rem;">Log out</button>
+        </form>
+    </div>
+</header>
+
+
+
+    <div class="app-container">
+
+        <main id="main-content" class="main-content">
+
+
+<div class="dashboard-header">
+    <h1 class="dashboard-title">New Mouse Scroll Step</h1>
+    <a href="/automations/1" class="btn btn-outline">Cancel</a>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+
+
+    <form method="post" action="/automations/1/steps">
+
+<input type="hidden" name="csrf_token" value="test_csrf_token_12345" />
+
+        <input type="hidden" name="step_type" value="mouse_scroll">
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="label" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Step Label (Optional)</label>
+            <input type="text" id="label" name="label" value="Scroll Down Document" class="form-control" style="width: 100%;" placeholder="e.g. Scroll Down Document">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="direction" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Scroll Direction *</label>
+            <select name="direction" id="direction" class="form-control" style="width: 100%;">
+                <option value="down" selected>Down (Wheel Down)</option>
+                <option value="up" >Up (Wheel Up)</option>
+                <option value="left" >Left (Wheel Left)</option>
+                <option value="right" >Right (Wheel Right)</option>
+            </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="scroll_amount" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Scroll Amount (Ticks/Clicks) *</label>
+            <input type="number" id="scroll_amount" name="scroll_amount" value="3" min="1" max="100" class="form-control" style="width: 100%;" placeholder="3">
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Number of scroll wheel ticks to perform (1 to 100).</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">X Coordinate (Optional)</label>
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem;">
+                <select name="x_mode" id="x_mode" class="form-control" style="width: 150px;">
+                    <option value="fixed" selected>Fixed Value</option>
+                    <option value="variable" >From Variable</option>
+                </select>
+                <input type="number" id="x" name="x" value="500" class="form-control" style="flex: 1;" placeholder="Pixel X (optional)">
+            </div>
+            <div id="x_var_container" style="margin-top: 0.5rem;">
+                <select name="x_variable_id" id="x_variable_id" class="form-control" style="width: 100%;">
+                    <option value="">-- Select X Variable --</option>
+
+                </select>
+            </div>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Optional: Move mouse to X coordinate before scrolling.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Y Coordinate (Optional)</label>
+            <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem;">
+                <select name="y_mode" id="y_mode" class="form-control" style="width: 150px;">
+                    <option value="fixed" selected>Fixed Value</option>
+                    <option value="variable" >From Variable</option>
+                </select>
+                <input type="number" id="y" name="y" value="300" class="form-control" style="flex: 1;" placeholder="Pixel Y (optional)">
+            </div>
+            <div id="y_var_container" style="margin-top: 0.5rem;">
+                <select name="y_variable_id" id="y_variable_id" class="form-control" style="width: 100%;">
+                    <option value="">-- Select Y Variable --</option>
+
+                </select>
+            </div>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Optional: Move mouse to Y coordinate before scrolling.</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label for="post_delay_seconds" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Wait after this step (seconds)</label>
+            <input type="number" step="0.1" min="0" id="post_delay_seconds" name="post_delay_seconds" value="0.5" class="form-control" style="width: 100%;" placeholder="0.0">
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <a href="/automations/1" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">Add Step</button>
+        </div>
+    </form>
+</div>
+
+        </main>
+    </div>
+
+    <footer class="footer">
+
+        &copy; DeskDispatch — Task Server
+
+    </footer>
+</body>
+</html>

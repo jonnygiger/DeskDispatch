@@ -60,6 +60,51 @@ impl InputController {
         }
     }
 
+    pub fn mouse_scroll(
+        &self,
+        direction: &str,
+        scroll_amount: i32,
+        x: Option<i32>,
+        y: Option<i32>,
+    ) -> Result<(), String> {
+        info!(
+            direction = direction,
+            scroll_amount = scroll_amount,
+            x = x,
+            y = y,
+            "Executing mouse scroll"
+        );
+
+        let btn_num = match direction.to_lowercase().as_str() {
+            "up" => "4",
+            "down" => "5",
+            "left" => "6",
+            "right" => "7",
+            _ => "5",
+        };
+
+        let repeat = scroll_amount.max(1).to_string();
+
+        let mut cmd = Command::new("xdotool");
+        cmd.env("DISPLAY", &self.display);
+
+        if let (Some(px), Some(py)) = (x, y) {
+            cmd.arg("mousemove").arg(px.to_string()).arg(py.to_string());
+        }
+
+        cmd.arg("click").arg("--repeat").arg(repeat).arg(btn_num);
+
+        let status = cmd.status();
+
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            _ => {
+                debug!("xdotool scroll execution omitted or unavailable");
+                Ok(())
+            }
+        }
+    }
+
     pub fn type_text(&self, text: &str, delay_between_keys_ms: u64) -> Result<(), String> {
         info!(
             text_len = text.len(),

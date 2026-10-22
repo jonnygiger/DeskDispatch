@@ -181,6 +181,18 @@ fn test_protocol_dto_serialization_roundtrip() {
                 match_type: "contains".to_string(),
                 timeout_ms: 5000,
             },
+            StepPayload::MouseScroll {
+                id: 13,
+                label: Some("Scroll Content".to_string()),
+                post_delay_ms: 100,
+                direction: "down".to_string(),
+                scroll_amount: 5,
+                x: Some(400),
+                y: Some(300),
+                x_variable_id: None,
+                y_variable_id: None,
+                region_variable_id: None,
+            },
         ],
     };
     let full_auto_str = serde_json::to_string(&full_auto).unwrap();

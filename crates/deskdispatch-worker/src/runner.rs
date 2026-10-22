@@ -191,6 +191,62 @@ impl StepRunner {
         let mut updates = Vec::new();
 
         match step {
+            StepPayload::MouseScroll {
+                id,
+                post_delay_ms,
+                direction,
+                scroll_amount,
+                x,
+                y,
+                x_variable_id,
+                y_variable_id,
+                region_variable_id,
+                ..
+            } => {
+                let mut target_x = *x;
+                let mut target_y = *y;
+
+                if let Some(vid) = x_variable_id
+                    && let Some(val) = self.variables.get(vid)
+                    && let Some(num) = val.as_i64()
+                {
+                    target_x = Some(num as i32);
+                }
+
+                if let Some(vid) = y_variable_id
+                    && let Some(val) = self.variables.get(vid)
+                    && let Some(num) = val.as_i64()
+                {
+                    target_y = Some(num as i32);
+                }
+
+                if let Some(vid) = region_variable_id
+                    && let Some(val) = self.variables.get(vid)
+                {
+                    if let Some(tl) = val.get("top_left").and_then(|v| v.as_array())
+                        && let Some(br) = val.get("bottom_right").and_then(|v| v.as_array())
+                    {
+                        if tl.len() >= 2 && br.len() >= 2 {
+                            let x1 = tl[0].as_i64().unwrap_or(0) as i32;
+                            let y1 = tl[1].as_i64().unwrap_or(0) as i32;
+                            let x2 = br[0].as_i64().unwrap_or(0) as i32;
+                            let y2 = br[1].as_i64().unwrap_or(0) as i32;
+                            target_x = Some((x1 + x2) / 2);
+                            target_y = Some((y1 + y2) / 2);
+                        }
+                    }
+                }
+
+                self.input
+                    .mouse_scroll(direction, *scroll_amount, target_x, target_y)?;
+                captured.captured_x = target_x;
+                captured.captured_y = target_y;
+
+                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
+
+                Ok((None, *id, "success".to_string(), None, captured))
+            }
+
             StepPayload::MouseClick {
                 id,
                 post_delay_ms,
@@ -539,6 +595,7 @@ impl StepRunner {
                         StepPayload::FindBitmap { id, .. } => *id == sid,
                         StepPayload::Branch { id, .. } => *id == sid,
                         StepPayload::OcrExtract { id, .. } => *id == sid,
+                        StepPayload::MouseScroll { id, .. } => *id == sid,
                     })
                 });
 
