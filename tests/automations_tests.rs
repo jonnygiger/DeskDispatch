@@ -827,6 +827,7 @@ async fn test_step_type_picker_interface() {
     assert!(body_str.contains("Type Text"));
     assert!(body_str.contains("Window Control"));
     assert!(body_str.contains("Mouse Click"));
+    assert!(body_str.contains("Mouse Scroll"));
     assert!(body_str.contains("Find Pixel RGB"));
     assert!(body_str.contains("Find Bitmap"));
     assert!(body_str.contains("Branch"));

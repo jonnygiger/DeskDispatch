@@ -98,6 +98,18 @@ struct StepRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct MouseScrollRow {
+    step_id: i64,
+    direction: String,
+    scroll_amount: i32,
+    x: Option<i32>,
+    y: Option<i32>,
+    x_variable_id: Option<i64>,
+    y_variable_id: Option<i64>,
+    region_variable_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
 struct MouseClickRow {
     step_id: i64,
     x: Option<i32>,
@@ -235,6 +247,17 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(db);
 
+    let ms_fut = sqlx::query_as::<_, MouseScrollRow>(
+        r#"
+        SELECT ms.step_id, ms.direction, ms.scroll_amount, ms.x, ms.y, ms.x_variable_id, ms.y_variable_id, ms.region_variable_id
+        FROM step_mouse_scrolls ms
+        JOIN automation_steps s ON ms.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
     let wc_fut = sqlx::query_as::<_, WindowControlRow>(
         r#"
         SELECT swc.step_id, swc.action, swc.match_pattern, swc.match_type, swc.timeout_ms
@@ -336,6 +359,7 @@ pub async fn fetch_full_automation_json_with_overrides(
         var_rows,
         step_rows,
         mouse_clicks_rows,
+        mouse_scrolls_rows,
         key_presses_rows,
         type_texts_rows,
         window_controls_rows,
@@ -343,7 +367,8 @@ pub async fn fetch_full_automation_json_with_overrides(
         find_bitmap_rows,
         branch_rows,
     ) = tokio::try_join!(
-        params_fut, vars_fut, steps_fut, mc_fut, kp_fut, tt_fut, wc_fut, fp_fut, fb_fut, branch_fut
+        params_fut, vars_fut, steps_fut, mc_fut, ms_fut, kp_fut, tt_fut, wc_fut, fp_fut, fb_fut,
+        branch_fut
     )?;
 
     let mut parameters_map = HashMap::with_capacity(param_rows.len());
@@ -381,6 +406,7 @@ pub async fn fetch_full_automation_json_with_overrides(
 
     enum StepDetail {
         MouseClick(MouseClickRow),
+        MouseScroll(MouseScrollRow),
         KeyPress(String),
         TypeText(TypeTextRow),
         WindowControl(WindowControlRow),
@@ -392,6 +418,9 @@ pub async fn fetch_full_automation_json_with_overrides(
     let mut details_map = HashMap::with_capacity(step_rows.len());
     for r in mouse_clicks_rows {
         details_map.insert(r.step_id, StepDetail::MouseClick(r));
+    }
+    for r in mouse_scrolls_rows {
+        details_map.insert(r.step_id, StepDetail::MouseScroll(r));
     }
     for r in key_presses_rows {
         details_map.insert(r.step_id, StepDetail::KeyPress(r.key_combo));
@@ -432,6 +461,20 @@ pub async fn fetch_full_automation_json_with_overrides(
                         region_variable_id: r.region_variable_id,
                         button: r.button,
                         click_type: r.click_type,
+                    });
+                }
+                StepDetail::MouseScroll(r) => {
+                    steps_list.push(StepPayload::MouseScroll {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        direction: r.direction,
+                        scroll_amount: r.scroll_amount,
+                        x: r.x,
+                        y: r.y,
+                        x_variable_id: r.x_variable_id,
+                        y_variable_id: r.y_variable_id,
+                        region_variable_id: r.region_variable_id,
                     });
                 }
                 StepDetail::KeyPress(key_combo) => {

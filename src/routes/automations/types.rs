@@ -556,6 +556,30 @@ pub struct StepMouseClickTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "automations/step_mouse_scroll.html")]
+pub struct StepMouseScrollTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub direction: String,
+    pub scroll_amount: i32,
+    pub x_mode: String,
+    pub x: Option<i32>,
+    pub x_variable_id: Option<i64>,
+    pub y_mode: String,
+    pub y: Option<i32>,
+    pub y_variable_id: Option<i64>,
+    pub click_mode: String,
+    pub region_variable_id: Option<i64>,
+    pub variables: Vec<VariableOption>,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
+#[derive(Template)]
 #[template(path = "automations/step_window_control.html")]
 pub struct StepWindowControlTemplate {
     pub user: AuthUser,
@@ -803,6 +827,9 @@ pub struct StepForm {
     pub match_type: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub timeout_seconds: Option<f64>,
+    pub direction: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub scroll_amount: Option<i32>,
 }
 
 pub type MouseClickStepForm = StepForm;

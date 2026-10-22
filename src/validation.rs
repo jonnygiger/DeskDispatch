@@ -90,6 +90,25 @@ struct VarMeta {
     var_type: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct MouseScrollRow {
+    step_id: i64,
+    x: Option<i32>,
+    y: Option<i32>,
+    x_variable_id: Option<i64>,
+    y_variable_id: Option<i64>,
+    region_variable_id: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+struct MouseScrollMeta {
+    x: Option<i32>,
+    y: Option<i32>,
+    x_var_id: Option<i64>,
+    y_var_id: Option<i64>,
+    region_var_id: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 struct MouseClickMeta {
     x: Option<i32>,
@@ -151,6 +170,7 @@ struct OcrExtractRow {
 #[derive(Debug, Clone)]
 enum StepSubtype {
     MouseClick(MouseClickMeta),
+    MouseScroll(MouseScrollMeta),
     FindPixel(FindPixelMeta),
     FindBitmap(FindBitmapMeta),
     Branch(BranchMeta),
@@ -285,6 +305,17 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
+    let ms_fut = sqlx::query_as::<_, MouseScrollRow>(
+        r#"
+        SELECT ms.step_id, ms.x, ms.y, ms.x_variable_id, ms.y_variable_id, ms.region_variable_id
+        FROM step_mouse_scrolls ms
+        JOIN automation_steps s ON ms.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
     let vars_fut = sqlx::query_as::<_, VarRow>(
         "SELECT id, name, var_type FROM automation_variables WHERE automation_id = $1",
     )
@@ -359,13 +390,15 @@ pub async fn validate_automation_for_activation(
         var_rows,
         param_rows,
         mc_rows,
+        ms_rows,
         fp_rows,
         fb_rows,
         branch_rows,
         ocr_rows,
         bitmap_rows,
     ) = match tokio::try_join!(
-        steps_fut, vars_fut, params_fut, mc_fut, fp_fut, fb_fut, branch_fut, ocr_fut, bitmap_fut
+        steps_fut, vars_fut, params_fut, mc_fut, ms_fut, fp_fut, fb_fut, branch_fut, ocr_fut,
+        bitmap_fut
     ) {
         Ok(tuple) => tuple,
         Err(e) => {
@@ -401,6 +434,18 @@ pub async fn validate_automation_for_activation(
     for r in mc_rows {
         if let Some(&idx) = step_id_to_idx.get(&r.step_id) {
             subtypes[idx] = StepSubtype::MouseClick(MouseClickMeta {
+                x: r.x,
+                y: r.y,
+                x_var_id: r.x_variable_id,
+                y_var_id: r.y_variable_id,
+                region_var_id: r.region_variable_id,
+            });
+        }
+    }
+
+    for r in ms_rows {
+        if let Some(&idx) = step_id_to_idx.get(&r.step_id) {
+            subtypes[idx] = StepSubtype::MouseScroll(MouseScrollMeta {
                 x: r.x,
                 y: r.y,
                 x_var_id: r.x_variable_id,
@@ -496,6 +541,9 @@ pub async fn validate_automation_for_activation(
         match &step.subtype {
             StepSubtype::MouseClick(mc) => {
                 validate_mouse_click(step.id, step.step_number, mc, &vars_map, &mut errors);
+            }
+            StepSubtype::MouseScroll(ms) => {
+                validate_mouse_scroll(step.id, step.step_number, ms, &vars_map, &mut errors);
             }
             StepSubtype::FindPixel(fp) => {
                 validate_find_pixel(step.id, step.step_number, fp, &vars_map, &mut errors);
@@ -826,6 +874,35 @@ fn check_var_type(
             step_number: Some(step_num),
             message,
         });
+    }
+}
+
+fn validate_mouse_scroll(
+    sid: i64,
+    step_num: usize,
+    ms: &MouseScrollMeta,
+    vars_map: &HashMap<i64, VarMeta>,
+    errors: &mut Vec<AutomationLintError>,
+) {
+    check_coord_bounds(ms.x, "Mouse scroll X coordinate", sid, step_num, errors);
+    check_coord_bounds(ms.y, "Mouse scroll Y coordinate", sid, step_num, errors);
+
+    for (var_id, label, expected_type) in [
+        (ms.x_var_id, "X coordinate", "int"),
+        (ms.y_var_id, "Y coordinate", "int"),
+        (ms.region_var_id, "region scroll", "region"),
+    ] {
+        if let Some(vid) = var_id {
+            check_var_type(
+                (sid, step_num),
+                vid,
+                label,
+                expected_type,
+                false,
+                vars_map,
+                errors,
+            );
+        }
     }
 }
 
