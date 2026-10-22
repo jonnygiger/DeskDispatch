@@ -699,6 +699,9 @@ pub struct StepBranchTemplate {
     pub search_width: Option<i32>,
     pub search_height: Option<i32>,
     pub match_threshold: Option<f32>,
+    pub window_match_pattern: String,
+    pub window_match_type: String,
+    pub window_check_type: String,
     pub on_match_step_id: Option<i64>,
     pub on_no_match_step_id: Option<i64>,
     pub steps: Vec<StepOption>,
@@ -830,6 +833,9 @@ pub struct StepForm {
     pub direction: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub scroll_amount: Option<i32>,
+    pub window_match_pattern: Option<String>,
+    pub window_match_type: Option<String>,
+    pub window_check_type: Option<String>,
 }
 
 pub type MouseClickStepForm = StepForm;
