@@ -55,3 +55,7 @@ Action: Test session ID cookie extraction and cookie clearing exact attributes d
 ## 2025-03-23 Automation Step Helpers Sanitization, Summaries & Branch Validation Coverage
 Learning: Step creation and editing in `src/routes/automations/steps.rs` relies on internal helper functions (`sanitize_label`, `seconds_to_post_delay_ms`, `generate_type_text_summary`, `sanitize_mouse_button`, `sanitize_click_type`, `validate_branch_form`) to clean form inputs, calculate post-delays, format summary labels, and validate branch targets before database mutations.
 Action: Unit test label sanitization edge cases, delay float-to-int conversion clamping, 30-char text truncation formatting, mouse click option sanitization, and branch condition validation rules directly without requiring database fixtures.
+
+## 2025-03-24 UserRole Permissions, Conversions & Parsing Edge Cases Coverage
+Learning: `UserRole` parses string inputs using `s.to_lowercase().as_str()` without `.trim()`, meaning `FromStr` supports case-insensitivity (e.g. `"ADMIN"` -> `UserRole::Admin`) but rejects untrimmed whitespace surrounding role strings (e.g. `"  ADMIN  "` -> `Err("Unknown user role:   ADMIN  ")`).
+Action: In unit tests for `UserRole`, test `as_str()`, `can_edit()`, `is_admin()`, case-insensitive `FromStr` without leading/trailing spaces, invalid role error handling, and Serde JSON serialization/deserialization.

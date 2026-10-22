@@ -3150,7 +3150,6 @@ mod tests {
             output_x_variable_id: None,
             output_y_variable_id: None,
             output_region_variable_id: None,
-            set_as_task_output: None,
             action: None,
             match_pattern: None,
             match_type: None,
