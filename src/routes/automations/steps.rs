@@ -661,7 +661,6 @@ pub fn generate_find_bitmap_summary(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn generate_branch_summary(
     condition_type: &str,
     x: Option<i32>,

@@ -346,6 +346,9 @@ impl InputController {
             }
 
             std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+    }
+
     pub fn check_window_state(
         &self,
         match_pattern: &str,
