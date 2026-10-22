@@ -82,6 +82,10 @@ struct BranchDetailRow {
     match_threshold: Option<f32>,
     on_match_step_id: Option<i64>,
     on_no_match_step_id: Option<i64>,
+    window_match_pattern: Option<String>,
+    #[allow(dead_code)]
+    window_match_type: Option<String>,
+    window_check_type: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -172,6 +176,15 @@ fn validate_branch_form(form: &StepForm, condition_type: &str) -> Option<String>
     } else if condition_type == "bitmap" && form.reference_bitmap_id.filter(|&id| id > 0).is_none()
     {
         Some("Please select a reference bitmap for bitmap condition.".to_string())
+    } else if condition_type == "window_state"
+        && form
+            .window_match_pattern
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+    {
+        Some("Please provide a window title match pattern for window state condition.".to_string())
     } else {
         None
     }
@@ -594,6 +607,7 @@ pub fn generate_find_bitmap_summary(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn generate_branch_summary(
     condition_type: &str,
     x: Option<i32>,
@@ -603,6 +617,8 @@ pub fn generate_branch_summary(
     expected_b: Option<i16>,
     tolerance: Option<i16>,
     bitmap_name: Option<&str>,
+    window_pattern: Option<&str>,
+    window_check_type: Option<&str>,
     match_target: Option<&str>,
     no_match_target: Option<&str>,
 ) -> String {
@@ -621,6 +637,17 @@ pub fn generate_branch_summary(
             expected_g.unwrap_or(0),
             expected_b.unwrap_or(0),
             tolerance.unwrap_or(0),
+        );
+    } else if condition_type == "window_state" {
+        let pattern = window_pattern.unwrap_or("window");
+        let check_state = if window_check_type == Some("active") {
+            "active"
+        } else {
+            "exists"
+        };
+        let _ = write!(
+            buf,
+            "BRANCH: if window \"{pattern}\" {check_state} → go to {match_str}, else → go to {no_match_str}"
         );
     } else {
         let bm_name = bitmap_name.unwrap_or("bitmap");
@@ -698,6 +725,10 @@ struct BranchViewRow {
     bitmap_name: Option<String>,
     on_match_step_id: Option<i64>,
     on_no_match_step_id: Option<i64>,
+    window_match_pattern: Option<String>,
+    #[allow(dead_code)]
+    window_match_type: Option<String>,
+    window_check_type: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -805,7 +836,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             r#"
             SELECT
                 sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
-                sb.reference_bitmap_id, b.name AS bitmap_name, b.object_storage_key AS reference_bitmap_key, sb.on_match_step_id, sb.on_no_match_step_id
+                sb.reference_bitmap_id, b.name AS bitmap_name, b.object_storage_key AS reference_bitmap_key, sb.on_match_step_id, sb.on_no_match_step_id,
+                sb.window_match_pattern, sb.window_match_type, sb.window_check_type
             FROM step_branches sb
             JOIN automation_steps s ON sb.step_id = s.id
             LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
@@ -972,6 +1004,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                     r.expected_b,
                     r.tolerance,
                     r.bitmap_name.as_deref(),
+                    r.window_match_pattern.as_deref(),
+                    r.window_check_type.as_deref(),
                     match_target_str,
                     no_match_target_str,
                 );
@@ -1160,6 +1194,9 @@ pub async fn get_new_branch_step_handler(
         search_width: query.search_width,
         search_height: query.search_height,
         match_threshold: Some(0.95),
+        window_match_pattern: String::new(),
+        window_match_type: "contains".to_string(),
+        window_check_type: "exists".to_string(),
         on_match_step_id: None,
         on_no_match_step_id: None,
         steps,
@@ -1300,6 +1337,7 @@ async fn save_step_details(
         "branch" => {
             let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb");
             let is_pixel = condition_type == "pixel_rgb";
+            let is_window = condition_type == "window_state";
 
             let (x, y, r, g, b, tol) = if is_pixel {
                 (
@@ -1314,7 +1352,7 @@ async fn save_step_details(
                 (None, None, None, None, None, None)
             };
 
-            let (ref_bm_id, sx, sy, sw, sh, m_thresh) = if !is_pixel {
+            let (ref_bm_id, sx, sy, sw, sh, m_thresh) = if condition_type == "bitmap" {
                 (
                     form.reference_bitmap_id,
                     form.search_x,
@@ -1327,13 +1365,24 @@ async fn save_step_details(
                 (None, None, None, None, None, None)
             };
 
+            let (win_pat, win_mtype, win_ctype) = if is_window {
+                (
+                    form.window_match_pattern.as_deref().map(str::trim),
+                    form.window_match_type.as_deref(),
+                    form.window_check_type.as_deref(),
+                )
+            } else {
+                (None, None, None)
+            };
+
             sqlx::query(
                 r#"
                 INSERT INTO step_branches
                     (step_id, automation_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                      reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                     window_match_pattern, window_match_type, window_check_type,
                      on_match_step_id, on_no_match_step_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 ON CONFLICT (step_id) DO UPDATE SET
                     condition_type = EXCLUDED.condition_type,
                     x = EXCLUDED.x,
@@ -1348,13 +1397,16 @@ async fn save_step_details(
                     search_width = EXCLUDED.search_width,
                     search_height = EXCLUDED.search_height,
                     match_threshold = EXCLUDED.match_threshold,
+                    window_match_pattern = EXCLUDED.window_match_pattern,
+                    window_match_type = EXCLUDED.window_match_type,
+                    window_check_type = EXCLUDED.window_check_type,
                     on_match_step_id = EXCLUDED.on_match_step_id,
                     on_no_match_step_id = EXCLUDED.on_no_match_step_id
                 "#,
             )
             .bind(step_id)
             .bind(automation_id)
-            .bind(if is_pixel { "pixel_rgb" } else { "bitmap" })
+            .bind(condition_type)
             .bind(x)
             .bind(y)
             .bind(r)
@@ -1367,6 +1419,9 @@ async fn save_step_details(
             .bind(sw)
             .bind(sh)
             .bind(m_thresh)
+            .bind(win_pat)
+            .bind(win_mtype)
+            .bind(win_ctype)
             .bind(form.on_match_step_id.filter(|&sid| sid > 0))
             .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
             .execute(&mut **tx)
@@ -1636,6 +1691,9 @@ async fn render_step_error(
                 search_width: form.search_width,
                 search_height: form.search_height,
                 match_threshold: form.match_threshold,
+                window_match_pattern: form.window_match_pattern.unwrap_or_default(),
+                window_match_type: form.window_match_type.unwrap_or_else(|| "contains".to_string()),
+                window_check_type: form.window_check_type.unwrap_or_else(|| "exists".to_string()),
                 on_match_step_id: form.on_match_step_id,
                 on_no_match_step_id: form.on_no_match_step_id,
                 steps: bundle.steps,
@@ -2191,7 +2249,8 @@ pub async fn get_edit_step_handler(
                 sqlx::query_as::<_, BranchDetailRow>(r#"
                     SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                            reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
-                           on_match_step_id, on_no_match_step_id
+                           on_match_step_id, on_no_match_step_id,
+                           window_match_pattern, window_match_type, window_check_type
                     FROM step_branches WHERE step_id = $1
                 "#).bind(sid).fetch_optional(&state.db),
                 fetch_step_options_bundle(&state.db, id, Some(sid)),
@@ -2232,6 +2291,18 @@ pub async fn get_edit_step_handler(
                     .search_height
                     .or_else(|| br.as_ref().and_then(|r| r.search_height)),
                 match_threshold: br.as_ref().and_then(|r| r.match_threshold).or(Some(0.95)),
+                window_match_pattern: br
+                    .as_ref()
+                    .and_then(|r| r.window_match_pattern.clone())
+                    .unwrap_or_default(),
+                window_match_type: br
+                    .as_ref()
+                    .and_then(|r| r.window_match_type.clone())
+                    .unwrap_or_else(|| "contains".to_string()),
+                window_check_type: br
+                    .as_ref()
+                    .and_then(|r| r.window_check_type.clone())
+                    .unwrap_or_else(|| "exists".to_string()),
                 on_match_step_id: br.as_ref().and_then(|r| r.on_match_step_id),
                 on_no_match_step_id: br.as_ref().and_then(|r| r.on_no_match_step_id),
                 steps: bundle.steps,
@@ -2823,6 +2894,8 @@ mod tests {
             Some(60),
             Some(10),
             None,
+            None,
+            None,
             Some("Step 12 (Success)"),
             Some("Step 10 (Retry)"),
         );
@@ -2840,6 +2913,8 @@ mod tests {
             None,
             None,
             Some("submit_btn"),
+            None,
+            None,
             Some("Step 5 (Click)"),
             Some("Next Step"),
         );
@@ -2849,6 +2924,25 @@ mod tests {
         );
 
         let s3 = generate_branch_summary(
+            "window_state",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("Calculator"),
+            Some("active"),
+            Some("Step 3 (Focus)"),
+            Some("Next Step"),
+        );
+        assert_eq!(
+            s3,
+            "BRANCH: if window \"Calculator\" active → go to Step 3 (Focus), else → go to Next Step"
+        );
+
+        let s4 = generate_branch_summary(
             "pixel_rgb",
             None,
             None,
@@ -2859,17 +2953,19 @@ mod tests {
             None,
             None,
             None,
-        );
-        assert_eq!(
-            s3,
-            "BRANCH: if pixel at (0, 0) ≈ RGB(0,0,0) ±0 → go to Next Step, else → go to Next Step"
-        );
-
-        let s4 = generate_branch_summary(
-            "bitmap", None, None, None, None, None, None, None, None, None,
+            None,
+            None,
         );
         assert_eq!(
             s4,
+            "BRANCH: if pixel at (0, 0) ≈ RGB(0,0,0) ±0 → go to Next Step, else → go to Next Step"
+        );
+
+        let s5 = generate_branch_summary(
+            "bitmap", None, None, None, None, None, None, None, None, None, None, None,
+        );
+        assert_eq!(
+            s5,
             "BRANCH: if bitmap «bitmap» found → go to Next Step, else → go to Next Step"
         );
     }
@@ -3253,6 +3349,9 @@ mod tests {
             text_to_set: None,
             input_variable_id: None,
             timeout_seconds: None,
+            window_match_pattern: None,
+            window_match_type: None,
+            window_check_type: None,
         };
 
         // Missing on_match_step_id

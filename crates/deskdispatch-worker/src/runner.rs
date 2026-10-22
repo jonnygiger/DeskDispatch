@@ -506,6 +506,21 @@ impl StepRunner {
                             false
                         }
                     }
+
+                    BranchConditionPayload::WindowState {
+                        match_pattern,
+                        match_type,
+                        check_type,
+                        timeout_ms,
+                        ..
+                    } => {
+                        self.input.check_window_state(
+                            match_pattern,
+                            match_type,
+                            check_type,
+                            *timeout_ms,
+                        )
+                    }
                 };
 
                 let target_step_id = if is_match {

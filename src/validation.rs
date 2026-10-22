@@ -76,6 +76,11 @@ struct BranchRow {
     reference_bitmap_id: Option<i64>,
     x: Option<i32>,
     y: Option<i32>,
+    window_match_pattern: Option<String>,
+    #[allow(dead_code)]
+    window_match_type: Option<String>,
+    #[allow(dead_code)]
+    window_check_type: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -125,6 +130,11 @@ struct BranchMeta {
     reference_bitmap_id: Option<i64>,
     x: Option<i32>,
     y: Option<i32>,
+    window_match_pattern: Option<String>,
+    #[allow(dead_code)]
+    window_match_type: Option<String>,
+    #[allow(dead_code)]
+    window_check_type: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -332,7 +342,7 @@ pub async fn validate_automation_for_activation(
 
     let branch_fut = sqlx::query_as::<_, BranchRow>(
         r#"
-        SELECT sb.step_id, sb.condition_type, sb.on_match_step_id, sb.on_no_match_step_id, sb.reference_bitmap_id, sb.x, sb.y
+        SELECT sb.step_id, sb.condition_type, sb.on_match_step_id, sb.on_no_match_step_id, sb.reference_bitmap_id, sb.x, sb.y, sb.window_match_pattern, sb.window_match_type, sb.window_check_type
         FROM step_branches sb
         JOIN automation_steps s ON sb.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL
@@ -456,6 +466,9 @@ pub async fn validate_automation_for_activation(
                 reference_bitmap_id: r.reference_bitmap_id,
                 x: r.x,
                 y: r.y,
+                window_match_pattern: r.window_match_pattern,
+                window_match_type: r.window_match_type,
+                window_check_type: r.window_check_type,
             });
         }
     }
@@ -1016,6 +1029,19 @@ fn validate_branch(
             step_num,
             errors,
         );
+    } else if b.condition_type == "window_state" {
+        if b.window_match_pattern
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+        {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: "Window state branch condition is missing window match pattern.".to_string(),
+            });
+        }
     }
 }
 
@@ -1283,6 +1309,9 @@ mod tests {
             reference_bitmap_id: Some(10),
             x: None,
             y: None,
+            window_match_pattern: None,
+            window_match_type: None,
+            window_check_type: None,
         };
         validate_branch(1, 1, &branch_valid, &step_id_to_idx, &bitmaps, &mut errors);
         assert!(errors.is_empty());
@@ -1294,6 +1323,9 @@ mod tests {
             reference_bitmap_id: None,   // missing reference bitmap
             x: None,
             y: None,
+            window_match_pattern: None,
+            window_match_type: None,
+            window_check_type: None,
         };
         validate_branch(
             1,

@@ -206,6 +206,13 @@ pub enum BranchConditionPayload {
         timeout_ms: u64,
         retry_interval_ms: u64,
     },
+    WindowState {
+        match_pattern: String,
+        match_type: String,
+        check_type: String,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
