@@ -512,6 +512,61 @@ pub fn generate_window_control_summary(
     }
 }
 
+pub fn generate_clipboard_control_summary(
+    action: &str,
+    text_to_set: Option<&str>,
+    input_var_name: Option<&str>,
+    output_var_name: Option<&str>,
+    set_as_task_output: bool,
+    timeout_ms: i64,
+) -> String {
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(96);
+    match action.to_lowercase().as_str() {
+        "set_text" => {
+            let _ = write!(buf, "Set clipboard to ");
+            if let Some(var_name) = input_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+                let _ = write!(buf, "«{}»", var_name);
+            } else if let Some(txt) = text_to_set.map(str::trim).filter(|s| !s.is_empty()) {
+                let display = if txt.chars().count() > 30 {
+                    let trunc: String = txt.chars().take(27).collect();
+                    format!("\"{}...\"", trunc)
+                } else {
+                    format!("\"{}\"", txt)
+                };
+                let _ = write!(buf, "{}", display);
+            } else {
+                let _ = write!(buf, "text");
+            }
+        }
+        "get_text" => {
+            let _ = write!(buf, "Read clipboard text");
+            if let Some(var_name) = output_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+                let _ = write!(buf, " → store in «{}»", var_name);
+            }
+            if set_as_task_output {
+                let _ = write!(buf, " (set as task output)");
+            }
+        }
+        "clear" => {
+            let _ = write!(buf, "Clear clipboard");
+        }
+        "wait_for_change" => {
+            let _ = write!(buf, "Wait for clipboard change [timeout {:.1}s]", timeout_ms as f64 / 1000.0);
+            if let Some(var_name) = output_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+                let _ = write!(buf, " → store in «{}»", var_name);
+            }
+            if set_as_task_output {
+                let _ = write!(buf, " (set as task output)");
+            }
+        }
+        _ => {
+            let _ = write!(buf, "Clipboard operation");
+        }
+    }
+    buf
+}
+
 pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&str>) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
@@ -1602,6 +1657,29 @@ async fn render_step_error(
             is_edit,
         })
         .into_response(),
+        "clipboard_control" => {
+            let variables = fetch_automation_variables(db, automation_id).await;
+            HtmlTemplate(StepClipboardControlTemplate {
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
+                label,
+                post_delay_seconds,
+                action: form.action.unwrap_or_else(|| "set_text".to_string()),
+                text_mode: form.text_mode.unwrap_or_else(|| "literal".to_string()),
+                text_to_set: form.text_to_set,
+                input_variable_id: form.input_variable_id,
+                output_variable_id: form.output_variable_id,
+                set_as_task_output: form.set_as_task_output.as_deref() == Some("on")
+                    || form.set_as_task_output.as_deref() == Some("true"),
+                timeout_seconds: form.timeout_seconds.unwrap_or(5.0),
+                variables,
+                error: Some(error),
+                is_edit,
+            })
+            .into_response()
+        }
         "window_control" => HtmlTemplate(StepWindowControlTemplate {
             user,
             csrf_token,
@@ -2702,6 +2780,24 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_clipboard_control_summary() {
+        let s1 = generate_clipboard_control_summary("set_text", Some("Hello World"), None, None, false, 5000);
+        assert_eq!(s1, "Set clipboard to \"Hello World\"");
+
+        let s2 = generate_clipboard_control_summary("set_text", None, Some("my_var"), None, false, 5000);
+        assert_eq!(s2, "Set clipboard to «my_var»");
+
+        let s3 = generate_clipboard_control_summary("get_text", None, None, Some("out_var"), true, 5000);
+        assert_eq!(s3, "Read clipboard text → store in «out_var» (set as task output)");
+
+        let s4 = generate_clipboard_control_summary("clear", None, None, None, false, 5000);
+        assert_eq!(s4, "Clear clipboard");
+
+        let s5 = generate_clipboard_control_summary("wait_for_change", None, None, Some("out_var"), false, 5000);
+        assert_eq!(s5, "Wait for clipboard change [timeout 5.0s] → store in «out_var»");
+    }
+
+    #[test]
     fn test_generate_find_bitmap_summary() {
         let s1 = generate_find_bitmap_summary("login_button", None);
         assert_eq!(s1, "Search for «login_button» on screen");
@@ -3153,6 +3249,9 @@ mod tests {
             action: None,
             match_pattern: None,
             match_type: None,
+            text_mode: None,
+            text_to_set: None,
+            input_variable_id: None,
             timeout_seconds: None,
         };
 

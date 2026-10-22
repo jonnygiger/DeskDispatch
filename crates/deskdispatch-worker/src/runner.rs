@@ -524,6 +524,7 @@ impl StepRunner {
                         StepPayload::FindBitmap { id, .. } => *id == sid,
                         StepPayload::Branch { id, .. } => *id == sid,
                         StepPayload::OcrExtract { id, .. } => *id == sid,
+                        StepPayload::ClipboardControl { id, .. } => *id == sid,
                     })
                 });
 
@@ -536,6 +537,86 @@ impl StepRunner {
                 tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
 
                 Ok((next_step_idx, *id, status.to_string(), None, captured))
+            }
+
+            StepPayload::ClipboardControl {
+                id,
+                post_delay_ms,
+                action,
+                text_to_set,
+                input_variable_id,
+                output_variable_id,
+                set_as_task_output,
+                timeout_ms,
+                ..
+            } => {
+                let act_norm = action.to_lowercase();
+                match act_norm.as_str() {
+                    "set_text" => {
+                        let text_val = if let Some(vid) = input_variable_id {
+                            self.variables
+                                .get(vid)
+                                .map(|v| match v {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            text_to_set.clone().unwrap_or_default()
+                        };
+
+                        if let Err(e) = self.input.clipboard_set_text(&text_val) {
+                            warn!("Clipboard set_text failed: {}", e);
+                            return Ok((None, *id, "failed".to_string(), None, captured));
+                        }
+                    }
+                    "get_text" => {
+                        let read_text = self.input.clipboard_get_text();
+                        if let Some(vid) = output_variable_id {
+                            updates.push(VariableUpdateItem {
+                                variable_id: *vid,
+                                value: serde_json::json!(read_text),
+                            });
+                        }
+                        if *set_as_task_output {
+                            self.task_output_type = Some("string".to_string());
+                            self.task_output_value = Some(read_text);
+                        }
+                    }
+                    "clear" => {
+                        let _ = self.input.clipboard_clear();
+                    }
+                    "wait_for_change" => {
+                        match self.input.clipboard_wait_for_change(*timeout_ms) {
+                            Ok(read_text) => {
+                                if let Some(vid) = output_variable_id {
+                                    updates.push(VariableUpdateItem {
+                                        variable_id: *vid,
+                                        value: serde_json::json!(read_text),
+                                    });
+                                }
+                                if *set_as_task_output {
+                                    self.task_output_type = Some("string".to_string());
+                                    self.task_output_value = Some(read_text);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Clipboard wait_for_change failed: {}", e);
+                                return Ok((None, *id, "failed".to_string(), None, captured));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
+
+                let updates_opt = if updates.is_empty() {
+                    None
+                } else {
+                    Some(updates)
+                };
+                Ok((None, *id, "success".to_string(), updates_opt, captured))
             }
 
             StepPayload::OcrExtract {

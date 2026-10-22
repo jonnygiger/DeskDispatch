@@ -297,6 +297,17 @@ pub enum StepPayload {
         match_type: String,
         timeout_ms: u64,
     },
+    ClipboardControl {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        action: String,
+        text_to_set: Option<String>,
+        input_variable_id: Option<i64>,
+        output_variable_id: Option<i64>,
+        set_as_task_output: bool,
+        timeout_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -556,6 +556,27 @@ pub struct StepMouseClickTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "automations/step_clipboard_control.html")]
+pub struct StepClipboardControlTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub action: String,
+    pub text_mode: String,
+    pub text_to_set: Option<String>,
+    pub input_variable_id: Option<i64>,
+    pub output_variable_id: Option<i64>,
+    pub set_as_task_output: bool,
+    pub timeout_seconds: f64,
+    pub variables: Vec<VariableOption>,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
+#[derive(Template)]
 #[template(path = "automations/step_window_control.html")]
 pub struct StepWindowControlTemplate {
     pub user: AuthUser,
@@ -801,6 +822,10 @@ pub struct StepForm {
     pub action: Option<String>,
     pub match_pattern: Option<String>,
     pub match_type: Option<String>,
+    pub text_mode: Option<String>,
+    pub text_to_set: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub input_variable_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub timeout_seconds: Option<f64>,
 }

@@ -1,0 +1,102 @@
+{% extends "layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}{% if is_edit %}Edit Clipboard Control Step{% else %}New Clipboard Control Step{% endif %} - DeskDispatch{% endblock %}
+
+{% block top_nav %}
+{% call macros::top_nav(user, "automations") %}{% endcall %}
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1 class="dashboard-title">{% if is_edit %}Edit Clipboard Control Step{% else %}New Clipboard Control Step{% endif %}</h1>
+    <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+</div>
+
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    {% if let Some(err) = error %}
+        <div class="alert alert-danger" style="margin-bottom: 1rem; color: var(--color-danger);">
+            {{ err }}
+        </div>
+    {% endif %}
+
+    <form method="post" action="{% if let Some(sid) = step_id %}/automations/{{ automation_id }}/steps/{{ sid }}{% else %}/automations/{{ automation_id }}/steps{% endif %}">
+        {% call macros::csrf_field(csrf_token) %}{% endcall %}
+        <input type="hidden" name="step_type" value="clipboard_control">
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="label" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Step Label (Optional)</label>
+            <input type="text" id="label" name="label" value="{{ label }}" class="form-control" style="width: 100%;" placeholder="e.g. Set Clipboard Text">
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="action" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Action *</label>
+            <select id="action" name="action" required class="form-control" style="width: 100%;">
+                <option value="set_text"{% if action == "set_text" %} selected{% endif %}>Set Clipboard Text (Clipboard := text)</option>
+                <option value="get_text"{% if action == "get_text" %} selected{% endif %}>Read Clipboard Text (var := Clipboard)</option>
+                <option value="clear"{% if action == "clear" %} selected{% endif %}>Clear Clipboard (Clipboard := "")</option>
+                <option value="wait_for_change"{% if action == "wait_for_change" %} selected{% endif %}>Wait for Clipboard Change (ClipWait)</option>
+            </select>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">AutoHotkey-style clipboard operation to perform on worker PC</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="text_mode" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Text Source Mode (Set Text)</label>
+            <select id="text_mode" name="text_mode" class="form-control" style="width: 100%;">
+                <option value="literal"{% if text_mode == "literal" %} selected{% endif %}>Fixed Literal Text</option>
+                <option value="variable"{% if text_mode == "variable" %} selected{% endif %}>From Automation Variable</option>
+            </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="text_to_set" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Text to Set</label>
+            <textarea id="text_to_set" name="text_to_set" class="form-control" style="width: 100%; min-height: 80px;" placeholder="Text content to write to system clipboard">{% if let Some(txt) = text_to_set %}{{ txt }}{% endif %}</textarea>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="input_variable_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Input Variable (for Text Source Mode = Variable)</label>
+            <select id="input_variable_id" name="input_variable_id" class="form-control" style="width: 100%;">
+                <option value="">-- Select Input Variable --</option>
+                {% for var in variables %}
+                    <option value="{{ var.id }}"{% if var.is_selected_found(input_variable_id) %} selected{% endif %}>{{ var.name }} ({{ var.var_type }})</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="output_variable_id" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Output Variable (Read / Wait for Change)</label>
+            <select id="output_variable_id" name="output_variable_id" class="form-control" style="width: 100%;">
+                <option value="">-- Select Variable --</option>
+                {% for var in variables %}
+                    <option value="{{ var.id }}"{% if var.is_selected_found(output_variable_id) %} selected{% endif %}>{{ var.name }} ({{ var.var_type }})</option>
+                {% endfor %}
+            </select>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Variable to store clipboard text into</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 600; cursor: pointer;">
+                <input type="checkbox" name="set_as_task_output" value="on"{% if set_as_task_output %} checked{% endif %}>
+                <span>Set as overall Task Run Output</span>
+            </label>
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted); display: block; margin-top: 0.25rem;">If enabled, clipboard text read by this step will be recorded as the primary output of the task run</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label for="timeout_seconds" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Timeout (seconds)</label>
+            <input type="number" step="0.1" min="0" id="timeout_seconds" name="timeout_seconds" value="{{ timeout_seconds }}" class="form-control" style="width: 100%;" placeholder="5.0">
+            <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Maximum time to wait for clipboard change</span>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label for="post_delay_seconds" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Wait after this step (seconds)</label>
+            <input type="number" step="0.1" min="0" id="post_delay_seconds" name="post_delay_seconds" value="{{ post_delay_seconds }}" class="form-control" style="width: 100%;" placeholder="0.0">
+        </div>
+
+        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+            <a href="/automations/{{ automation_id }}" class="btn btn-outline">Cancel</a>
+            <button type="submit" class="btn btn-primary">{% if is_edit %}Save Changes{% else %}Add Step{% endif %}</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

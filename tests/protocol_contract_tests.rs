@@ -181,6 +181,17 @@ fn test_protocol_dto_serialization_roundtrip() {
                 match_type: "contains".to_string(),
                 timeout_ms: 5000,
             },
+            StepPayload::ClipboardControl {
+                id: 13,
+                label: Some("Set Clipboard".to_string()),
+                post_delay_ms: 100,
+                action: "set_text".to_string(),
+                text_to_set: Some("Copied Text".to_string()),
+                input_variable_id: None,
+                output_variable_id: Some(2),
+                set_as_task_output: false,
+                timeout_ms: 5000,
+            },
         ],
     };
     let full_auto_str = serde_json::to_string(&full_auto).unwrap();

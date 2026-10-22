@@ -526,7 +526,7 @@ impl SimulatedWorker {
                                 Some(matched),
                             )
                         }
-                        "window_control" => (
+                        "window_control" | "clipboard_control" => (
                             "success",
                             Some(100),
                             Some(150),
@@ -588,6 +588,7 @@ impl SimulatedWorker {
                         captured_b.unwrap_or(100)
                     ]),
                     "ocr_extract" => serde_json::json!("SIMULATED_OCR_TEXT"),
+                    "clipboard_control" => serde_json::json!("SIMULATED_CLIPBOARD_TEXT"),
                     _ => serde_json::json!({
                         "x": captured_x.unwrap_or(800),
                         "y": captured_y.unwrap_or(600),
@@ -608,6 +609,16 @@ impl SimulatedWorker {
             {
                 task_output_type = Some("ocr_text".to_string());
                 task_output_value = Some("SIMULATED_OCR_TEXT".to_string());
+            }
+
+            if step_type == "clipboard_control"
+                && step
+                    .get("set_as_task_output")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false)
+            {
+                task_output_type = Some("string".to_string());
+                task_output_value = Some("SIMULATED_CLIPBOARD_TEXT".to_string());
             }
 
             if let Some(var_id) = step
