@@ -34,6 +34,7 @@
             <select name="condition_type" id="condition_type" class="form-control" style="width: 100%;">
                 <option value="pixel_rgb" {% if condition_type == "pixel_rgb" %}selected{% endif %}>Pixel RGB Match</option>
                 <option value="bitmap" {% if condition_type == "bitmap" %}selected{% endif %}>Reference Bitmap Search</option>
+                <option value="window_state" {% if condition_type == "window_state" %}selected{% endif %}>Window State (Active / Exists)</option>
             </select>
         </div>
 
@@ -71,6 +72,34 @@
                 <label for="tolerance" style="display: block; font-weight: 600; margin-bottom: 0.25rem;">RGB Tolerance (0-255)</label>
                 <input type="number" min="0" max="255" id="tolerance" name="tolerance" value="{% if let Some(v) = tolerance %}{{ v }}{% else %}10{% endif %}" class="form-control" style="width: 100%;">
                 <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Allowed variance per RGB channel.</span>
+            </div>
+        </fieldset>
+
+        <!-- Window State Condition Fields -->
+        <fieldset style="border: 1px solid var(--color-border); padding: 1rem; border-radius: 4px; margin-bottom: 1.25rem;">
+            <legend style="font-weight: 600; padding: 0 0.5rem;">Window State Condition Settings</legend>
+
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label for="window_match_pattern" style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Window Title / Match Pattern</label>
+                <input type="text" id="window_match_pattern" name="window_match_pattern" value="{{ window_match_pattern }}" class="form-control" style="width: 100%;" placeholder="e.g. Notepad or Calculator">
+            </div>
+
+            <div style="display: flex; gap: 1rem;">
+                <div style="flex: 1;">
+                    <label for="window_check_type" style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Check Type</label>
+                    <select name="window_check_type" id="window_check_type" class="form-control" style="width: 100%;">
+                        <option value="exists" {% if window_check_type == "exists" %}selected{% endif %}>Window Exists (Visible)</option>
+                        <option value="active" {% if window_check_type == "active" %}selected{% endif %}>Window Is Active (Focused)</option>
+                    </select>
+                </div>
+                <div style="flex: 1;">
+                    <label for="window_match_type" style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Match Mode</label>
+                    <select name="window_match_type" id="window_match_type" class="form-control" style="width: 100%;">
+                        <option value="contains" {% if window_match_type == "contains" %}selected{% endif %}>Contains</option>
+                        <option value="exact" {% if window_match_type == "exact" %}selected{% endif %}>Exact Match</option>
+                        <option value="starts_with" {% if window_match_type == "starts_with" %}selected{% endif %}>Starts With</option>
+                    </select>
+                </div>
             </div>
         </fieldset>
 

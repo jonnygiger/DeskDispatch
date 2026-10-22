@@ -174,6 +174,9 @@ struct BranchRow {
     on_match_step_id: Option<i64>,
     on_no_match_step_id: Option<i64>,
     reference_bitmap_key: Option<String>,
+    window_match_pattern: Option<String>,
+    window_match_type: Option<String>,
+    window_check_type: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -321,7 +324,8 @@ pub async fn fetch_full_automation_json_with_overrides(
         SELECT sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
                sb.reference_bitmap_id, sb.search_x, sb.search_y, sb.search_width, sb.search_height, sb.match_threshold,
                sb.on_match_step_id, sb.on_no_match_step_id,
-               b.object_storage_key AS reference_bitmap_key
+               b.object_storage_key AS reference_bitmap_key,
+               sb.window_match_pattern, sb.window_match_type, sb.window_check_type
         FROM step_branches sb
         JOIN automation_steps s ON sb.step_id = s.id
         LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
@@ -507,6 +511,14 @@ pub async fn fetch_full_automation_json_with_overrides(
                             expected_b: exp_b,
                             expected_rgb: [exp_r, exp_g, exp_b],
                             tolerance: r.tolerance.unwrap_or(0),
+                            timeout_ms: 5000,
+                            retry_interval_ms: 250,
+                        }
+                    } else if r.condition_type == "window_state" {
+                        BranchConditionPayload::WindowState {
+                            match_pattern: r.window_match_pattern.unwrap_or_default(),
+                            match_type: r.window_match_type.unwrap_or_else(|| "contains".to_string()),
+                            check_type: r.window_check_type.unwrap_or_else(|| "exists".to_string()),
                             timeout_ms: 5000,
                             retry_interval_ms: 250,
                         }
