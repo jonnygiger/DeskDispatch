@@ -556,6 +556,8 @@ pub struct StepMouseClickTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "automations/step_clipboard_control.html")]
+pub struct StepClipboardControlTemplate {
 #[template(path = "automations/step_mouse_scroll.html")]
 pub struct StepMouseScrollTemplate {
     pub user: AuthUser,
@@ -564,6 +566,13 @@ pub struct StepMouseScrollTemplate {
     pub step_id: Option<i64>,
     pub label: String,
     pub post_delay_seconds: f64,
+    pub action: String,
+    pub text_mode: String,
+    pub text_to_set: Option<String>,
+    pub input_variable_id: Option<i64>,
+    pub output_variable_id: Option<i64>,
+    pub set_as_task_output: bool,
+    pub timeout_seconds: f64,
     pub direction: String,
     pub scroll_amount: i32,
     pub x_mode: String,
@@ -828,6 +837,10 @@ pub struct StepForm {
     pub action: Option<String>,
     pub match_pattern: Option<String>,
     pub match_type: Option<String>,
+    pub text_mode: Option<String>,
+    pub text_to_set: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub input_variable_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub timeout_seconds: Option<f64>,
     pub direction: Option<String>,

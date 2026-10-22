@@ -255,6 +255,97 @@ impl InputController {
         }
     }
 
+    pub fn clipboard_set_text(&self, text: &str) -> Result<(), String> {
+        info!(text_len = text.len(), "Setting clipboard text");
+
+        let child = Command::new("xclip")
+            .env("DISPLAY", &self.display)
+            .arg("-selection")
+            .arg("clipboard")
+            .stdin(std::process::Stdio::piped())
+            .spawn();
+
+        if let Ok(mut c) = child {
+            if let Some(mut stdin) = c.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = c.wait();
+            return Ok(());
+        }
+
+        let child_xsel = Command::new("xsel")
+            .env("DISPLAY", &self.display)
+            .arg("--clipboard")
+            .arg("--input")
+            .stdin(std::process::Stdio::piped())
+            .spawn();
+
+        if let Ok(mut c) = child_xsel {
+            if let Some(mut stdin) = c.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = c.wait();
+            return Ok(());
+        }
+
+        debug!("xclip and xsel unavailable for clipboard set");
+        Ok(())
+    }
+
+    pub fn clipboard_get_text(&self) -> String {
+        let output = Command::new("xclip")
+            .env("DISPLAY", &self.display)
+            .arg("-selection")
+            .arg("clipboard")
+            .arg("-out")
+            .output();
+
+        if let Ok(out) = output
+            && out.status.success()
+        {
+            return String::from_utf8_lossy(&out.stdout).to_string();
+        }
+
+        let output_xsel = Command::new("xsel")
+            .env("DISPLAY", &self.display)
+            .arg("--clipboard")
+            .arg("--output")
+            .output();
+
+        if let Ok(out) = output_xsel
+            && out.status.success()
+        {
+            return String::from_utf8_lossy(&out.stdout).to_string();
+        }
+
+        String::new()
+    }
+
+    pub fn clipboard_clear(&self) -> Result<(), String> {
+        self.clipboard_set_text("")
+    }
+
+    pub fn clipboard_wait_for_change(&self, timeout_ms: u64) -> Result<String, String> {
+        let initial = self.clipboard_get_text();
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+
+        loop {
+            let current = self.clipboard_get_text();
+            if !current.is_empty() && current != initial {
+                return Ok(current);
+            }
+
+            if start.elapsed() >= timeout {
+                if !current.is_empty() {
+                    return Ok(current);
+                }
+                return Err(format!("Clipboard change timed out after {}ms", timeout_ms));
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(150));
     pub fn check_window_state(
         &self,
         match_pattern: &str,
