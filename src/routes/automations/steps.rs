@@ -162,15 +162,14 @@ fn sanitize_click_type(ct: Option<&str>) -> &'static str {
     }
 }
 
-fn validate_branch_form(form: &MouseClickStepForm, condition_type: &str) -> Option<String> {
+fn validate_branch_form(form: &StepForm, condition_type: &str) -> Option<String> {
     if form.on_match_step_id.filter(|&sid| sid > 0).is_none()
         || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none()
     {
         Some("Both match and no-match target steps are required for branch conditions.".to_string())
     } else if condition_type == "pixel_rgb" && (form.x.is_none() || form.y.is_none()) {
         Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string())
-    } else if condition_type == "bitmap"
-        && (form.reference_bitmap_id.is_none() || form.reference_bitmap_id == Some(0))
+    } else if condition_type == "bitmap" && form.reference_bitmap_id.filter(|&id| id > 0).is_none()
     {
         Some("Please select a reference bitmap for bitmap condition.".to_string())
     } else {
@@ -355,6 +354,29 @@ pub async fn fetch_available_bitmaps(db: &PgPool, automation_id: i64) -> Vec<Bit
     .fetch_all(db)
     .await
     .unwrap_or_default()
+}
+
+pub struct StepOptionsBundle {
+    pub variables: Vec<VariableOption>,
+    pub bitmaps: Vec<BitmapOption>,
+    pub steps: Vec<StepOption>,
+}
+
+pub async fn fetch_step_options_bundle(
+    db: &PgPool,
+    automation_id: i64,
+    exclude_step_id: Option<i64>,
+) -> StepOptionsBundle {
+    let (variables, bitmaps, steps) = tokio::join!(
+        fetch_automation_variables(db, automation_id),
+        fetch_available_bitmaps(db, automation_id),
+        fetch_automation_step_options(db, automation_id, exclude_step_id)
+    );
+    StepOptionsBundle {
+        variables,
+        bitmaps,
+        steps,
+    }
 }
 
 pub fn generate_mouse_click_summary(
@@ -1183,7 +1205,7 @@ async fn save_step_details(
     automation_id: i64,
     step_id: i64,
     step_type: &str,
-    form: &MouseClickStepForm,
+    form: &StepForm,
 ) -> Result<(), sqlx::Error> {
     match step_type {
         "branch" => {
@@ -1448,9 +1470,10 @@ async fn save_step_details(
             .await?;
         }
         "ocr_extract" => {
-            let set_task_out = form.set_as_task_output.as_deref() == Some("on")
-                || form.set_as_task_output.as_deref() == Some("true")
-                || form.set_as_task_output.as_deref() == Some("1");
+            let set_task_out = matches!(
+                form.set_as_task_output.as_deref(),
+                Some("on" | "true" | "1")
+            );
 
             sqlx::query(
                 r#"
@@ -1491,7 +1514,7 @@ async fn render_step_error(
     automation_id: i64,
     step_id: Option<i64>,
     step_type: &str,
-    form: MouseClickStepForm,
+    form: StepForm,
     error: String,
 ) -> axum::response::Response {
     let is_edit = step_id.is_some();
@@ -1503,10 +1526,7 @@ async fn render_step_error(
             let condition_type = form
                 .condition_type
                 .unwrap_or_else(|| "pixel_rgb".to_string());
-            let (steps, bitmaps) = tokio::join!(
-                fetch_automation_step_options(db, automation_id, step_id),
-                fetch_available_bitmaps(db, automation_id)
-            );
+            let bundle = fetch_step_options_bundle(db, automation_id, step_id).await;
             HtmlTemplate(StepBranchTemplate {
                 user,
                 csrf_token,
@@ -1529,8 +1549,8 @@ async fn render_step_error(
                 match_threshold: form.match_threshold,
                 on_match_step_id: form.on_match_step_id,
                 on_no_match_step_id: form.on_no_match_step_id,
-                steps,
-                bitmaps,
+                steps: bundle.steps,
+                bitmaps: bundle.bitmaps,
                 error: Some(error),
                 is_edit,
             })
@@ -1620,10 +1640,7 @@ async fn render_step_error(
             .into_response()
         }
         "find_bitmap" => {
-            let (variables, bitmaps) = tokio::join!(
-                fetch_automation_variables(db, automation_id),
-                fetch_available_bitmaps(db, automation_id)
-            );
+            let bundle = fetch_step_options_bundle(db, automation_id, step_id).await;
             HtmlTemplate(StepFindBitmapTemplate {
                 user,
                 csrf_token,
@@ -1641,8 +1658,8 @@ async fn render_step_error(
                 output_x_variable_id: form.output_x_variable_id,
                 output_y_variable_id: form.output_y_variable_id,
                 output_region_variable_id: form.output_region_variable_id,
-                bitmaps,
-                variables,
+                bitmaps: bundle.bitmaps,
+                variables: bundle.variables,
                 error: Some(error),
                 is_edit,
             })
@@ -1712,7 +1729,7 @@ async fn validate_step_form(
     db: &PgPool,
     automation_id: i64,
     step_type: &str,
-    form: &MouseClickStepForm,
+    form: &StepForm,
 ) -> Result<(), String> {
     match step_type {
         "branch" => {
@@ -1815,7 +1832,7 @@ async fn process_save_step(
     automation_id: i64,
     step_id: Option<i64>,
     step_type: &str,
-    form: MouseClickStepForm,
+    form: StepForm,
 ) -> axum::response::Response {
     let csrf_token = user.csrf_token.clone();
 
@@ -2012,14 +2029,13 @@ pub async fn get_edit_step_handler(
             .into_response()
         }
         "find_bitmap" => {
-            let (fb_row, bitmaps, variables) = tokio::join!(
+            let (fb_row, bundle) = tokio::join!(
                 sqlx::query_as::<_, FindBitmapDetailRow>(
                     "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1"
                 )
                 .bind(sid)
                 .fetch_optional(&state.db),
-                fetch_available_bitmaps(&state.db, id),
-                fetch_automation_variables(&state.db, id),
+                fetch_step_options_bundle(&state.db, id, Some(sid)),
             );
 
             let fb = fb_row.ok().flatten();
@@ -2051,23 +2067,22 @@ pub async fn get_edit_step_handler(
                 output_x_variable_id: fb.as_ref().and_then(|r| r.output_x_variable_id),
                 output_y_variable_id: fb.as_ref().and_then(|r| r.output_y_variable_id),
                 output_region_variable_id: fb.as_ref().and_then(|r| r.output_region_variable_id),
-                bitmaps,
-                variables,
+                bitmaps: bundle.bitmaps,
+                variables: bundle.variables,
                 error: None,
                 is_edit: true,
             })
             .into_response()
         }
         "branch" => {
-            let (branch_row, steps, bitmaps) = tokio::join!(
+            let (branch_row, bundle) = tokio::join!(
                 sqlx::query_as::<_, BranchDetailRow>(r#"
                     SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                            reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
                            on_match_step_id, on_no_match_step_id
                     FROM step_branches WHERE step_id = $1
                 "#).bind(sid).fetch_optional(&state.db),
-                fetch_automation_step_options(&state.db, id, Some(sid)),
-                fetch_available_bitmaps(&state.db, id),
+                fetch_step_options_bundle(&state.db, id, Some(sid)),
             );
 
             let br = branch_row.ok().flatten();
@@ -2107,8 +2122,8 @@ pub async fn get_edit_step_handler(
                 match_threshold: br.as_ref().and_then(|r| r.match_threshold).or(Some(0.95)),
                 on_match_step_id: br.as_ref().and_then(|r| r.on_match_step_id),
                 on_no_match_step_id: br.as_ref().and_then(|r| r.on_no_match_step_id),
-                steps,
-                bitmaps,
+                steps: bundle.steps,
+                bitmaps: bundle.bitmaps,
                 error: None,
                 is_edit: true,
             })
@@ -2253,7 +2268,7 @@ pub async fn post_create_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    CsrfForm(form): CsrfForm<MouseClickStepForm>,
+    CsrfForm(form): CsrfForm<StepForm>,
 ) -> impl IntoResponse {
     if !user.role.can_edit() {
         return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -2269,7 +2284,7 @@ pub async fn post_edit_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, sid)): Path<(i64, i64)>,
-    CsrfForm(form): CsrfForm<MouseClickStepForm>,
+    CsrfForm(form): CsrfForm<StepForm>,
 ) -> impl IntoResponse {
     if !user.role.can_edit() {
         return Redirect::to(&format!("/automations/{}", id)).into_response();

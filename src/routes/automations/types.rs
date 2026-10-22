@@ -738,7 +738,7 @@ pub struct StepOcrExtractTemplate {
 }
 
 #[derive(Deserialize)]
-pub struct MouseClickStepForm {
+pub struct StepForm {
     pub step_type: Option<String>,
     pub label: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
@@ -804,6 +804,8 @@ pub struct MouseClickStepForm {
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub timeout_seconds: Option<f64>,
 }
+
+pub type MouseClickStepForm = StepForm;
 
 #[cfg(test)]
 mod tests {
