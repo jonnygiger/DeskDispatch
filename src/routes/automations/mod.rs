@@ -76,6 +76,10 @@ pub fn router() -> Router<AppState> {
             get(get_new_window_control_step_handler),
         )
         .route(
+            "/automations/{id}/steps/new/mouse_scroll",
+            get(get_new_mouse_scroll_step_handler),
+        )
+        .route(
             "/automations/{id}/steps/new/mouse_click",
             get(get_new_mouse_click_step_handler),
         )

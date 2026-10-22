@@ -281,6 +281,7 @@ fn main() {
     .unwrap();
 
     let step_clipboard_tmpl = deskdispatch::routes::automations::StepClipboardControlTemplate {
+    let step_mouse_scroll_tmpl = deskdispatch::routes::automations::StepMouseScrollTemplate {
         user: user.clone(),
         csrf_token: "test_csrf_token_12345".to_string(),
         automation_id: 1,
@@ -294,6 +295,18 @@ fn main() {
         output_variable_id: None,
         set_as_task_output: false,
         timeout_seconds: 5.0,
+        label: "Scroll Down Document".to_string(),
+        post_delay_seconds: 0.5,
+        direction: "down".to_string(),
+        scroll_amount: 3,
+        x_mode: "fixed".to_string(),
+        x: Some(500),
+        x_variable_id: None,
+        y_mode: "fixed".to_string(),
+        y: Some(300),
+        y_variable_id: None,
+        click_mode: "coordinates".to_string(),
+        region_variable_id: None,
         variables: vec![],
         error: None,
         is_edit: false,
@@ -301,6 +314,8 @@ fn main() {
     fs::write(
         "rendered_templates/step_clipboard_control.html",
         step_clipboard_tmpl.render().unwrap(),
+        "rendered_templates/step_mouse_scroll.html",
+        step_mouse_scroll_tmpl.render().unwrap(),
     )
     .unwrap();
 

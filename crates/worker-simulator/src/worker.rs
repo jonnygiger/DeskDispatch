@@ -527,6 +527,7 @@ impl SimulatedWorker {
                             )
                         }
                         "window_control" | "clipboard_control" => (
+                        "mouse_scroll" | "window_control" => (
                             "success",
                             Some(100),
                             Some(150),

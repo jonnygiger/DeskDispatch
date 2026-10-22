@@ -191,6 +191,17 @@ fn test_protocol_dto_serialization_roundtrip() {
                 output_variable_id: Some(2),
                 set_as_task_output: false,
                 timeout_ms: 5000,
+            StepPayload::MouseScroll {
+                id: 13,
+                label: Some("Scroll Content".to_string()),
+                post_delay_ms: 100,
+                direction: "down".to_string(),
+                scroll_amount: 5,
+                x: Some(400),
+                y: Some(300),
+                x_variable_id: None,
+                y_variable_id: None,
+                region_variable_id: None,
             },
         ],
     };
