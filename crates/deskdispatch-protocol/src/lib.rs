@@ -314,6 +314,7 @@ pub enum StepPayload {
         output_variable_id: Option<i64>,
         set_as_task_output: bool,
         timeout_ms: u64,
+    },
     MouseScroll {
         id: i64,
         label: Option<String>,
