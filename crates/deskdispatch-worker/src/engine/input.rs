@@ -209,4 +209,78 @@ impl InputController {
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
     }
+
+    pub fn check_window_state(
+        &self,
+        match_pattern: &str,
+        match_type: &str,
+        check_type: &str,
+        timeout_ms: u64,
+    ) -> bool {
+        info!(
+            match_pattern = match_pattern,
+            match_type = match_type,
+            check_type = check_type,
+            timeout_ms = timeout_ms,
+            "Checking window state condition"
+        );
+
+        let search_arg = match match_type.to_lowercase().as_str() {
+            "exact" => format!("^{}$", match_pattern),
+            "starts_with" => format!("^{}", match_pattern),
+            _ => match_pattern.to_string(),
+        };
+
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let check_active = check_type.to_lowercase() == "active";
+
+        loop {
+            if check_active {
+                let active_output = Command::new("xdotool")
+                    .env("DISPLAY", &self.display)
+                    .arg("getactivewindow")
+                    .arg("getwindowname")
+                    .output();
+
+                if let Ok(output) = active_output
+                    && output.status.success()
+                {
+                    let active_title = String::from_utf8_lossy(&output.stdout);
+                    let is_match = match match_type.to_lowercase().as_str() {
+                        "exact" => active_title.trim() == match_pattern,
+                        "starts_with" => active_title.trim().starts_with(match_pattern),
+                        _ => active_title.contains(match_pattern),
+                    };
+
+                    if is_match {
+                        return true;
+                    }
+                }
+            } else {
+                let search_output = Command::new("xdotool")
+                    .env("DISPLAY", &self.display)
+                    .arg("search")
+                    .arg("--onlyvisible")
+                    .arg("--name")
+                    .arg(&search_arg)
+                    .output();
+
+                if let Ok(output) = search_output
+                    && output.status.success()
+                {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if stdout.lines().any(|l| !l.trim().is_empty()) {
+                        return true;
+                    }
+                }
+            }
+
+            if start.elapsed() >= timeout {
+                return false;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
 }
