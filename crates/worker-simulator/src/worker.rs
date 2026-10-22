@@ -35,6 +35,21 @@ fn random_flag() -> bool {
     FastPrng::gen_bool(0.5)
 }
 
+/// Zero-allocation helper to extract `host:port` from a URL string.
+#[inline]
+fn extract_host_port(url: &str) -> Option<&str> {
+    let after_scheme = url.split_once("://")?.1;
+    let host_and_rest = after_scheme.split_once('/')?.0;
+    let host_and_port = host_and_rest
+        .split_once('@')
+        .map_or(host_and_rest, |pair| pair.1);
+    if host_and_port.is_empty() {
+        None
+    } else {
+        Some(host_and_port)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     pub worker_index: usize,
@@ -51,6 +66,7 @@ pub struct SimulatedWorker {
     pub config: WorkerConfig,
     pub client: Client,
     pub api_key: Option<String>,
+    pub auth_header: Option<String>,
     pub cancel_flag: Arc<AtomicBool>,
     pub current_task_run_id: Arc<tokio::sync::Mutex<Option<i64>>>,
 }
@@ -63,11 +79,13 @@ impl SimulatedWorker {
             .unwrap_or_else(|_| Client::new());
 
         let api_key = config.api_key.clone();
+        let auth_header = api_key.as_ref().map(|key| format!("Bearer {}", key));
 
         Self {
             config,
             client,
             api_key,
+            auth_header,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             current_task_run_id: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -92,6 +110,7 @@ impl SimulatedWorker {
                             worker_idx = self.config.worker_index,
                             "Unattended worker registered successfully via PSK"
                         );
+                        self.auth_header = Some(format!("Bearer {}", key));
                         self.api_key = Some(key);
                         registered = true;
                     }
@@ -113,6 +132,7 @@ impl SimulatedWorker {
                                 worker_idx = self.config.worker_index,
                                 "Registered successfully with API key"
                             );
+                            self.auth_header = Some(format!("Bearer {}", key));
                             self.api_key = Some(key);
                         }
                         Err(e) => {
@@ -133,15 +153,15 @@ impl SimulatedWorker {
             }
         }
 
-        let api_key = match self.api_key.clone() {
-            Some(k) => k,
+        let auth_header = match self.auth_header.clone() {
+            Some(h) => h,
             None => return,
         };
 
         // Step 2: Spawn background heartbeat loop
         let hb_worker_idx = self.config.worker_index;
         let hb_client = self.client.clone();
-        let hb_api_key = api_key.clone();
+        let hb_auth_header = auth_header.clone();
         let hb_server_url = self.config.server_url.clone();
         let hb_profile = self.config.profile;
         let hb_cancel_flag = self.cancel_flag.clone();
@@ -184,7 +204,7 @@ impl SimulatedWorker {
                 let url = format!("{}/api/v1/workers/heartbeat", hb_server_url);
                 let res = hb_client
                     .post(&url)
-                    .header("Authorization", format!("Bearer {}", hb_api_key))
+                    .header("Authorization", &hb_auth_header)
                     .json(&hb_req)
                     .send()
                     .await;
@@ -249,7 +269,7 @@ impl SimulatedWorker {
             let poll_res = self
                 .client
                 .get(&next_url)
-                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Authorization", &auth_header)
                 .send()
                 .await;
 
@@ -272,7 +292,7 @@ impl SimulatedWorker {
                             self.cancel_flag.store(false, Ordering::Relaxed);
 
                             let exec_res = self
-                                .execute_automation(task_run_id, &automation, &api_key)
+                                .execute_automation(task_run_id, &automation, &auth_header)
                                 .await;
                             *self.current_task_run_id.lock().await = None;
 
@@ -293,8 +313,9 @@ impl SimulatedWorker {
                                 recording_session_id = recording_session_id,
                                 "Received start recording assignment"
                             );
-                            let rec_res =
-                                self.execute_recording(recording_session_id, &api_key).await;
+                            let rec_res = self
+                                .execute_recording(recording_session_id, &auth_header)
+                                .await;
                             if let Err(e) = rec_res {
                                 error!(
                                     worker_idx = self.config.worker_index,
@@ -371,7 +392,7 @@ impl SimulatedWorker {
     pub async fn fetch_task_run(
         &self,
         task_run_id: i64,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<TaskRunResponse, String> {
         let url = format!(
             "{}/api/v1/workers/task-runs/{}",
@@ -380,7 +401,7 @@ impl SimulatedWorker {
         let resp = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .send()
             .await
             .map_err(|e| format!("Failed to fetch task run: {}", e))?;
@@ -398,7 +419,7 @@ impl SimulatedWorker {
         &self,
         task_run_id: i64,
         automation: &serde_json::Value,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<(), String> {
         let empty_steps = Vec::new();
         let steps = automation
@@ -533,7 +554,7 @@ impl SimulatedWorker {
             // Generate & upload screenshot for every step execution
             let mut screenshot_object_key = None;
             match self
-                .upload_task_run_screenshot(task_run_id, step_id, api_key)
+                .upload_task_run_screenshot(task_run_id, step_id, auth_header)
                 .await
             {
                 Ok(key) => {
@@ -552,7 +573,7 @@ impl SimulatedWorker {
                 let auto_id = automation.get("id").and_then(|i| i.as_i64());
                 let bitmap_name = format!("sim_ref_{}_step_{}", self.config.worker_index, step_id);
                 let _ = self
-                    .upload_reference_bitmap(auto_id, &bitmap_name, api_key)
+                    .upload_reference_bitmap(auto_id, &bitmap_name, auth_header)
                     .await;
             }
 
@@ -663,7 +684,7 @@ impl SimulatedWorker {
             let res = self
                 .client
                 .post(&result_url)
-                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Authorization", auth_header)
                 .json(&step_req)
                 .send()
                 .await;
@@ -725,7 +746,7 @@ impl SimulatedWorker {
         let complete_res = self
             .client
             .post(&complete_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .json(&complete_req)
             .send()
             .await;
@@ -771,17 +792,12 @@ impl SimulatedWorker {
     async fn put_image_with_failsafes(
         &self,
         upload_url: &str,
-        image_bytes: Vec<u8>,
+        image_bytes: &[u8],
     ) -> Result<(), String> {
         let (target_url, host_header) = if self.config.server_url.contains("http://app:")
             || self.config.server_url.contains("http://deskdispatch-app:")
         {
-            let host_hdr = url::Url::parse(upload_url).ok().and_then(|u| {
-                u.host_str().map(|h| match u.port() {
-                    Some(p) => format!("{}:{}", h, p),
-                    None => h.to_string(),
-                })
-            });
+            let host_hdr = extract_host_port(upload_url);
             let rewritten = upload_url
                 .replace("http://localhost:9000", "http://rustfs:9000")
                 .replace("http://127.0.0.1:9000", "http://rustfs:9000");
@@ -795,11 +811,11 @@ impl SimulatedWorker {
             .put(&target_url)
             .header("Content-Type", "image/png");
 
-        if let Some(ref h) = host_header {
+        if let Some(h) = host_header {
             req = req.header("Host", h);
         }
 
-        let res = req.body(image_bytes.clone()).send().await;
+        let res = req.body(image_bytes.to_vec()).send().await;
 
         match res {
             Ok(resp) if resp.status().is_success() => Ok(()),
@@ -808,11 +824,11 @@ impl SimulatedWorker {
                     || resp.status() == StatusCode::BAD_REQUEST =>
             {
                 let mut retry_req = self.client.put(&target_url);
-                if let Some(ref h) = host_header {
+                if let Some(h) = host_header {
                     retry_req = retry_req.header("Host", h);
                 }
                 let retry_res = retry_req
-                    .body(image_bytes)
+                    .body(image_bytes.to_vec())
                     .send()
                     .await
                     .map_err(|e| format!("Failed PUT retry without Content-Type: {}", e))?;
@@ -834,28 +850,26 @@ impl SimulatedWorker {
         }
     }
 
-    pub async fn upload_reference_bitmap(
+    /// Streamlined helper that fetches a presigned upload URL, generates a PNG screenshot,
+    /// and PUTs the PNG data to the storage endpoint.
+    async fn get_and_put_upload_url(
         &self,
-        automation_id: Option<i64>,
-        bitmap_name: &str,
-        api_key: &str,
-    ) -> Result<(i64, String), String> {
-        let url = format!(
-            "{}/api/v1/workers/bitmaps/upload-url",
-            self.config.server_url
-        );
-
+        url: &str,
+        auth_header: &str,
+        err_context: &str,
+    ) -> Result<ScreenshotUploadUrlResponse, String> {
         let resp = self
             .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .get(url)
+            .header("Authorization", auth_header)
             .send()
             .await
-            .map_err(|e| format!("Failed to get bitmap upload URL: {}", e))?;
+            .map_err(|e| format!("Failed to get {} upload URL: {}", err_context, e))?;
 
         if !resp.status().is_success() {
             return Err(format!(
-                "Bitmap upload URL returned status {}",
+                "{} upload URL returned status {}",
+                err_context,
                 resp.status()
             ));
         }
@@ -866,8 +880,25 @@ impl SimulatedWorker {
             .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
 
         let png_bytes = generate_random_screenshot();
+        self.put_image_with_failsafes(&upload_info.upload_url, &png_bytes)
+            .await?;
 
-        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+        Ok(upload_info)
+    }
+
+    pub async fn upload_reference_bitmap(
+        &self,
+        automation_id: Option<i64>,
+        bitmap_name: &str,
+        auth_header: &str,
+    ) -> Result<(i64, String), String> {
+        let url = format!(
+            "{}/api/v1/workers/bitmaps/upload-url",
+            self.config.server_url
+        );
+
+        let upload_info = self
+            .get_and_put_upload_url(&url, auth_header, "bitmap")
             .await?;
 
         let commit_url = format!("{}/api/v1/workers/bitmaps/commit", self.config.server_url);
@@ -883,7 +914,7 @@ impl SimulatedWorker {
         let commit_resp = self
             .client
             .post(&commit_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .json(&commit_req)
             .send()
             .await
@@ -908,36 +939,15 @@ impl SimulatedWorker {
         &self,
         task_run_id: i64,
         step_id: i64,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<String, String> {
         let url = format!(
             "{}/api/v1/workers/task-runs/{}/screenshot-upload-url",
             self.config.server_url, task_run_id
         );
 
-        let resp = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .send()
-            .await
-            .map_err(|e| format!("Failed to get screenshot upload URL: {}", e))?;
-
-        if !resp.status().is_success() {
-            return Err(format!(
-                "Screenshot upload URL returned status {}",
-                resp.status()
-            ));
-        }
-
-        let upload_info = resp
-            .json::<ScreenshotUploadUrlResponse>()
-            .await
-            .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
-
-        let png_bytes = generate_random_screenshot();
-
-        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+        let upload_info = self
+            .get_and_put_upload_url(&url, auth_header, "screenshot")
             .await?;
 
         let commit_url = format!(
@@ -955,7 +965,7 @@ impl SimulatedWorker {
         let commit_res = self
             .client
             .post(&commit_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .json(&commit_req)
             .send()
             .await;
@@ -987,36 +997,15 @@ impl SimulatedWorker {
         &self,
         recording_session_id: i64,
         _sequence_number: i32,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<String, String> {
         let url = format!(
             "{}/api/v1/workers/recordings/{}/screenshot-upload-url",
             self.config.server_url, recording_session_id
         );
 
-        let resp = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .send()
-            .await
-            .map_err(|e| format!("Failed to get recording screenshot upload URL: {}", e))?;
-
-        if !resp.status().is_success() {
-            return Err(format!(
-                "Recording screenshot upload URL returned status {}",
-                resp.status()
-            ));
-        }
-
-        let upload_info = resp
-            .json::<ScreenshotUploadUrlResponse>()
-            .await
-            .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
-
-        let png_bytes = generate_random_screenshot();
-
-        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+        let upload_info = self
+            .get_and_put_upload_url(&url, auth_header, "recording screenshot")
             .await?;
 
         Ok(upload_info.object_key)
@@ -1025,7 +1014,7 @@ impl SimulatedWorker {
     async fn execute_recording(
         &self,
         recording_session_id: i64,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<(), String> {
         let event_types = ["mouse_click", "key_press", "find_pixel_rgb", "find_bitmap"];
         let key_combos = ["ctrl+c", "ctrl+v", "enter", "tab", "backspace", "escape"];
@@ -1039,7 +1028,7 @@ impl SimulatedWorker {
 
             let mut screenshot_object_key = None;
             match self
-                .upload_recording_screenshot(recording_session_id, sequence_number, api_key)
+                .upload_recording_screenshot(recording_session_id, sequence_number, auth_header)
                 .await
             {
                 Ok(key) => {
@@ -1089,7 +1078,7 @@ impl SimulatedWorker {
             let resp = self
                 .client
                 .post(&event_url)
-                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Authorization", auth_header)
                 .json(&req)
                 .send()
                 .await
@@ -1113,7 +1102,7 @@ impl SimulatedWorker {
         let _ = self
             .client
             .post(&stop_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .send()
             .await;
 
@@ -1124,6 +1113,23 @@ impl SimulatedWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_extract_host_port() {
+        assert_eq!(
+            extract_host_port("http://localhost:9000/bucket/key.png"),
+            Some("localhost:9000")
+        );
+        assert_eq!(
+            extract_host_port("https://rustfs:9000/path?query=1"),
+            Some("rustfs:9000")
+        );
+        assert_eq!(
+            extract_host_port("http://user:pass@127.0.0.1:8080/file"),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(extract_host_port("invalid-url"), None);
+    }
 
     #[test]
     fn test_simulated_worker_initialization() {
@@ -1141,6 +1147,10 @@ mod tests {
         let worker = SimulatedWorker::new(config.clone());
         assert_eq!(worker.config.worker_index, 1);
         assert_eq!(worker.api_key.as_deref(), Some("dd_pk_testkey123"));
+        assert_eq!(
+            worker.auth_header.as_deref(),
+            Some("Bearer dd_pk_testkey123")
+        );
         assert!(!worker.cancel_flag.load(Ordering::Relaxed));
     }
 
