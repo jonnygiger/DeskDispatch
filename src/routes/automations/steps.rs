@@ -111,6 +111,9 @@ struct OcrExtractDetailRow {
     region_variable_id: Option<i64>,
     output_variable_id: Option<i64>,
     set_as_task_output: bool,
+}
+
+#[derive(sqlx::FromRow)]
 struct TypeTextDetailRow {
     text_to_type: String,
     delay_between_keys_ms: i32,
@@ -413,6 +416,40 @@ pub fn generate_type_text_summary(text_to_type: &str, delay_between_keys_ms: i32
     } else {
         let _ = write!(buf, "Type \"{display_text}\"");
     }
+    buf
+}
+
+pub fn generate_ocr_extract_summary(
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_var_name: Option<&str>,
+    output_var_name: Option<&str>,
+    set_as_task_output: bool,
+) -> String {
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(96);
+    buf.push_str("OCR Extract from ");
+
+    if let Some(rname) = region_var_name.map(str::trim).filter(|n| !n.is_empty()) {
+        let _ = write!(buf, "region «{rname}»");
+    } else if let (Some(x), Some(y), Some(w), Some(h)) =
+        (search_x, search_y, search_width, search_height)
+    {
+        let _ = write!(buf, "region ({x}, {y}, {w}x{h})");
+    } else {
+        buf.push_str("full screen");
+    }
+
+    if let Some(oname) = output_var_name.map(str::trim).filter(|n| !n.is_empty()) {
+        let _ = write!(buf, " → store in «{oname}»");
+    }
+
+    if set_as_task_output {
+        buf.push_str(" [task output]");
+    }
+
     buf
 }
 
@@ -946,6 +983,25 @@ pub async fn get_new_ocr_extract_step_handler(
     let variables = fetch_automation_variables(&state.db, id).await;
 
     HtmlTemplate(StepOcrExtractTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        search_x: query.search_x,
+        search_y: query.search_y,
+        search_width: query.search_width,
+        search_height: query.search_height,
+        region_variable_id: None,
+        output_variable_id: None,
+        set_as_task_output: true,
+        variables,
+        error: None,
+        is_edit: false,
+    })
+}
+
 /// GET /automations/{id}/steps/new/window_control
 #[tracing::instrument(skip(user))]
 pub async fn get_new_window_control_step_handler(
@@ -983,14 +1039,6 @@ pub async fn get_new_type_text_step_handler(
         step_id: None,
         label: String::new(),
         post_delay_seconds: 0.0,
-        search_x: query.search_x,
-        search_y: query.search_y,
-        search_width: query.search_width,
-        search_height: query.search_height,
-        region_variable_id: None,
-        output_variable_id: None,
-        set_as_task_output: true,
-        variables,
         text_to_type: String::new(),
         delay_between_keys_ms: 0,
         error: None,
@@ -3057,6 +3105,7 @@ mod tests {
             output_x_variable_id: None,
             output_y_variable_id: None,
             output_region_variable_id: None,
+            set_as_task_output: None,
             action: None,
             match_pattern: None,
             match_type: None,
@@ -3105,5 +3154,36 @@ mod tests {
         // Valid bitmap branch form
         form.reference_bitmap_id = Some(10);
         assert_eq!(validate_branch_form(&form, "bitmap"), None);
+    }
+
+    #[test]
+    fn test_generate_ocr_extract_summary() {
+        let s1 = generate_ocr_extract_summary(
+            Some(100),
+            Some(200),
+            Some(300),
+            Some(150),
+            None,
+            Some("extracted_text"),
+            true,
+        );
+        assert_eq!(
+            s1,
+            "OCR Extract from region (100, 200, 300x150) → store in «extracted_text» [task output]"
+        );
+
+        let s2 = generate_ocr_extract_summary(
+            None,
+            None,
+            None,
+            None,
+            Some("header_region"),
+            None,
+            false,
+        );
+        assert_eq!(s2, "OCR Extract from region «header_region»");
+
+        let s3 = generate_ocr_extract_summary(None, None, None, None, None, None, false);
+        assert_eq!(s3, "OCR Extract from full screen");
     }
 }
