@@ -142,7 +142,11 @@ impl InputController {
                 && output.status.success()
             {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let window_ids: Vec<&str> = stdout.lines().map(str::trim).filter(|s| !s.is_empty()).collect();
+                let window_ids: Vec<&str> = stdout
+                    .lines()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect();
 
                 if let Some(wid) = window_ids.first() {
                     let act_norm = action.to_lowercase();

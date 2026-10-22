@@ -180,22 +180,18 @@ async fn test_concurrent_dispatch_claiming() {
     .await
     .unwrap();
 
-    cleanup_guard
-        .worker_ids
-        .extend(worker_ids.iter().copied());
+    cleanup_guard.worker_ids.extend(worker_ids.iter().copied());
 
     let group_a_worker_ids = vec![worker_ids[0], worker_ids[1]];
 
     // Add Workers 1 and 2 to Group A
     for &w_id in &group_a_worker_ids {
-        sqlx::query(
-            "INSERT INTO worker_group_members (group_id, worker_id) VALUES ($1, $2)",
-        )
-        .bind(group_a_id)
-        .bind(w_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO worker_group_members (group_id, worker_id) VALUES ($1, $2)")
+            .bind(group_a_id)
+            .bind(w_id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     // Batch seed 5 targeted task runs (targeting group_a_id)

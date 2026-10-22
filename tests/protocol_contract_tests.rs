@@ -164,6 +164,7 @@ fn test_protocol_dto_serialization_roundtrip() {
                 set_as_task_output: true,
                 timeout_ms: 5000,
                 retry_interval_ms: 250,
+            },
             StepPayload::TypeText {
                 id: 11,
                 label: Some("Type Welcome".to_string()),
