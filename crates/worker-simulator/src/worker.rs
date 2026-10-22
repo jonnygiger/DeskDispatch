@@ -580,7 +580,10 @@ impl SimulatedWorker {
             }
 
             if step_type == "ocr_extract"
-                && step.get("set_as_task_output").and_then(|b| b.as_bool()).unwrap_or(true)
+                && step
+                    .get("set_as_task_output")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(true)
             {
                 task_output_type = Some("ocr_text".to_string());
                 task_output_value = Some("SIMULATED_OCR_TEXT".to_string());

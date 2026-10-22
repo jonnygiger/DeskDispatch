@@ -256,9 +256,9 @@ impl StepRunner {
                 timeout_ms,
                 ..
             } => {
-                if let Err(e) = self
-                    .input
-                    .window_control(action, match_pattern, match_type, *timeout_ms)
+                if let Err(e) =
+                    self.input
+                        .window_control(action, match_pattern, match_type, *timeout_ms)
                 {
                     warn!("Window control failed: {}", e);
                     return Ok((None, *id, "failed".to_string(), None, captured));
@@ -627,10 +627,14 @@ impl StepRunner {
     }
 }
 
+static OCR_TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn perform_ocr_on_captured_image(img: &CapturedImage) -> String {
     if let Ok(png_bytes) = img.encode_png() {
         let temp_dir = std::env::temp_dir();
-        let tmp_file = temp_dir.join(format!("deskdispatch_ocr_{}.png", uuid::Uuid::new_v4()));
+        let counter = OCR_TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let pid = std::process::id();
+        let tmp_file = temp_dir.join(format!("deskdispatch_ocr_{}_{}.png", pid, counter));
         if std::fs::write(&tmp_file, &png_bytes).is_ok() {
             let res = if let Ok(timg) = rusty_tesseract::Image::from_path(&tmp_file) {
                 rusty_tesseract::image_to_string(&timg, &rusty_tesseract::Args::default()).ok()

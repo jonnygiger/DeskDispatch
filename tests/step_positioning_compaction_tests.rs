@@ -58,9 +58,7 @@ impl Drop for StepPositioningCleanupGuard {
     }
 }
 
-async fn create_test_user_and_automation(
-    pool: &PgPool,
-) -> (i64, i64, StepPositioningCleanupGuard) {
+async fn create_test_user_and_automation(pool: &PgPool) -> (i64, i64, StepPositioningCleanupGuard) {
     let username = format!("user_{}", uuid::Uuid::new_v4().simple());
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role) VALUES ($1, 'hash', $2, 'admin') RETURNING id",
@@ -197,8 +195,8 @@ async fn test_gap_precision_threshold_and_compaction_trigger() {
         "#,
     )
     .bind(auto_id)
-    .bind(&[10.0f64, 10.00005f64, 20.0f64])
-    .bind(&["Step A", "Step B", "Step C"])
+    .bind([10.0f64, 10.00005f64, 20.0f64])
+    .bind(["Step A", "Step B", "Step C"])
     .execute(&pool)
     .await
     .unwrap();

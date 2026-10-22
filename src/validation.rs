@@ -354,20 +354,29 @@ pub async fn validate_automation_for_activation(
 
     let bitmap_fut = sqlx::query_as::<_, BitmapRow>("SELECT id FROM bitmaps").fetch_all(db);
 
-    let (raw_steps, var_rows, param_rows, mc_rows, fp_rows, fb_rows, branch_rows, ocr_rows, bitmap_rows) =
-        match tokio::try_join!(
-            steps_fut, vars_fut, params_fut, mc_fut, fp_fut, fb_fut, branch_fut, ocr_fut, bitmap_fut
-        ) {
-            Ok(tuple) => tuple,
-            Err(e) => {
-                errors.push(AutomationLintError {
-                    step_id: None,
-                    step_number: None,
-                    message: format!("Database error fetching steps: {}", e),
-                });
-                return Err(errors);
-            }
-        };
+    let (
+        raw_steps,
+        var_rows,
+        param_rows,
+        mc_rows,
+        fp_rows,
+        fb_rows,
+        branch_rows,
+        ocr_rows,
+        bitmap_rows,
+    ) = match tokio::try_join!(
+        steps_fut, vars_fut, params_fut, mc_fut, fp_fut, fb_fut, branch_fut, ocr_fut, bitmap_fut
+    ) {
+        Ok(tuple) => tuple,
+        Err(e) => {
+            errors.push(AutomationLintError {
+                step_id: None,
+                step_number: None,
+                message: format!("Database error fetching steps: {}", e),
+            });
+            return Err(errors);
+        }
+    };
 
     if raw_steps.is_empty() {
         errors.push(AutomationLintError {
@@ -512,13 +521,7 @@ pub async fn validate_automation_for_activation(
                 );
             }
             StepSubtype::OcrExtract(ocr) => {
-                validate_ocr_extract(
-                    step.id,
-                    step.step_number,
-                    ocr,
-                    &vars_map,
-                    &mut errors,
-                );
+                validate_ocr_extract(step.id, step.step_number, ocr, &vars_map, &mut errors);
             }
             StepSubtype::Other => {}
         }

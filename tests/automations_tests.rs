@@ -2097,7 +2097,10 @@ async fn test_ocr_extract_step_crud_and_task_output() {
     // 1. GET /automations/{id}/steps/new/ocr_extract
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/automations/{}/steps/new/ocr_extract", automation_id))
+        .uri(format!(
+            "/automations/{}/steps/new/ocr_extract",
+            automation_id
+        ))
         .header(header::COOKIE, &cookie_header)
         .body(Body::empty())
         .unwrap();
@@ -2115,10 +2118,7 @@ async fn test_ocr_extract_step_crud_and_task_output() {
         .method("POST")
         .uri(format!("/automations/{}/steps", automation_id))
         .header(header::COOKIE, &cookie_header)
-        .header(
-            header::CONTENT_TYPE,
-            "application/x-www-form-urlencoded",
-        )
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(form_body))
         .unwrap();
 
@@ -2135,7 +2135,9 @@ async fn test_ocr_extract_step_crud_and_task_output() {
 
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
     assert!(html.contains("Read Header"));

@@ -1262,7 +1262,13 @@ async fn save_step_details(
             .await?;
         }
         "window_control" => {
-            let action = match form.action.as_deref().unwrap_or("activate").to_lowercase().as_str() {
+            let action = match form
+                .action
+                .as_deref()
+                .unwrap_or("activate")
+                .to_lowercase()
+                .as_str()
+            {
                 "close" => "close",
                 "minimize" => "minimize",
                 "maximize" => "maximize",
@@ -1270,7 +1276,13 @@ async fn save_step_details(
                 _ => "activate",
             };
             let match_pattern = form.match_pattern.as_deref().unwrap_or("").trim();
-            let match_type = match form.match_type.as_deref().unwrap_or("contains").to_lowercase().as_str() {
+            let match_type = match form
+                .match_type
+                .as_deref()
+                .unwrap_or("contains")
+                .to_lowercase()
+                .as_str()
+            {
                 "exact" => "exact",
                 "starts_with" => "starts_with",
                 _ => "contains",
@@ -1785,13 +1797,10 @@ async fn validate_step_form(
             validate_automation_variables_exist(db, automation_id, &out_vars).await?;
         }
         "ocr_extract" => {
-            let out_vars: Vec<i64> = [
-                form.region_variable_id,
-                form.output_variable_id,
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
+            let out_vars: Vec<i64> = [form.region_variable_id, form.output_variable_id]
+                .into_iter()
+                .flatten()
+                .collect();
 
             validate_automation_variables_exist(db, automation_id, &out_vars).await?;
         }
@@ -1936,10 +1945,22 @@ pub async fn get_edit_step_handler(
             .ok()
             .flatten();
 
-            let action = wc_row.as_ref().map(|r| r.action.clone()).unwrap_or_else(|| "activate".to_string());
-            let match_pattern = wc_row.as_ref().map(|r| r.match_pattern.clone()).unwrap_or_default();
-            let match_type = wc_row.as_ref().map(|r| r.match_type.clone()).unwrap_or_else(|| "contains".to_string());
-            let timeout_seconds = wc_row.as_ref().map(|r| r.timeout_ms as f64 / 1000.0).unwrap_or(5.0);
+            let action = wc_row
+                .as_ref()
+                .map(|r| r.action.clone())
+                .unwrap_or_else(|| "activate".to_string());
+            let match_pattern = wc_row
+                .as_ref()
+                .map(|r| r.match_pattern.clone())
+                .unwrap_or_default();
+            let match_type = wc_row
+                .as_ref()
+                .map(|r| r.match_type.clone())
+                .unwrap_or_else(|| "contains".to_string());
+            let timeout_seconds = wc_row
+                .as_ref()
+                .map(|r| r.timeout_ms as f64 / 1000.0)
+                .unwrap_or(5.0);
 
             HtmlTemplate(StepWindowControlTemplate {
                 user,
@@ -2140,10 +2161,18 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                search_x: query.search_x.or_else(|| ocr.as_ref().and_then(|r| r.search_x)),
-                search_y: query.search_y.or_else(|| ocr.as_ref().and_then(|r| r.search_y)),
-                search_width: query.search_width.or_else(|| ocr.as_ref().and_then(|r| r.search_width)),
-                search_height: query.search_height.or_else(|| ocr.as_ref().and_then(|r| r.search_height)),
+                search_x: query
+                    .search_x
+                    .or_else(|| ocr.as_ref().and_then(|r| r.search_x)),
+                search_y: query
+                    .search_y
+                    .or_else(|| ocr.as_ref().and_then(|r| r.search_y)),
+                search_width: query
+                    .search_width
+                    .or_else(|| ocr.as_ref().and_then(|r| r.search_width)),
+                search_height: query
+                    .search_height
+                    .or_else(|| ocr.as_ref().and_then(|r| r.search_height)),
                 region_variable_id: ocr.as_ref().and_then(|r| r.region_variable_id),
                 output_variable_id: ocr.as_ref().and_then(|r| r.output_variable_id),
                 set_as_task_output: ocr.as_ref().map(|r| r.set_as_task_output).unwrap_or(true),
