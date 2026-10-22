@@ -50,7 +50,8 @@ impl SampleStorage {
             // Promoted to heap if inline capacity exhausted unexpectedly
             if self.heap_buf.is_empty() {
                 self.heap_buf.reserve(INLINE_SAMPLE_CAP * 2);
-                self.heap_buf.extend_from_slice(&self.inline_buf[..self.len]);
+                self.heap_buf
+                    .extend_from_slice(&self.inline_buf[..self.len]);
             }
             self.heap_buf.push(sample);
         }
@@ -233,8 +234,7 @@ pub fn search_bitmap(
 
     let target_matched_count =
         ((match_threshold * sample_count as f32).ceil() as usize).min(sample_count);
-    let exact_matched_count =
-        ((0.99 * sample_count as f32).ceil() as usize).min(sample_count);
+    let exact_matched_count = ((0.99 * sample_count as f32).ceil() as usize).min(sample_count);
 
     let mut best_matched_count = 0usize;
     let mut best_x = 0u32;
@@ -387,7 +387,7 @@ mod tests {
         for y in 12..16 {
             for x in 8..12 {
                 let idx = ((y * 20 + x) * 4) as usize;
-                screen_data[idx] = 255;   // R
+                screen_data[idx] = 255; // R
                 screen_data[idx + 1] = 0; // G
                 screen_data[idx + 2] = 0; // B
             }
@@ -397,8 +397,8 @@ mod tests {
         let mut tmpl_data = vec![0u8; 4 * 4 * 4];
         for chunk in tmpl_data.as_chunks_mut::<4>().0 {
             chunk[0] = 255; // R
-            chunk[1] = 0;   // G
-            chunk[2] = 0;   // B
+            chunk[1] = 0; // G
+            chunk[2] = 0; // B
             chunk[3] = 255; // A
         }
         let template = CapturedImage::new(4, 4, tmpl_data);
