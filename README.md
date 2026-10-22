@@ -1,6 +1,6 @@
 # DeskDispatch — GUI Automation Task Server
 
-DeskDispatch is a high-performance, zero-JavaScript task server for managing and orchestrating GUI automations across headless task-worker PCs. Built with Rust, Axum, SQLx, PostgreSQL, Askama, and S3-compatible object storage (RustFS), DeskDispatch provides an operator web interface and a lightweight HTTP/JSON polling API for worker machines.
+DeskDispatch is a task server for managing and orchestrating GUI automations across headless task-worker PCs. Built with Rust, Axum, SQLx, PostgreSQL, Askama, and S3-compatible object storage (RustFS), DeskDispatch provides an operator web interface and a lightweight HTTP/JSON polling API for worker machines.
 
 ---
 
