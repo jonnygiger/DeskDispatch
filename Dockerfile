@@ -16,9 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY Cargo.toml ./
 COPY crates/deskdispatch-protocol/Cargo.toml ./crates/deskdispatch-protocol/
 COPY crates/worker-simulator/Cargo.toml ./crates/worker-simulator/
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/src/app/target \
-    mkdir -p src crates/deskdispatch-protocol/src crates/worker-simulator/src && \
+RUN mkdir -p src crates/deskdispatch-protocol/src crates/worker-simulator/src && \
     echo "fn main() {}" > src/main.rs && \
     echo "fn main() {}" > crates/worker-simulator/src/main.rs && \
     touch src/lib.rs && \
@@ -33,9 +31,7 @@ COPY static ./static
 COPY migrations ./migrations
 
 # Update timestamps on source files to force recompilation of workspace crates and build final binaries
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/src/app/target \
-    touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs crates/worker-simulator/src/main.rs && \
+RUN touch src/main.rs src/lib.rs crates/deskdispatch-protocol/src/lib.rs crates/worker-simulator/src/main.rs && \
     cargo build --release --workspace && \
     mkdir -p /app/bin && \
     cp target/release/deskdispatch /app/bin/deskdispatch && \

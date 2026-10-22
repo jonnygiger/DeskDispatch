@@ -13,22 +13,45 @@ async fn get_test_pool() -> Option<PgPool> {
         .ok()
 }
 
-#[test]
-fn test_schema_queries_syntax() {
+#[tokio::test]
+async fn test_schema_queries_syntax() {
     let queries = [
         "SELECT id, username, password_hash, display_name, role, is_active FROM users",
         "SELECT id, name, description, status FROM automations",
         "SELECT id, automation_id, position, step_type, post_delay_ms FROM automation_steps",
         "SELECT step_id, x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks",
         "SELECT step_id, key_combo FROM step_key_presses",
+        "SELECT step_id, text_to_type, delay_between_keys_ms FROM step_type_texts",
+        "SELECT step_id, action, match_pattern, match_type, timeout_ms FROM step_window_controls",
         "SELECT step_id, automation_id, condition_type, on_match_step_id, on_no_match_step_id FROM step_branches",
-        "SELECT id, automation_id, schedule_id, worker_id, status FROM task_runs",
+        "SELECT step_id, search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts",
+        "SELECT id, automation_id, schedule_id, worker_id, status, output_type, output_value FROM task_runs",
         "SELECT id, automation_id, cron_expression, timezone, is_enabled, next_run_at FROM schedules",
     ];
+
+    let pool_opt = get_test_pool().await;
 
     for sql in queries {
         let q = sqlx::query::<sqlx::Postgres>(sql);
         assert_eq!(q.sql(), sql);
+        assert!(sql.starts_with("SELECT "));
+        assert!(sql.contains(" FROM "));
+
+        if let Some(ref pool) = pool_opt {
+            let explain_sql = format!("EXPLAIN {}", sql);
+            let explain_plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(explain_sql))
+                .fetch_all(pool)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Schema validation query failed for SQL '{}': {:?}", sql, e)
+                });
+
+            assert!(
+                !explain_plan.is_empty(),
+                "EXPLAIN plan for '{}' returned empty output",
+                sql
+            );
+        }
     }
 }
 

@@ -25,27 +25,54 @@ async fn get_test_pool() -> Option<sqlx::PgPool> {
 struct WorkerCleanupGuard {
     pool: sqlx::PgPool,
     host_prefix: String,
+    user_id: Option<i64>,
+    auto_id: Option<i64>,
+    task_run_id: Option<i64>,
 }
 
 impl Drop for WorkerCleanupGuard {
     fn drop(&mut self) {
         let pool = self.pool.clone();
         let prefix = format!("{}%", self.host_prefix);
-        tokio::task::spawn(async move {
+        let user_id = self.user_id;
+        let auto_id = self.auto_id;
+        let task_run_id = self.task_run_id;
+
+        let cleanup = async move {
+            if let Some(tr_id) = task_run_id {
+                let _ = sqlx::query("DELETE FROM task_runs WHERE id = $1")
+                    .bind(tr_id)
+                    .execute(&pool)
+                    .await;
+            }
+            if let Some(a_id) = auto_id {
+                let _ = sqlx::query("DELETE FROM automations WHERE id = $1")
+                    .bind(a_id)
+                    .execute(&pool)
+                    .await;
+            }
+            if let Some(u_id) = user_id {
+                let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+                    .bind(u_id)
+                    .execute(&pool)
+                    .await;
+            }
             let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE hostname LIKE $1")
                 .bind(prefix)
                 .execute(&pool)
                 .await;
-        });
-    }
-}
+        };
 
-async fn cleanup_workers(pool: &sqlx::PgPool, host_prefix: &str) {
-    let prefix = format!("{}%", host_prefix);
-    let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE hostname LIKE $1")
-        .bind(prefix)
-        .execute(pool)
-        .await;
+        let _ = std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                rt.block_on(cleanup);
+            }
+        })
+        .join();
+    }
 }
 
 #[tokio::test]
@@ -63,9 +90,9 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         s3_public_endpoint: None,
         s3_bucket: "deskdispatch-bucket".to_string(),
         s3_access_key: "rustfsadmin".to_string(),
-        s3_secret_key: secrecy::SecretString::from("rustfsadminpassword".to_string()),
+        s3_secret_key: deskdispatch::SecretString::from("rustfsadminpassword".to_string()),
         s3_region: "us-east-1".to_string(),
-        session_secret: secrecy::SecretString::from("test_secret".to_string()),
+        session_secret: deskdispatch::SecretString::from("test_secret".to_string()),
         bind_address: "0.0.0.0:3000".to_string(),
         environment: "development".to_string(),
         min_agent_version: None,
@@ -80,7 +107,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         task_run_step_retention_days: 30,
         screenshot_retention_days: 30,
         metrics_bind_address: None,
-        unattended_registration_psk: secrecy::SecretString::from(
+        unattended_registration_psk: deskdispatch::SecretString::from(
             "deskdispatch_wps_psk_secret".to_string(),
         ),
     });
@@ -103,34 +130,44 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     let host_prefix = format!("load-test-host-{}", run_id_suffix);
 
     // RAII guard guarantees worker cleanup even on assertion panic
-    let _cleanup_guard = WorkerCleanupGuard {
+    let mut cleanup_guard = WorkerCleanupGuard {
         pool: pool.clone(),
         host_prefix: host_prefix.clone(),
+        user_id: None,
+        auto_id: None,
+        task_run_id: None,
     };
 
-    // 1. Seed 300 distinct workers in task_worker_pcs
+    // 1. Batch seed 300 distinct workers in task_worker_pcs in a single query
     let num_workers = 300;
+    let hostnames: Vec<String> = (0..num_workers)
+        .map(|i| format!("{}-{}", host_prefix, i))
+        .collect();
+    let display_names: Vec<String> = (0..num_workers)
+        .map(|i| format!("Load Test Worker {}", i))
+        .collect();
+    let api_key_hashes: Vec<Vec<u8>> = vec![vec![0u8; 32]; num_workers];
+
+    let inserted_rows: Vec<(i64, String, String)> = sqlx::query_as(
+        r#"
+        INSERT INTO task_worker_pcs (hostname, display_name, status, api_key_hash)
+        SELECT u.hostname, u.display_name, 'idle', u.api_key_hash
+        FROM UNNEST($1::text[], $2::text[], $3::bytea[]) AS u(hostname, display_name, api_key_hash)
+        RETURNING id, hostname, display_name
+        "#,
+    )
+    .bind(&hostnames)
+    .bind(&display_names)
+    .bind(&api_key_hashes)
+    .fetch_all(&pool)
+    .await
+    .expect("Failed to batch insert test workers");
+
     let mut auth_workers = Vec::with_capacity(num_workers);
-
-    for i in 0..num_workers {
-        let hostname = format!("{}-{}", host_prefix, i);
-        let display_name = format!("Load Test Worker {}", i);
-        let worker_id: i64 = sqlx::query_scalar(
-            r#"
-            INSERT INTO task_worker_pcs (hostname, display_name, status, api_key_hash)
-            VALUES ($1, $2, 'idle', $3)
-            RETURNING id
-            "#,
-        )
-        .bind(&hostname)
-        .bind(&display_name)
-        .bind(vec![0u8; 32])
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to insert test worker");
-
+    let now = chrono::Utc::now();
+    for (id, hostname, display_name) in inserted_rows {
         auth_workers.push(WorkerAuth {
-            id: worker_id,
+            id,
             hostname,
             display_name,
             status: "idle".to_string(),
@@ -139,7 +176,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
             screen_height: None,
             os_info: None,
             agent_version: None,
-            created_at: chrono::Utc::now(),
+            created_at: now,
         });
     }
 
@@ -190,6 +227,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     .fetch_one(&pool)
     .await
     .expect("Failed to seed user");
+    cleanup_guard.user_id = Some(user_id);
 
     let auto_id: i64 = sqlx::query_scalar(
         "INSERT INTO automations (name, description, status, created_by) VALUES ('Load Test Auto', 'Desc', 'active', $1) RETURNING id",
@@ -198,6 +236,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     .fetch_one(&pool)
     .await
     .expect("Failed to seed automation");
+    cleanup_guard.auto_id = Some(auto_id);
 
     let task_run_id: i64 = sqlx::query_scalar(
         "INSERT INTO task_runs (automation_id, status, queued_at) VALUES ($1, 'queued', now()) RETURNING id",
@@ -206,6 +245,7 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
     .fetch_one(&pool)
     .await
     .expect("Failed to seed queued task_run");
+    cleanup_guard.task_run_id = Some(task_run_id);
 
     // Spawn 300 long polling workers again
     let mut handles_wake = Vec::with_capacity(num_workers);
@@ -218,8 +258,18 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         handles_wake.push(handle);
     }
 
-    // Give workers a tiny window to enter long polling wait on broadcast channel
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Wait deterministically for all workers to subscribe to the task queue notifier before triggering wake notification
+    let wait_start = std::time::Instant::now();
+    while tx_notify.receiver_count() < num_workers {
+        if wait_start.elapsed() > Duration::from_secs(5) {
+            panic!(
+                "Timed out waiting for {} workers to subscribe to task queue notifier (active: {})",
+                num_workers,
+                tx_notify.receiver_count()
+            );
+        }
+        tokio::task::yield_now().await;
+    }
 
     // Send task queue notification to wake up long-polling workers
     let _ = tx_notify.send(());
@@ -271,18 +321,5 @@ async fn test_long_poll_300_workers_no_pool_exhaustion() {
         "Claiming worker should be one of the 300 long-polling test workers"
     );
 
-    // Explicit cleanup of test entities
-    let _ = sqlx::query("DELETE FROM task_runs WHERE id = $1")
-        .bind(task_run_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM automations WHERE id = $1")
-        .bind(auto_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
-        .execute(&pool)
-        .await;
-    cleanup_workers(&pool, &host_prefix).await;
+    // RAII Drop on cleanup_guard automatically cleans up task_runs, automations, users, and task_worker_pcs
 }

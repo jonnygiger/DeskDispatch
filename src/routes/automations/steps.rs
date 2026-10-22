@@ -82,6 +82,10 @@ struct BranchDetailRow {
     match_threshold: Option<f32>,
     on_match_step_id: Option<i64>,
     on_no_match_step_id: Option<i64>,
+    window_match_pattern: Option<String>,
+    #[allow(dead_code)]
+    window_match_type: Option<String>,
+    window_check_type: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -100,6 +104,40 @@ struct MouseClickDetailRow {
     region_variable_id: Option<i64>,
     button: String,
     click_type: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct OcrExtractDetailRow {
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_variable_id: Option<i64>,
+    output_variable_id: Option<i64>,
+    set_as_task_output: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct TypeTextDetailRow {
+    text_to_type: String,
+    delay_between_keys_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct WindowControlViewRow {
+    step_id: i64,
+    action: String,
+    match_pattern: String,
+    match_type: String,
+    timeout_ms: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct WindowControlDetailRow {
+    action: String,
+    match_pattern: String,
+    match_type: String,
+    timeout_ms: i64,
 }
 
 // ============================================================================
@@ -128,28 +166,33 @@ fn sanitize_click_type(ct: Option<&str>) -> &'static str {
     }
 }
 
-fn validate_branch_form(form: &MouseClickStepForm, condition_type: &str) -> Option<String> {
+fn validate_branch_form(form: &StepForm, condition_type: &str) -> Option<String> {
     if form.on_match_step_id.filter(|&sid| sid > 0).is_none()
         || form.on_no_match_step_id.filter(|&sid| sid > 0).is_none()
     {
         Some("Both match and no-match target steps are required for branch conditions.".to_string())
     } else if condition_type == "pixel_rgb" && (form.x.is_none() || form.y.is_none()) {
         Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string())
-    } else if condition_type == "bitmap"
-        && (form.reference_bitmap_id.is_none() || form.reference_bitmap_id == Some(0))
+    } else if condition_type == "bitmap" && form.reference_bitmap_id.filter(|&id| id > 0).is_none()
     {
         Some("Please select a reference bitmap for bitmap condition.".to_string())
+    } else if condition_type == "window_state"
+        && form
+            .window_match_pattern
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+    {
+        Some("Please provide a window title match pattern for window state condition.".to_string())
     } else {
         None
     }
 }
 
 #[inline]
-pub fn sanitize_label(label: Option<&str>) -> Option<String> {
-    label
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
+pub fn sanitize_label(label: Option<&str>) -> Option<&str> {
+    label.map(str::trim).filter(|s| !s.is_empty())
 }
 
 pub fn validate_literal_or_reference<T>(
@@ -224,7 +267,7 @@ async fn insert_base_step(
     .bind(automation_id)
     .bind(next_pos)
     .bind(step_type)
-    .bind(&clean_label)
+    .bind(clean_label)
     .bind(post_delay_ms)
     .fetch_one(&mut **tx)
     .await?;
@@ -245,7 +288,7 @@ async fn update_base_step(
     sqlx::query(
         "UPDATE automation_steps SET label = $1, post_delay_ms = $2, updated_at = now() WHERE id = $3 AND automation_id = $4",
     )
-    .bind(&clean_label)
+    .bind(clean_label)
     .bind(post_delay_ms)
     .bind(step_id)
     .bind(automation_id)
@@ -326,6 +369,29 @@ pub async fn fetch_available_bitmaps(db: &PgPool, automation_id: i64) -> Vec<Bit
     .unwrap_or_default()
 }
 
+pub struct StepOptionsBundle {
+    pub variables: Vec<VariableOption>,
+    pub bitmaps: Vec<BitmapOption>,
+    pub steps: Vec<StepOption>,
+}
+
+pub async fn fetch_step_options_bundle(
+    db: &PgPool,
+    automation_id: i64,
+    exclude_step_id: Option<i64>,
+) -> StepOptionsBundle {
+    let (variables, bitmaps, steps) = tokio::join!(
+        fetch_automation_variables(db, automation_id),
+        fetch_available_bitmaps(db, automation_id),
+        fetch_automation_step_options(db, automation_id, exclude_step_id)
+    );
+    StepOptionsBundle {
+        variables,
+        bitmaps,
+        steps,
+    }
+}
+
 pub fn generate_mouse_click_summary(
     x: Option<i32>,
     y: Option<i32>,
@@ -367,6 +433,98 @@ pub fn generate_mouse_click_summary(
     buf
 }
 
+pub fn generate_type_text_summary(text_to_type: &str, delay_between_keys_ms: i32) -> String {
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(64);
+    let trimmed = text_to_type.trim();
+    let display_text = if trimmed.len() > 30 {
+        format!("{}...", &trimmed[..30])
+    } else {
+        trimmed.to_string()
+    };
+
+    if delay_between_keys_ms > 0 {
+        let _ = write!(
+            buf,
+            "Type \"{display_text}\" ({delay_between_keys_ms}ms key delay)"
+        );
+    } else {
+        let _ = write!(buf, "Type \"{display_text}\"");
+    }
+    buf
+}
+
+pub fn generate_ocr_extract_summary(
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_var_name: Option<&str>,
+    output_var_name: Option<&str>,
+    set_as_task_output: bool,
+) -> String {
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(96);
+    buf.push_str("OCR Extract from ");
+
+    if let Some(rname) = region_var_name.map(str::trim).filter(|n| !n.is_empty()) {
+        let _ = write!(buf, "region «{rname}»");
+    } else if let (Some(x), Some(y), Some(w), Some(h)) =
+        (search_x, search_y, search_width, search_height)
+    {
+        let _ = write!(buf, "region ({x}, {y}, {w}x{h})");
+    } else {
+        buf.push_str("full screen");
+    }
+
+    if let Some(oname) = output_var_name.map(str::trim).filter(|n| !n.is_empty()) {
+        let _ = write!(buf, " → store in «{oname}»");
+    }
+
+    if set_as_task_output {
+        buf.push_str(" [task output]");
+    }
+
+    buf
+}
+
+pub fn generate_window_control_summary(
+    action: &str,
+    match_pattern: &str,
+    match_type: &str,
+    timeout_ms: i64,
+) -> String {
+    let action_str = match action.to_lowercase().as_str() {
+        "activate" => "Focus",
+        "close" => "Close",
+        "minimize" => "Minimize",
+        "maximize" => "Maximize",
+        "wait" => "Wait for",
+        _ => "Control",
+    };
+    let pattern_trimmed = match_pattern.trim();
+    let display_pattern = if pattern_trimmed.chars().count() > 30 {
+        let truncated: String = pattern_trimmed.chars().take(27).collect();
+        format!("{}...", truncated)
+    } else {
+        pattern_trimmed.to_string()
+    };
+
+    if action == "wait" {
+        format!(
+            "Wait for window matching \"{}\" ({}) [timeout {:.1}s]",
+            display_pattern,
+            match_type,
+            timeout_ms as f64 / 1000.0
+        )
+    } else {
+        format!(
+            "{} window matching \"{}\" ({})",
+            action_str, display_pattern, match_type
+        )
+    }
+}
+
 pub fn generate_find_pixel_rgb_summary(x: i32, y: i32, output_var_name: Option<&str>) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
@@ -394,6 +552,7 @@ pub fn generate_find_bitmap_summary(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn generate_branch_summary(
     condition_type: &str,
     x: Option<i32>,
@@ -403,6 +562,8 @@ pub fn generate_branch_summary(
     expected_b: Option<i16>,
     tolerance: Option<i16>,
     bitmap_name: Option<&str>,
+    window_pattern: Option<&str>,
+    window_check_type: Option<&str>,
     match_target: Option<&str>,
     no_match_target: Option<&str>,
 ) -> String {
@@ -421,6 +582,17 @@ pub fn generate_branch_summary(
             expected_g.unwrap_or(0),
             expected_b.unwrap_or(0),
             tolerance.unwrap_or(0),
+        );
+    } else if condition_type == "window_state" {
+        let pattern = window_pattern.unwrap_or("window");
+        let check_state = if window_check_type == Some("active") {
+            "active"
+        } else {
+            "exists"
+        };
+        let _ = write!(
+            buf,
+            "BRANCH: if window \"{pattern}\" {check_state} → go to {match_str}, else → go to {no_match_str}"
         );
     } else {
         let bm_name = bitmap_name.unwrap_or("bitmap");
@@ -445,6 +617,13 @@ struct RawStepRow {
 struct KeyPressViewRow {
     step_id: i64,
     key_combo: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct TypeTextViewRow {
+    step_id: i64,
+    text_to_type: String,
+    delay_between_keys_ms: i32,
 }
 
 #[derive(sqlx::FromRow)]
@@ -491,6 +670,10 @@ struct BranchViewRow {
     bitmap_name: Option<String>,
     on_match_step_id: Option<i64>,
     on_no_match_step_id: Option<i64>,
+    window_match_pattern: Option<String>,
+    #[allow(dead_code)]
+    window_match_type: Option<String>,
+    window_check_type: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -521,12 +704,34 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         return Vec::new();
     }
 
-    let (kp_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
+    let (kp_res, wc_res, tt_res, mc_res, fp_res, fb_res, br_res, ss_res) = tokio::join!(
         sqlx::query_as::<_, KeyPressViewRow>(
             r#"
             SELECT skp.step_id, skp.key_combo
             FROM step_key_presses skp
             JOIN automation_steps s ON skp.step_id = s.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query_as::<_, WindowControlViewRow>(
+            r#"
+            SELECT swc.step_id, swc.action, swc.match_pattern, swc.match_type, swc.timeout_ms
+            FROM step_window_controls swc
+            JOIN automation_steps s ON swc.step_id = s.id
+            WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+            "#,
+        )
+        .bind(automation_id)
+        .fetch_all(db),
+
+        sqlx::query_as::<_, TypeTextViewRow>(
+            r#"
+            SELECT stt.step_id, stt.text_to_type, stt.delay_between_keys_ms
+            FROM step_type_texts stt
+            JOIN automation_steps s ON stt.step_id = s.id
             WHERE s.automation_id = $1 AND s.deleted_at IS NULL
             "#,
         )
@@ -576,7 +781,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             r#"
             SELECT
                 sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
-                sb.reference_bitmap_id, b.name AS bitmap_name, b.object_storage_key AS reference_bitmap_key, sb.on_match_step_id, sb.on_no_match_step_id
+                sb.reference_bitmap_id, b.name AS bitmap_name, b.object_storage_key AS reference_bitmap_key, sb.on_match_step_id, sb.on_no_match_step_id,
+                sb.window_match_pattern, sb.window_match_type, sb.window_check_type
             FROM step_branches sb
             JOIN automation_steps s ON sb.step_id = s.id
             LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
@@ -599,6 +805,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     );
 
     let kp_rows = kp_res.unwrap_or_default();
+    let wc_rows = wc_res.unwrap_or_default();
+    let tt_rows = tt_res.unwrap_or_default();
     let mc_rows = mc_res.unwrap_or_default();
     let fp_rows = fp_res.unwrap_or_default();
     let fb_rows = fb_res.unwrap_or_default();
@@ -607,6 +815,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
     enum StepDetailView {
         KeyPress(KeyPressViewRow),
+        TypeText(TypeTextViewRow),
+        WindowControl(WindowControlViewRow),
         MouseClick(MouseClickViewRow),
         FindPixel(FindPixelViewRow),
         FindBitmap(FindBitmapViewRow),
@@ -615,11 +825,41 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
     use std::collections::HashMap;
 
+    let step_target_map = if !br_rows.is_empty() {
+        let target_ids: std::collections::HashSet<i64> = br_rows
+            .iter()
+            .flat_map(|r| [r.on_match_step_id, r.on_no_match_step_id])
+            .flatten()
+            .collect();
+
+        let mut target_map = HashMap::with_capacity(target_ids.len());
+        for (idx, row) in raw_steps.iter().enumerate() {
+            if target_ids.contains(&row.id) {
+                let step_num = idx + 1;
+                let target_str = match &row.label {
+                    Some(lbl) if !lbl.trim().is_empty() => {
+                        format!("Step {step_num} ({})", lbl.trim())
+                    }
+                    _ => format!("Step {step_num} ({})", row.step_type),
+                };
+                target_map.insert(row.id, target_str);
+            }
+        }
+        target_map
+    } else {
+        HashMap::new()
+    };
+
     let mut details_map: HashMap<i64, StepDetailView> = HashMap::with_capacity(raw_steps.len());
-    let mut has_branch = false;
 
     for r in kp_rows {
         details_map.insert(r.step_id, StepDetailView::KeyPress(r));
+    }
+    for r in tt_rows {
+        details_map.insert(r.step_id, StepDetailView::TypeText(r));
+    }
+    for r in wc_rows {
+        details_map.insert(r.step_id, StepDetailView::WindowControl(r));
     }
     for r in mc_rows {
         details_map.insert(r.step_id, StepDetailView::MouseClick(r));
@@ -631,7 +871,6 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         details_map.insert(r.step_id, StepDetailView::FindBitmap(r));
     }
     for r in br_rows {
-        has_branch = true;
         details_map.insert(r.step_id, StepDetailView::Branch(r));
     }
 
@@ -639,23 +878,6 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     for r in ss_rows {
         step_screenshot_map.insert(r.step_id, r.object_storage_key);
     }
-
-    let step_target_map = if has_branch {
-        let mut target_map = HashMap::with_capacity(raw_steps.len());
-        for (idx, row) in raw_steps.iter().enumerate() {
-            let step_num = idx + 1;
-            let target_str = match &row.label {
-                Some(lbl) if !lbl.trim().is_empty() => {
-                    format!("Step {step_num} ({})", lbl.trim())
-                }
-                _ => format!("Step {step_num} ({})", row.step_type),
-            };
-            target_map.insert(row.id, target_str);
-        }
-        target_map
-    } else {
-        HashMap::new()
-    };
 
     let mut steps = Vec::with_capacity(raw_steps.len());
     for (idx, row) in raw_steps.into_iter().enumerate() {
@@ -669,6 +891,21 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
 
         let (description, ref_bitmap_id, ref_bitmap_key) = match detail_opt {
             Some(StepDetailView::KeyPress(r)) => (format!("Press {}", r.key_combo), None, None),
+            Some(StepDetailView::TypeText(r)) => (
+                generate_type_text_summary(&r.text_to_type, r.delay_between_keys_ms),
+                None,
+                None,
+            ),
+            Some(StepDetailView::WindowControl(r)) => (
+                generate_window_control_summary(
+                    &r.action,
+                    &r.match_pattern,
+                    &r.match_type,
+                    r.timeout_ms,
+                ),
+                None,
+                None,
+            ),
             Some(StepDetailView::MouseClick(r)) => (
                 generate_mouse_click_summary(
                     r.x,
@@ -712,6 +949,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
                     r.expected_b,
                     r.tolerance,
                     r.bitmap_name.as_deref(),
+                    r.window_match_pattern.as_deref(),
+                    r.window_check_type.as_deref(),
                     match_target_str,
                     no_match_target_str,
                 );
@@ -720,6 +959,8 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
             None => (
                 match step_type.as_str() {
                     "key_press" => "Press key".to_string(),
+                    "type_text" => "Type text".to_string(),
+                    "window_control" => "Control window".to_string(),
                     "mouse_click" => "Click mouse".to_string(),
                     "find_pixel_rgb" => "Read pixel at coordinate".to_string(),
                     "find_bitmap" => "Search for bitmap on screen".to_string(),
@@ -786,6 +1027,81 @@ pub async fn get_new_key_press_step_handler(
     })
 }
 
+/// GET /automations/{id}/steps/new/ocr_extract
+#[tracing::instrument(skip(state, user))]
+pub async fn get_new_ocr_extract_step_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<NewOcrExtractQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let variables = fetch_automation_variables(&state.db, id).await;
+
+    HtmlTemplate(StepOcrExtractTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        search_x: query.search_x,
+        search_y: query.search_y,
+        search_width: query.search_width,
+        search_height: query.search_height,
+        region_variable_id: None,
+        output_variable_id: None,
+        set_as_task_output: true,
+        variables,
+        error: None,
+        is_edit: false,
+    })
+}
+
+/// GET /automations/{id}/steps/new/window_control
+#[tracing::instrument(skip(user))]
+pub async fn get_new_window_control_step_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    HtmlTemplate(StepWindowControlTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        action: "activate".to_string(),
+        match_pattern: String::new(),
+        match_type: "contains".to_string(),
+        timeout_seconds: 5.0,
+        error: None,
+        is_edit: false,
+    })
+}
+
+/// GET /automations/{id}/steps/new/type_text
+#[tracing::instrument(skip(user))]
+pub async fn get_new_type_text_step_handler(
+    user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    HtmlTemplate(StepTypeTextTemplate {
+        user,
+        csrf_token,
+        automation_id: id,
+        step_id: None,
+        label: String::new(),
+        post_delay_seconds: 0.0,
+        text_to_type: String::new(),
+        delay_between_keys_ms: 0,
+        error: None,
+        is_edit: false,
+    })
+}
+
 /// GET /automations/{id}/steps/new/branch
 #[tracing::instrument(skip(state, user))]
 pub async fn get_new_branch_step_handler(
@@ -823,6 +1139,9 @@ pub async fn get_new_branch_step_handler(
         search_width: query.search_width,
         search_height: query.search_height,
         match_threshold: Some(0.95),
+        window_match_pattern: String::new(),
+        window_match_type: "contains".to_string(),
+        window_check_type: "exists".to_string(),
         on_match_step_id: None,
         on_no_match_step_id: None,
         steps,
@@ -957,12 +1276,13 @@ async fn save_step_details(
     automation_id: i64,
     step_id: i64,
     step_type: &str,
-    form: &MouseClickStepForm,
+    form: &StepForm,
 ) -> Result<(), sqlx::Error> {
     match step_type {
         "branch" => {
             let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb");
             let is_pixel = condition_type == "pixel_rgb";
+            let is_window = condition_type == "window_state";
 
             let (x, y, r, g, b, tol) = if is_pixel {
                 (
@@ -977,7 +1297,7 @@ async fn save_step_details(
                 (None, None, None, None, None, None)
             };
 
-            let (ref_bm_id, sx, sy, sw, sh, m_thresh) = if !is_pixel {
+            let (ref_bm_id, sx, sy, sw, sh, m_thresh) = if condition_type == "bitmap" {
                 (
                     form.reference_bitmap_id,
                     form.search_x,
@@ -990,13 +1310,24 @@ async fn save_step_details(
                 (None, None, None, None, None, None)
             };
 
+            let (win_pat, win_mtype, win_ctype) = if is_window {
+                (
+                    form.window_match_pattern.as_deref().map(str::trim),
+                    form.window_match_type.as_deref(),
+                    form.window_check_type.as_deref(),
+                )
+            } else {
+                (None, None, None)
+            };
+
             sqlx::query(
                 r#"
                 INSERT INTO step_branches
                     (step_id, automation_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                      reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                     window_match_pattern, window_match_type, window_check_type,
                      on_match_step_id, on_no_match_step_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 ON CONFLICT (step_id) DO UPDATE SET
                     condition_type = EXCLUDED.condition_type,
                     x = EXCLUDED.x,
@@ -1011,13 +1342,16 @@ async fn save_step_details(
                     search_width = EXCLUDED.search_width,
                     search_height = EXCLUDED.search_height,
                     match_threshold = EXCLUDED.match_threshold,
+                    window_match_pattern = EXCLUDED.window_match_pattern,
+                    window_match_type = EXCLUDED.window_match_type,
+                    window_check_type = EXCLUDED.window_check_type,
                     on_match_step_id = EXCLUDED.on_match_step_id,
                     on_no_match_step_id = EXCLUDED.on_no_match_step_id
                 "#,
             )
             .bind(step_id)
             .bind(automation_id)
-            .bind(if is_pixel { "pixel_rgb" } else { "bitmap" })
+            .bind(condition_type)
             .bind(x)
             .bind(y)
             .bind(r)
@@ -1030,8 +1364,76 @@ async fn save_step_details(
             .bind(sw)
             .bind(sh)
             .bind(m_thresh)
+            .bind(win_pat)
+            .bind(win_mtype)
+            .bind(win_ctype)
             .bind(form.on_match_step_id.filter(|&sid| sid > 0))
             .bind(form.on_no_match_step_id.filter(|&sid| sid > 0))
+            .execute(&mut **tx)
+            .await?;
+        }
+        "window_control" => {
+            let action = match form
+                .action
+                .as_deref()
+                .unwrap_or("activate")
+                .to_lowercase()
+                .as_str()
+            {
+                "close" => "close",
+                "minimize" => "minimize",
+                "maximize" => "maximize",
+                "wait" => "wait",
+                _ => "activate",
+            };
+            let match_pattern = form.match_pattern.as_deref().unwrap_or("").trim();
+            let match_type = match form
+                .match_type
+                .as_deref()
+                .unwrap_or("contains")
+                .to_lowercase()
+                .as_str()
+            {
+                "exact" => "exact",
+                "starts_with" => "starts_with",
+                _ => "contains",
+            };
+            let timeout_ms = ((form.timeout_seconds.unwrap_or(5.0).max(0.0)) * 1000.0) as i64;
+
+            sqlx::query(
+                r#"
+                INSERT INTO step_window_controls (step_id, action, match_pattern, match_type, timeout_ms)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    action = EXCLUDED.action,
+                    match_pattern = EXCLUDED.match_pattern,
+                    match_type = EXCLUDED.match_type,
+                    timeout_ms = EXCLUDED.timeout_ms
+                "#,
+            )
+            .bind(step_id)
+            .bind(action)
+            .bind(match_pattern)
+            .bind(match_type)
+            .bind(timeout_ms)
+            .execute(&mut **tx)
+            .await?;
+        }
+        "type_text" => {
+            let text_to_type = form.text_to_type.as_deref().unwrap_or("").trim();
+            let delay_between_keys_ms = form.delay_between_keys_ms.unwrap_or(0).max(0);
+            sqlx::query(
+                r#"
+                INSERT INTO step_type_texts (step_id, text_to_type, delay_between_keys_ms)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    text_to_type = EXCLUDED.text_to_type,
+                    delay_between_keys_ms = EXCLUDED.delay_between_keys_ms
+                "#,
+            )
+            .bind(step_id)
+            .bind(text_to_type)
+            .bind(delay_between_keys_ms)
             .execute(&mut **tx)
             .await?;
         }
@@ -1156,6 +1558,38 @@ async fn save_step_details(
             .execute(&mut **tx)
             .await?;
         }
+        "ocr_extract" => {
+            let set_task_out = matches!(
+                form.set_as_task_output.as_deref(),
+                Some("on" | "true" | "1")
+            );
+
+            sqlx::query(
+                r#"
+                INSERT INTO step_ocr_extracts
+                    (step_id, search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    search_x = EXCLUDED.search_x,
+                    search_y = EXCLUDED.search_y,
+                    search_width = EXCLUDED.search_width,
+                    search_height = EXCLUDED.search_height,
+                    region_variable_id = EXCLUDED.region_variable_id,
+                    output_variable_id = EXCLUDED.output_variable_id,
+                    set_as_task_output = EXCLUDED.set_as_task_output
+                "#,
+            )
+            .bind(step_id)
+            .bind(form.search_x)
+            .bind(form.search_y)
+            .bind(form.search_width)
+            .bind(form.search_height)
+            .bind(form.region_variable_id)
+            .bind(form.output_variable_id)
+            .bind(set_task_out)
+            .execute(&mut **tx)
+            .await?;
+        }
         _ => {}
     }
     Ok(())
@@ -1169,7 +1603,7 @@ async fn render_step_error(
     automation_id: i64,
     step_id: Option<i64>,
     step_type: &str,
-    form: MouseClickStepForm,
+    form: StepForm,
     error: String,
 ) -> axum::response::Response {
     let is_edit = step_id.is_some();
@@ -1181,10 +1615,7 @@ async fn render_step_error(
             let condition_type = form
                 .condition_type
                 .unwrap_or_else(|| "pixel_rgb".to_string());
-            let (steps, bitmaps) = tokio::join!(
-                fetch_automation_step_options(db, automation_id, step_id),
-                fetch_available_bitmaps(db, automation_id)
-            );
+            let bundle = fetch_step_options_bundle(db, automation_id, step_id).await;
             HtmlTemplate(StepBranchTemplate {
                 user,
                 csrf_token,
@@ -1205,10 +1636,13 @@ async fn render_step_error(
                 search_width: form.search_width,
                 search_height: form.search_height,
                 match_threshold: form.match_threshold,
+                window_match_pattern: form.window_match_pattern.unwrap_or_default(),
+                window_match_type: form.window_match_type.unwrap_or_else(|| "contains".to_string()),
+                window_check_type: form.window_check_type.unwrap_or_else(|| "exists".to_string()),
                 on_match_step_id: form.on_match_step_id,
                 on_no_match_step_id: form.on_no_match_step_id,
-                steps,
-                bitmaps,
+                steps: bundle.steps,
+                bitmaps: bundle.bitmaps,
                 error: Some(error),
                 is_edit,
             })
@@ -1222,6 +1656,34 @@ async fn render_step_error(
             label,
             post_delay_seconds,
             key_combo: form.key_combo.unwrap_or_default(),
+            error: Some(error),
+            is_edit,
+        })
+        .into_response(),
+        "window_control" => HtmlTemplate(StepWindowControlTemplate {
+            user,
+            csrf_token,
+            automation_id,
+            step_id,
+            label,
+            post_delay_seconds,
+            action: form.action.unwrap_or_else(|| "activate".to_string()),
+            match_pattern: form.match_pattern.unwrap_or_default(),
+            match_type: form.match_type.unwrap_or_else(|| "contains".to_string()),
+            timeout_seconds: form.timeout_seconds.unwrap_or(5.0),
+            error: Some(error),
+            is_edit,
+        })
+        .into_response(),
+        "type_text" => HtmlTemplate(StepTypeTextTemplate {
+            user,
+            csrf_token,
+            automation_id,
+            step_id,
+            label,
+            post_delay_seconds,
+            text_to_type: form.text_to_type.unwrap_or_default(),
+            delay_between_keys_ms: form.delay_between_keys_ms.unwrap_or(0).max(0),
             error: Some(error),
             is_edit,
         })
@@ -1270,10 +1732,7 @@ async fn render_step_error(
             .into_response()
         }
         "find_bitmap" => {
-            let (variables, bitmaps) = tokio::join!(
-                fetch_automation_variables(db, automation_id),
-                fetch_available_bitmaps(db, automation_id)
-            );
+            let bundle = fetch_step_options_bundle(db, automation_id, step_id).await;
             HtmlTemplate(StepFindBitmapTemplate {
                 user,
                 csrf_token,
@@ -1291,7 +1750,33 @@ async fn render_step_error(
                 output_x_variable_id: form.output_x_variable_id,
                 output_y_variable_id: form.output_y_variable_id,
                 output_region_variable_id: form.output_region_variable_id,
-                bitmaps,
+                bitmaps: bundle.bitmaps,
+                variables: bundle.variables,
+                error: Some(error),
+                is_edit,
+            })
+            .into_response()
+        }
+        "ocr_extract" => {
+            let variables = fetch_automation_variables(db, automation_id).await;
+            let set_task_out = form.set_as_task_output.as_deref() == Some("on")
+                || form.set_as_task_output.as_deref() == Some("true")
+                || form.set_as_task_output.as_deref() == Some("1");
+
+            HtmlTemplate(StepOcrExtractTemplate {
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
+                label,
+                post_delay_seconds,
+                search_x: form.search_x,
+                search_y: form.search_y,
+                search_width: form.search_width,
+                search_height: form.search_height,
+                region_variable_id: form.region_variable_id,
+                output_variable_id: form.output_variable_id,
+                set_as_task_output: set_task_out,
                 variables,
                 error: Some(error),
                 is_edit,
@@ -1304,11 +1789,39 @@ async fn render_step_error(
     (StatusCode::BAD_REQUEST, html_body).into_response()
 }
 
+async fn validate_automation_variables_exist(
+    db: &PgPool,
+    automation_id: i64,
+    var_ids: &[i64],
+) -> Result<(), String> {
+    if var_ids.is_empty() {
+        return Ok(());
+    }
+    let mut vars = var_ids.to_vec();
+    vars.sort_unstable();
+    vars.dedup();
+
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
+    )
+    .bind(&vars)
+    .bind(automation_id)
+    .fetch_one(db)
+    .await
+    .unwrap_or(0);
+
+    if count as usize != vars.len() {
+        Err("Selected output variable is invalid for this automation.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 async fn validate_step_form(
     db: &PgPool,
     automation_id: i64,
     step_type: &str,
-    form: &MouseClickStepForm,
+    form: &StepForm,
 ) -> Result<(), String> {
     match step_type {
         "branch" => {
@@ -1323,6 +1836,28 @@ async fn validate_step_form(
                 return Err("Key combination cannot be empty.".to_string());
             }
         }
+        "type_text" => {
+            let text = form.text_to_type.as_deref().unwrap_or("").trim();
+            if text.is_empty() {
+                return Err("Text to type cannot be empty.".to_string());
+            }
+            if let Some(delay) = form.delay_between_keys_ms
+                && delay < 0
+            {
+                return Err("Delay between key presses cannot be negative.".to_string());
+            }
+        }
+        "window_control" => {
+            let pattern = form.match_pattern.as_deref().unwrap_or("").trim();
+            if pattern.is_empty() {
+                return Err("Window title match pattern cannot be empty.".to_string());
+            }
+            if let Some(t) = form.timeout_seconds
+                && t < 0.0
+            {
+                return Err("Timeout cannot be negative.".to_string());
+            }
+        }
         "mouse_click" => {
             let is_region_mode = form.click_mode.as_deref() == Some("region")
                 || (form.click_mode.is_none() && form.region_variable_id.is_some());
@@ -1330,20 +1865,19 @@ async fn validate_step_form(
                 if form.region_variable_id.is_none() {
                     return Err("Please select a valid Region variable.".to_string());
                 }
-            } else if let Err(err) = validate_literal_or_reference(
-                form.x_mode.as_deref(),
-                form.x,
-                form.x_variable_id,
-                "X coordinate",
-            ) {
-                return Err(err.to_string());
-            } else if let Err(err) = validate_literal_or_reference(
-                form.y_mode.as_deref(),
-                form.y,
-                form.y_variable_id,
-                "Y coordinate",
-            ) {
-                return Err(err.to_string());
+            } else {
+                validate_literal_or_reference(
+                    form.x_mode.as_deref(),
+                    form.x,
+                    form.x_variable_id,
+                    "X coordinate",
+                )?;
+                validate_literal_or_reference(
+                    form.y_mode.as_deref(),
+                    form.y,
+                    form.y_variable_id,
+                    "Y coordinate",
+                )?;
             }
         }
         "find_pixel_rgb" => {
@@ -1351,20 +1885,7 @@ async fn validate_step_form(
                 return Err("Please provide valid X and Y coordinates.".to_string());
             }
             if let Some(var_id) = form.output_variable_id {
-                let exists = sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM automation_variables WHERE id = $1 AND automation_id = $2)",
-                )
-                .bind(var_id)
-                .bind(automation_id)
-                .fetch_one(db)
-                .await
-                .unwrap_or(false);
-
-                if !exists {
-                    return Err(
-                        "Selected output variable is invalid for this automation.".to_string()
-                    );
-                }
+                validate_automation_variables_exist(db, automation_id, &[var_id]).await?;
             }
         }
         "find_bitmap" => {
@@ -1372,7 +1893,7 @@ async fn validate_step_form(
                 return Err("Please select a reference bitmap.".to_string());
             }
 
-            let mut out_vars: Vec<i64> = [
+            let out_vars: Vec<i64> = [
                 form.output_found_variable_id,
                 form.output_x_variable_id,
                 form.output_y_variable_id,
@@ -1382,25 +1903,15 @@ async fn validate_step_form(
             .flatten()
             .collect();
 
-            if !out_vars.is_empty() {
-                out_vars.sort_unstable();
-                out_vars.dedup();
+            validate_automation_variables_exist(db, automation_id, &out_vars).await?;
+        }
+        "ocr_extract" => {
+            let out_vars: Vec<i64> = [form.region_variable_id, form.output_variable_id]
+                .into_iter()
+                .flatten()
+                .collect();
 
-                let count = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
-                )
-                .bind(&out_vars)
-                .bind(automation_id)
-                .fetch_one(db)
-                .await
-                .unwrap_or(0);
-
-                if count != out_vars.len() as i64 {
-                    return Err(
-                        "Selected output variable is invalid for this automation.".to_string()
-                    );
-                }
-            }
+            validate_automation_variables_exist(db, automation_id, &out_vars).await?;
         }
         _ => return Err("Invalid step type.".to_string()),
     }
@@ -1413,7 +1924,7 @@ async fn process_save_step(
     automation_id: i64,
     step_id: Option<i64>,
     step_type: &str,
-    form: MouseClickStepForm,
+    form: StepForm,
 ) -> axum::response::Response {
     let csrf_token = user.csrf_token.clone();
 
@@ -1533,43 +2044,93 @@ pub async fn get_edit_step_handler(
             })
             .into_response()
         }
+        "window_control" => {
+            let wc_row = sqlx::query_as::<_, WindowControlDetailRow>(
+                "SELECT action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
+            let action = wc_row
+                .as_ref()
+                .map(|r| r.action.clone())
+                .unwrap_or_else(|| "activate".to_string());
+            let match_pattern = wc_row
+                .as_ref()
+                .map(|r| r.match_pattern.clone())
+                .unwrap_or_default();
+            let match_type = wc_row
+                .as_ref()
+                .map(|r| r.match_type.clone())
+                .unwrap_or_else(|| "contains".to_string());
+            let timeout_seconds = wc_row
+                .as_ref()
+                .map(|r| r.timeout_ms as f64 / 1000.0)
+                .unwrap_or(5.0);
+
+            HtmlTemplate(StepWindowControlTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                action,
+                match_pattern,
+                match_type,
+                timeout_seconds,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "type_text" => {
+            let tt_row = sqlx::query_as::<_, TypeTextDetailRow>(
+                "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+
+            let text_to_type = tt_row
+                .as_ref()
+                .map(|r| r.text_to_type.clone())
+                .unwrap_or_default();
+            let delay_between_keys_ms = tt_row
+                .as_ref()
+                .map(|r| r.delay_between_keys_ms)
+                .unwrap_or(0);
+
+            HtmlTemplate(StepTypeTextTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                text_to_type,
+                delay_between_keys_ms,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
         "find_bitmap" => {
-            let (fb_row, bitmaps, variables) = tokio::join!(
+            let (fb_row, bundle) = tokio::join!(
                 sqlx::query_as::<_, FindBitmapDetailRow>(
                     "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1"
                 )
                 .bind(sid)
                 .fetch_optional(&state.db),
-                fetch_available_bitmaps(&state.db, id),
-                fetch_automation_variables(&state.db, id),
+                fetch_step_options_bundle(&state.db, id, Some(sid)),
             );
 
-            let (
-                db_ref_id,
-                db_sx,
-                db_sy,
-                db_sw,
-                db_sh,
-                match_threshold,
-                out_f,
-                out_x,
-                out_y,
-                out_r,
-            ) = match fb_row.ok().flatten() {
-                Some(r) => (
-                    r.reference_bitmap_id,
-                    r.search_x,
-                    r.search_y,
-                    r.search_width,
-                    r.search_height,
-                    r.match_threshold,
-                    r.output_found_variable_id,
-                    r.output_x_variable_id,
-                    r.output_y_variable_id,
-                    r.output_region_variable_id,
-                ),
-                None => (None, None, None, None, None, 0.95, None, None, None, None),
-            };
+            let fb = fb_row.ok().flatten();
 
             HtmlTemplate(StepFindBitmapTemplate {
                 user,
@@ -1578,87 +2139,46 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                reference_bitmap_id: query.reference_bitmap_id.or(db_ref_id),
-                search_x: query.search_x.or(db_sx),
-                search_y: query.search_y.or(db_sy),
-                search_width: query.search_width.or(db_sw),
-                search_height: query.search_height.or(db_sh),
-                match_threshold,
-                output_found_variable_id: out_f,
-                output_x_variable_id: out_x,
-                output_y_variable_id: out_y,
-                output_region_variable_id: out_r,
-                bitmaps,
-                variables,
+                reference_bitmap_id: query
+                    .reference_bitmap_id
+                    .or_else(|| fb.as_ref().and_then(|r| r.reference_bitmap_id)),
+                search_x: query
+                    .search_x
+                    .or_else(|| fb.as_ref().and_then(|r| r.search_x)),
+                search_y: query
+                    .search_y
+                    .or_else(|| fb.as_ref().and_then(|r| r.search_y)),
+                search_width: query
+                    .search_width
+                    .or_else(|| fb.as_ref().and_then(|r| r.search_width)),
+                search_height: query
+                    .search_height
+                    .or_else(|| fb.as_ref().and_then(|r| r.search_height)),
+                match_threshold: fb.as_ref().map(|r| r.match_threshold).unwrap_or(0.95),
+                output_found_variable_id: fb.as_ref().and_then(|r| r.output_found_variable_id),
+                output_x_variable_id: fb.as_ref().and_then(|r| r.output_x_variable_id),
+                output_y_variable_id: fb.as_ref().and_then(|r| r.output_y_variable_id),
+                output_region_variable_id: fb.as_ref().and_then(|r| r.output_region_variable_id),
+                bitmaps: bundle.bitmaps,
+                variables: bundle.variables,
                 error: None,
                 is_edit: true,
             })
             .into_response()
         }
         "branch" => {
-            let (branch_row, steps, bitmaps) = tokio::join!(
+            let (branch_row, bundle) = tokio::join!(
                 sqlx::query_as::<_, BranchDetailRow>(r#"
                     SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                            reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
-                           on_match_step_id, on_no_match_step_id
+                           on_match_step_id, on_no_match_step_id,
+                           window_match_pattern, window_match_type, window_check_type
                     FROM step_branches WHERE step_id = $1
                 "#).bind(sid).fetch_optional(&state.db),
-                fetch_automation_step_options(&state.db, id, Some(sid)),
-                fetch_available_bitmaps(&state.db, id),
+                fetch_step_options_bundle(&state.db, id, Some(sid)),
             );
 
-            let (
-                condition_type,
-                db_x,
-                db_y,
-                expected_r,
-                expected_g,
-                expected_b,
-                tolerance,
-                db_ref_id,
-                db_sx,
-                db_sy,
-                db_sw,
-                db_sh,
-                match_threshold,
-                on_match_step_id,
-                on_no_match_step_id,
-            ) = match branch_row.ok().flatten() {
-                Some(r) => (
-                    r.condition_type,
-                    r.x,
-                    r.y,
-                    r.expected_r,
-                    r.expected_g,
-                    r.expected_b,
-                    r.tolerance,
-                    r.reference_bitmap_id,
-                    r.search_x,
-                    r.search_y,
-                    r.search_width,
-                    r.search_height,
-                    r.match_threshold,
-                    r.on_match_step_id,
-                    r.on_no_match_step_id,
-                ),
-                None => (
-                    "pixel_rgb".to_string(),
-                    None,
-                    None,
-                    Some(0),
-                    Some(0),
-                    Some(0),
-                    Some(10),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(0.95),
-                    None,
-                    None,
-                ),
-            };
+            let br = branch_row.ok().flatten();
 
             HtmlTemplate(StepBranchTemplate {
                 user,
@@ -1667,23 +2187,48 @@ pub async fn get_edit_step_handler(
                 step_id: Some(sid),
                 label,
                 post_delay_seconds,
-                condition_type,
-                x: query.search_x.or(db_x),
-                y: query.search_y.or(db_y),
-                expected_r,
-                expected_g,
-                expected_b,
-                tolerance,
-                reference_bitmap_id: query.reference_bitmap_id.or(db_ref_id),
-                search_x: query.search_x.or(db_sx),
-                search_y: query.search_y.or(db_sy),
-                search_width: query.search_width.or(db_sw),
-                search_height: query.search_height.or(db_sh),
-                match_threshold,
-                on_match_step_id,
-                on_no_match_step_id,
-                steps,
-                bitmaps,
+                condition_type: br
+                    .as_ref()
+                    .map(|r| r.condition_type.clone())
+                    .unwrap_or_else(|| "pixel_rgb".to_string()),
+                x: query.search_x.or_else(|| br.as_ref().and_then(|r| r.x)),
+                y: query.search_y.or_else(|| br.as_ref().and_then(|r| r.y)),
+                expected_r: br.as_ref().and_then(|r| r.expected_r).or(Some(0)),
+                expected_g: br.as_ref().and_then(|r| r.expected_g).or(Some(0)),
+                expected_b: br.as_ref().and_then(|r| r.expected_b).or(Some(0)),
+                tolerance: br.as_ref().and_then(|r| r.tolerance).or(Some(10)),
+                reference_bitmap_id: query
+                    .reference_bitmap_id
+                    .or_else(|| br.as_ref().and_then(|r| r.reference_bitmap_id)),
+                search_x: query
+                    .search_x
+                    .or_else(|| br.as_ref().and_then(|r| r.search_x)),
+                search_y: query
+                    .search_y
+                    .or_else(|| br.as_ref().and_then(|r| r.search_y)),
+                search_width: query
+                    .search_width
+                    .or_else(|| br.as_ref().and_then(|r| r.search_width)),
+                search_height: query
+                    .search_height
+                    .or_else(|| br.as_ref().and_then(|r| r.search_height)),
+                match_threshold: br.as_ref().and_then(|r| r.match_threshold).or(Some(0.95)),
+                window_match_pattern: br
+                    .as_ref()
+                    .and_then(|r| r.window_match_pattern.clone())
+                    .unwrap_or_default(),
+                window_match_type: br
+                    .as_ref()
+                    .and_then(|r| r.window_match_type.clone())
+                    .unwrap_or_else(|| "contains".to_string()),
+                window_check_type: br
+                    .as_ref()
+                    .and_then(|r| r.window_check_type.clone())
+                    .unwrap_or_else(|| "exists".to_string()),
+                on_match_step_id: br.as_ref().and_then(|r| r.on_match_step_id),
+                on_no_match_step_id: br.as_ref().and_then(|r| r.on_no_match_step_id),
+                steps: bundle.steps,
+                bitmaps: bundle.bitmaps,
                 error: None,
                 is_edit: true,
             })
@@ -1711,6 +2256,46 @@ pub async fn get_edit_step_handler(
                 x: fp.as_ref().and_then(|r| r.x),
                 y: fp.as_ref().and_then(|r| r.y),
                 output_variable_id: fp.as_ref().and_then(|r| r.output_variable_id),
+                variables,
+                error: None,
+                is_edit: true,
+            })
+            .into_response()
+        }
+        "ocr_extract" => {
+            let (ocr_row, variables) = tokio::join!(
+                sqlx::query_as::<_, OcrExtractDetailRow>(
+                    "SELECT search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts WHERE step_id = $1"
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id),
+            );
+
+            let ocr = ocr_row.ok().flatten();
+
+            HtmlTemplate(StepOcrExtractTemplate {
+                user,
+                csrf_token,
+                automation_id: id,
+                step_id: Some(sid),
+                label,
+                post_delay_seconds,
+                search_x: query
+                    .search_x
+                    .or_else(|| ocr.as_ref().and_then(|r| r.search_x)),
+                search_y: query
+                    .search_y
+                    .or_else(|| ocr.as_ref().and_then(|r| r.search_y)),
+                search_width: query
+                    .search_width
+                    .or_else(|| ocr.as_ref().and_then(|r| r.search_width)),
+                search_height: query
+                    .search_height
+                    .or_else(|| ocr.as_ref().and_then(|r| r.search_height)),
+                region_variable_id: ocr.as_ref().and_then(|r| r.region_variable_id),
+                output_variable_id: ocr.as_ref().and_then(|r| r.output_variable_id),
+                set_as_task_output: ocr.as_ref().map(|r| r.set_as_task_output).unwrap_or(true),
                 variables,
                 error: None,
                 is_edit: true,
@@ -1788,7 +2373,7 @@ pub async fn post_create_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-    CsrfForm(form): CsrfForm<MouseClickStepForm>,
+    CsrfForm(form): CsrfForm<StepForm>,
 ) -> impl IntoResponse {
     if !user.role.can_edit() {
         return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -1804,7 +2389,7 @@ pub async fn post_edit_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, sid)): Path<(i64, i64)>,
-    CsrfForm(form): CsrfForm<MouseClickStepForm>,
+    CsrfForm(form): CsrfForm<StepForm>,
 ) -> impl IntoResponse {
     if !user.role.can_edit() {
         return Redirect::to(&format!("/automations/{}", id)).into_response();
@@ -2213,6 +2798,8 @@ mod tests {
             Some(60),
             Some(10),
             None,
+            None,
+            None,
             Some("Step 12 (Success)"),
             Some("Step 10 (Retry)"),
         );
@@ -2230,6 +2817,8 @@ mod tests {
             None,
             None,
             Some("submit_btn"),
+            None,
+            None,
             Some("Step 5 (Click)"),
             Some("Next Step"),
         );
@@ -2239,6 +2828,25 @@ mod tests {
         );
 
         let s3 = generate_branch_summary(
+            "window_state",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("Calculator"),
+            Some("active"),
+            Some("Step 3 (Focus)"),
+            Some("Next Step"),
+        );
+        assert_eq!(
+            s3,
+            "BRANCH: if window \"Calculator\" active → go to Step 3 (Focus), else → go to Next Step"
+        );
+
+        let s4 = generate_branch_summary(
             "pixel_rgb",
             None,
             None,
@@ -2249,17 +2857,19 @@ mod tests {
             None,
             None,
             None,
-        );
-        assert_eq!(
-            s3,
-            "BRANCH: if pixel at (0, 0) ≈ RGB(0,0,0) ±0 → go to Next Step, else → go to Next Step"
-        );
-
-        let s4 = generate_branch_summary(
-            "bitmap", None, None, None, None, None, None, None, None, None,
+            None,
+            None,
         );
         assert_eq!(
             s4,
+            "BRANCH: if pixel at (0, 0) ≈ RGB(0,0,0) ±0 → go to Next Step, else → go to Next Step"
+        );
+
+        let s5 = generate_branch_summary(
+            "bitmap", None, None, None, None, None, None, None, None, None, None, None,
+        );
+        assert_eq!(
+            s5,
             "BRANCH: if bitmap «bitmap» found → go to Next Step, else → go to Next Step"
         );
     }
@@ -2546,5 +3156,177 @@ mod tests {
             "single",
         );
         assert_eq!(summary3, "Click (500, «target_y») [middle, single]");
+    }
+
+    #[test]
+    fn test_step_helpers_sanitization_summaries_and_branch_validation() {
+        // 1. Label sanitization
+        assert_eq!(sanitize_label(None), None);
+        assert_eq!(sanitize_label(Some("")), None);
+        assert_eq!(sanitize_label(Some("   ")), None);
+        assert_eq!(
+            sanitize_label(Some("  Click Submit  ")),
+            Some("Click Submit")
+        );
+
+        // 2. Seconds to post delay ms conversion
+        assert_eq!(seconds_to_post_delay_ms(None), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(0.0)), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(-1.5)), 0);
+        assert_eq!(seconds_to_post_delay_ms(Some(0.25)), 250);
+        assert_eq!(seconds_to_post_delay_ms(Some(3.0)), 3000);
+
+        // 3. Type text summary formatting and truncation
+        assert_eq!(
+            generate_type_text_summary("Hello World", 0),
+            "Type \"Hello World\""
+        );
+        assert_eq!(
+            generate_type_text_summary(
+                "Type text with long content exceeding thirty chars limit",
+                0
+            ),
+            "Type \"Type text with long content ex...\""
+        );
+        assert_eq!(
+            generate_type_text_summary("Hello", 50),
+            "Type \"Hello\" (50ms key delay)"
+        );
+        assert_eq!(
+            generate_type_text_summary("  Padded text  ", 10),
+            "Type \"Padded text\" (10ms key delay)"
+        );
+
+        // 4. Mouse button & click type sanitization
+        assert_eq!(sanitize_mouse_button(Some("right")), "right");
+        assert_eq!(sanitize_mouse_button(Some("middle")), "middle");
+        assert_eq!(sanitize_mouse_button(Some("left")), "left");
+        assert_eq!(sanitize_mouse_button(Some("invalid")), "left");
+        assert_eq!(sanitize_mouse_button(None), "left");
+
+        assert_eq!(sanitize_click_type(Some("double")), "double");
+        assert_eq!(sanitize_click_type(Some("single")), "single");
+        assert_eq!(sanitize_click_type(Some("invalid")), "single");
+        assert_eq!(sanitize_click_type(None), "single");
+
+        // 5. Branch form validation
+        let mut form = MouseClickStepForm {
+            step_type: Some("branch".to_string()),
+            label: None,
+            post_delay_seconds: None,
+            x_mode: None,
+            x: Some(100),
+            x_variable_id: None,
+            y_mode: None,
+            y: Some(200),
+            y_variable_id: None,
+            click_mode: None,
+            region_variable_id: None,
+            button: None,
+            click_type: None,
+            key_combo: None,
+            text_to_type: None,
+            delay_between_keys_ms: None,
+            condition_type: Some("pixel_rgb".to_string()),
+            expected_r: Some(255),
+            expected_g: Some(255),
+            expected_b: Some(255),
+            tolerance: Some(5),
+            reference_bitmap_id: None,
+            search_x: None,
+            search_y: None,
+            search_width: None,
+            search_height: None,
+            match_threshold: None,
+            on_match_step_id: None,
+            on_no_match_step_id: Some(2),
+            set_as_task_output: None,
+            output_variable_id: None,
+            output_found_variable_id: None,
+            output_x_variable_id: None,
+            output_y_variable_id: None,
+            output_region_variable_id: None,
+            action: None,
+            match_pattern: None,
+            match_type: None,
+            timeout_seconds: None,
+            window_match_pattern: None,
+            window_match_type: None,
+            window_check_type: None,
+        };
+
+        // Missing on_match_step_id
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some(
+                "Both match and no-match target steps are required for branch conditions."
+                    .to_string()
+            )
+        );
+
+        // Target step ID <= 0
+        form.on_match_step_id = Some(0);
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some(
+                "Both match and no-match target steps are required for branch conditions."
+                    .to_string()
+            )
+        );
+
+        // Valid targets, missing X for pixel_rgb
+        form.on_match_step_id = Some(1);
+        form.x = None;
+        assert_eq!(
+            validate_branch_form(&form, "pixel_rgb"),
+            Some("Please provide valid X and Y coordinates for pixel RGB condition.".to_string())
+        );
+
+        // Valid pixel_rgb branch form
+        form.x = Some(100);
+        assert_eq!(validate_branch_form(&form, "pixel_rgb"), None);
+
+        // Missing reference_bitmap_id for bitmap condition
+        form.condition_type = Some("bitmap".to_string());
+        form.reference_bitmap_id = None;
+        assert_eq!(
+            validate_branch_form(&form, "bitmap"),
+            Some("Please select a reference bitmap for bitmap condition.".to_string())
+        );
+
+        // Valid bitmap branch form
+        form.reference_bitmap_id = Some(10);
+        assert_eq!(validate_branch_form(&form, "bitmap"), None);
+    }
+
+    #[test]
+    fn test_generate_ocr_extract_summary() {
+        let s1 = generate_ocr_extract_summary(
+            Some(100),
+            Some(200),
+            Some(300),
+            Some(150),
+            None,
+            Some("extracted_text"),
+            true,
+        );
+        assert_eq!(
+            s1,
+            "OCR Extract from region (100, 200, 300x150) → store in «extracted_text» [task output]"
+        );
+
+        let s2 = generate_ocr_extract_summary(
+            None,
+            None,
+            None,
+            None,
+            Some("header_region"),
+            None,
+            false,
+        );
+        assert_eq!(s2, "OCR Extract from region «header_region»");
+
+        let s3 = generate_ocr_extract_summary(None, None, None, None, None, None, false);
+        assert_eq!(s3, "OCR Extract from full screen");
     }
 }

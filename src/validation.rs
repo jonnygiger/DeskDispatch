@@ -76,6 +76,11 @@ struct BranchRow {
     reference_bitmap_id: Option<i64>,
     x: Option<i32>,
     y: Option<i32>,
+    window_match_pattern: Option<String>,
+    #[allow(dead_code)]
+    window_match_type: Option<String>,
+    #[allow(dead_code)]
+    window_check_type: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -125,6 +130,32 @@ struct BranchMeta {
     reference_bitmap_id: Option<i64>,
     x: Option<i32>,
     y: Option<i32>,
+    window_match_pattern: Option<String>,
+    #[allow(dead_code)]
+    window_match_type: Option<String>,
+    #[allow(dead_code)]
+    window_check_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct OcrExtractMeta {
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_variable_id: Option<i64>,
+    output_variable_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct OcrExtractRow {
+    step_id: i64,
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_variable_id: Option<i64>,
+    output_variable_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +164,7 @@ enum StepSubtype {
     FindPixel(FindPixelMeta),
     FindBitmap(FindBitmapMeta),
     Branch(BranchMeta),
+    OcrExtract(OcrExtractMeta),
     Other,
 }
 
@@ -310,7 +342,7 @@ pub async fn validate_automation_for_activation(
 
     let branch_fut = sqlx::query_as::<_, BranchRow>(
         r#"
-        SELECT sb.step_id, sb.condition_type, sb.on_match_step_id, sb.on_no_match_step_id, sb.reference_bitmap_id, sb.x, sb.y
+        SELECT sb.step_id, sb.condition_type, sb.on_match_step_id, sb.on_no_match_step_id, sb.reference_bitmap_id, sb.x, sb.y, sb.window_match_pattern, sb.window_match_type, sb.window_check_type
         FROM step_branches sb
         JOIN automation_steps s ON sb.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL
@@ -319,22 +351,42 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
+    let ocr_fut = sqlx::query_as::<_, OcrExtractRow>(
+        r#"
+        SELECT soe.step_id, soe.search_x, soe.search_y, soe.search_width, soe.search_height, soe.region_variable_id, soe.output_variable_id
+        FROM step_ocr_extracts soe
+        JOIN automation_steps s ON soe.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
     let bitmap_fut = sqlx::query_as::<_, BitmapRow>("SELECT id FROM bitmaps").fetch_all(db);
 
-    let (raw_steps, var_rows, param_rows, mc_rows, fp_rows, fb_rows, branch_rows, bitmap_rows) =
-        match tokio::try_join!(
-            steps_fut, vars_fut, params_fut, mc_fut, fp_fut, fb_fut, branch_fut, bitmap_fut
-        ) {
-            Ok(tuple) => tuple,
-            Err(e) => {
-                errors.push(AutomationLintError {
-                    step_id: None,
-                    step_number: None,
-                    message: format!("Database error fetching steps: {}", e),
-                });
-                return Err(errors);
-            }
-        };
+    let (
+        raw_steps,
+        var_rows,
+        param_rows,
+        mc_rows,
+        fp_rows,
+        fb_rows,
+        branch_rows,
+        ocr_rows,
+        bitmap_rows,
+    ) = match tokio::try_join!(
+        steps_fut, vars_fut, params_fut, mc_fut, fp_fut, fb_fut, branch_fut, ocr_fut, bitmap_fut
+    ) {
+        Ok(tuple) => tuple,
+        Err(e) => {
+            errors.push(AutomationLintError {
+                step_id: None,
+                step_number: None,
+                message: format!("Database error fetching steps: {}", e),
+            });
+            return Err(errors);
+        }
+    };
 
     if raw_steps.is_empty() {
         errors.push(AutomationLintError {
@@ -364,6 +416,19 @@ pub async fn validate_automation_for_activation(
                 x_var_id: r.x_variable_id,
                 y_var_id: r.y_variable_id,
                 region_var_id: r.region_variable_id,
+            });
+        }
+    }
+
+    for r in ocr_rows {
+        if let Some(&idx) = step_id_to_idx.get(&r.step_id) {
+            subtypes[idx] = StepSubtype::OcrExtract(OcrExtractMeta {
+                search_x: r.search_x,
+                search_y: r.search_y,
+                search_width: r.search_width,
+                search_height: r.search_height,
+                region_variable_id: r.region_variable_id,
+                output_variable_id: r.output_variable_id,
             });
         }
     }
@@ -401,6 +466,9 @@ pub async fn validate_automation_for_activation(
                 reference_bitmap_id: r.reference_bitmap_id,
                 x: r.x,
                 y: r.y,
+                window_match_pattern: r.window_match_pattern,
+                window_match_type: r.window_match_type,
+                window_check_type: r.window_check_type,
             });
         }
     }
@@ -464,6 +532,9 @@ pub async fn validate_automation_for_activation(
                     &existing_bitmaps,
                     &mut errors,
                 );
+            }
+            StepSubtype::OcrExtract(ocr) => {
+                validate_ocr_extract(step.id, step.step_number, ocr, &vars_map, &mut errors);
             }
             StepSubtype::Other => {}
         }
@@ -658,6 +729,54 @@ pub async fn validate_automation_for_activation(
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+fn validate_ocr_extract(
+    sid: i64,
+    step_num: usize,
+    ocr: &OcrExtractMeta,
+    vars_map: &HashMap<i64, VarMeta>,
+    errors: &mut Vec<AutomationLintError>,
+) {
+    for (label, val) in [
+        ("Search X", ocr.search_x),
+        ("Search Y", ocr.search_y),
+        ("Search Width", ocr.search_width),
+        ("Search Height", ocr.search_height),
+    ] {
+        check_coord_bounds(val, label, sid, step_num, errors);
+    }
+
+    if let Some(vid) = ocr.region_variable_id {
+        if let Some(meta) = vars_map.get(&vid) {
+            if meta.var_type != "region" {
+                errors.push(AutomationLintError {
+                    step_id: Some(sid),
+                    step_number: Some(step_num),
+                    message: format!(
+                        "Region variable must be of type 'region' (got '{}').",
+                        meta.var_type
+                    ),
+                });
+            }
+        } else {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: format!("Referenced region variable ID {vid} not found."),
+            });
+        }
+    }
+
+    if let Some(vid) = ocr.output_variable_id {
+        if !vars_map.contains_key(&vid) {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: format!("Output variable ID {vid} not found."),
+            });
+        }
     }
 }
 
@@ -910,6 +1029,19 @@ fn validate_branch(
             step_num,
             errors,
         );
+    } else if b.condition_type == "window_state" {
+        if b.window_match_pattern
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+        {
+            errors.push(AutomationLintError {
+                step_id: Some(sid),
+                step_number: Some(step_num),
+                message: "Window state branch condition is missing window match pattern.".to_string(),
+            });
+        }
     }
 }
 
@@ -1177,6 +1309,9 @@ mod tests {
             reference_bitmap_id: Some(10),
             x: None,
             y: None,
+            window_match_pattern: None,
+            window_match_type: None,
+            window_check_type: None,
         };
         validate_branch(1, 1, &branch_valid, &step_id_to_idx, &bitmaps, &mut errors);
         assert!(errors.is_empty());
@@ -1188,6 +1323,9 @@ mod tests {
             reference_bitmap_id: None,   // missing reference bitmap
             x: None,
             y: None,
+            window_match_pattern: None,
+            window_match_type: None,
+            window_check_type: None,
         };
         validate_branch(
             1,

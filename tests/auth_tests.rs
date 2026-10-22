@@ -20,7 +20,6 @@ use deskdispatch::routes::{
     get_index_handler, get_login_handler, get_password_handler, post_login_handler,
     post_logout_handler, post_password_handler,
 };
-use secrecy::ExposeSecret;
 use sqlx::Row;
 use std::net::IpAddr;
 use std::time::Duration;

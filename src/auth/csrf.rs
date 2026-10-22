@@ -179,6 +179,7 @@ pub use csrf_origin_middleware as csrf_middleware;
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::config::SecretString;
     use axum::{
         Router,
         body::Body,
@@ -186,7 +187,6 @@ mod tests {
         middleware,
         routing::{get, post},
     };
-    use secrecy::SecretString;
     use tower::ServiceExt;
 
     fn create_test_state() -> AppState {

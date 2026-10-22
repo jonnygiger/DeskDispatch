@@ -5,7 +5,9 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use rust_embed::RustEmbed;
+use sha2::{Digest, Sha256};
+use std::borrow::Cow;
+use std::sync::LazyLock;
 
 use crate::AppState;
 
@@ -13,9 +15,42 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/static/{*path}", get(static_asset_handler))
 }
 
-#[derive(RustEmbed)]
-#[folder = "static/"]
+pub struct AssetFile {
+    pub data: Cow<'static, [u8]>,
+    pub metadata: AssetMetadata,
+}
+
+pub struct AssetMetadata {
+    pub hash: [u8; 32],
+}
+
+impl AssetMetadata {
+    #[inline]
+    pub fn sha256_hash(&self) -> [u8; 32] {
+        self.hash
+    }
+}
+
 pub struct Assets;
+
+static STYLE_CSS_DATA: &[u8] = include_bytes!("../../static/style.css");
+static STYLE_CSS_HASH: LazyLock<[u8; 32]> = LazyLock::new(|| Sha256::digest(STYLE_CSS_DATA).into());
+
+impl Assets {
+    #[inline]
+    pub fn get(path: &str) -> Option<AssetFile> {
+        let clean_path = path.trim_start_matches('/');
+        match clean_path {
+            "style.css" => Some(AssetFile {
+                data: Cow::Borrowed(STYLE_CSS_DATA),
+                metadata: AssetMetadata {
+                    hash: *STYLE_CSS_HASH,
+                },
+            }),
+            _ => None,
+        }
+    }
+}
 
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 

@@ -116,6 +116,22 @@ struct KeyPressRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct TypeTextRow {
+    step_id: i64,
+    text_to_type: String,
+    delay_between_keys_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct WindowControlRow {
+    step_id: i64,
+    action: String,
+    match_pattern: String,
+    match_type: String,
+    timeout_ms: i64,
+}
+
+#[derive(sqlx::FromRow)]
 struct FindPixelRow {
     step_id: i64,
     x: i32,
@@ -158,6 +174,9 @@ struct BranchRow {
     on_match_step_id: Option<i64>,
     on_no_match_step_id: Option<i64>,
     reference_bitmap_key: Option<String>,
+    window_match_pattern: Option<String>,
+    window_match_type: Option<String>,
+    window_check_type: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -219,6 +238,17 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(db);
 
+    let wc_fut = sqlx::query_as::<_, WindowControlRow>(
+        r#"
+        SELECT swc.step_id, swc.action, swc.match_pattern, swc.match_type, swc.timeout_ms
+        FROM step_window_controls swc
+        JOIN automation_steps s ON swc.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
     let vars_fut = sqlx::query_as::<_, VariableRow>(
         "SELECT id, name, var_type, description FROM automation_variables WHERE automation_id = $1 ORDER BY id ASC",
     )
@@ -247,6 +277,17 @@ pub async fn fetch_full_automation_json_with_overrides(
         SELECT skp.step_id, skp.key_combo
         FROM step_key_presses skp
         JOIN automation_steps s ON skp.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let tt_fut = sqlx::query_as::<_, TypeTextRow>(
+        r#"
+        SELECT stt.step_id, stt.text_to_type, stt.delay_between_keys_ms
+        FROM step_type_texts stt
+        JOIN automation_steps s ON stt.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL
         "#,
     )
@@ -283,7 +324,8 @@ pub async fn fetch_full_automation_json_with_overrides(
         SELECT sb.step_id, sb.condition_type, sb.x, sb.y, sb.expected_r, sb.expected_g, sb.expected_b, sb.tolerance,
                sb.reference_bitmap_id, sb.search_x, sb.search_y, sb.search_width, sb.search_height, sb.match_threshold,
                sb.on_match_step_id, sb.on_no_match_step_id,
-               b.object_storage_key AS reference_bitmap_key
+               b.object_storage_key AS reference_bitmap_key,
+               sb.window_match_pattern, sb.window_match_type, sb.window_check_type
         FROM step_branches sb
         JOIN automation_steps s ON sb.step_id = s.id
         LEFT JOIN bitmaps b ON sb.reference_bitmap_id = b.id
@@ -299,11 +341,13 @@ pub async fn fetch_full_automation_json_with_overrides(
         step_rows,
         mouse_clicks_rows,
         key_presses_rows,
+        type_texts_rows,
+        window_controls_rows,
         find_pixel_rows,
         find_bitmap_rows,
         branch_rows,
     ) = tokio::try_join!(
-        params_fut, vars_fut, steps_fut, mc_fut, kp_fut, fp_fut, fb_fut, branch_fut
+        params_fut, vars_fut, steps_fut, mc_fut, kp_fut, tt_fut, wc_fut, fp_fut, fb_fut, branch_fut
     )?;
 
     let mut parameters_map = HashMap::with_capacity(param_rows.len());
@@ -342,6 +386,8 @@ pub async fn fetch_full_automation_json_with_overrides(
     enum StepDetail {
         MouseClick(MouseClickRow),
         KeyPress(String),
+        TypeText(TypeTextRow),
+        WindowControl(WindowControlRow),
         FindPixel(FindPixelRow),
         FindBitmap(FindBitmapRow),
         Branch(BranchRow),
@@ -353,6 +399,12 @@ pub async fn fetch_full_automation_json_with_overrides(
     }
     for r in key_presses_rows {
         details_map.insert(r.step_id, StepDetail::KeyPress(r.key_combo));
+    }
+    for r in type_texts_rows {
+        details_map.insert(r.step_id, StepDetail::TypeText(r));
+    }
+    for r in window_controls_rows {
+        details_map.insert(r.step_id, StepDetail::WindowControl(r));
     }
     for r in find_pixel_rows {
         details_map.insert(r.step_id, StepDetail::FindPixel(r));
@@ -392,6 +444,26 @@ pub async fn fetch_full_automation_json_with_overrides(
                         label,
                         post_delay_ms,
                         key_combo,
+                    });
+                }
+                StepDetail::TypeText(r) => {
+                    steps_list.push(StepPayload::TypeText {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        text_to_type: r.text_to_type,
+                        delay_between_keys_ms: r.delay_between_keys_ms,
+                    });
+                }
+                StepDetail::WindowControl(r) => {
+                    steps_list.push(StepPayload::WindowControl {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        action: r.action,
+                        match_pattern: r.match_pattern,
+                        match_type: r.match_type,
+                        timeout_ms: r.timeout_ms as u64,
                     });
                 }
                 StepDetail::FindPixel(r) => {
@@ -439,6 +511,14 @@ pub async fn fetch_full_automation_json_with_overrides(
                             expected_b: exp_b,
                             expected_rgb: [exp_r, exp_g, exp_b],
                             tolerance: r.tolerance.unwrap_or(0),
+                            timeout_ms: 5000,
+                            retry_interval_ms: 250,
+                        }
+                    } else if r.condition_type == "window_state" {
+                        BranchConditionPayload::WindowState {
+                            match_pattern: r.window_match_pattern.unwrap_or_default(),
+                            match_type: r.window_match_type.unwrap_or_else(|| "contains".to_string()),
+                            check_type: r.window_check_type.unwrap_or_else(|| "exists".to_string()),
                             timeout_ms: 5000,
                             retry_interval_ms: 250,
                         }
@@ -721,27 +801,6 @@ pub async fn post_step_result_handler(
             );
         }
 
-        if let Some(ref key) = payload.screenshot_object_key
-            && let Err(e) = sqlx::query(
-                r#"
-            INSERT INTO step_screenshots (step_id, object_storage_key, width, height)
-            VALUES ($1, $2, 1920, 1080)
-            ON CONFLICT (step_id) DO UPDATE SET object_storage_key = EXCLUDED.object_storage_key
-            "#,
-            )
-            .bind(payload.step_id)
-            .bind(key)
-            .execute(&mut *tx)
-            .await
-        {
-            tracing::error!(
-                task_run_id = task_run_id,
-                step_id = payload.step_id,
-                "Failed to upsert step_screenshots on step result: {}",
-                e
-            );
-        }
-
         tx.commit().await?;
         tracing::warn!(
             worker_id = worker.id,
@@ -803,34 +862,22 @@ pub async fn post_step_result_handler(
         }
     }
 
-    let captured_r = payload.captured_r.or_else(|| {
-        payload
-            .captured_rgb
-            .as_ref()
-            .and_then(|v| v.first().copied())
-    });
-    let captured_g = payload.captured_g.or_else(|| {
-        payload
-            .captured_rgb
-            .as_ref()
-            .and_then(|v| v.get(1).copied())
-    });
-    let captured_b = payload.captured_b.or_else(|| {
-        payload
-            .captured_rgb
-            .as_ref()
-            .and_then(|v| v.get(2).copied())
-    });
+    let (rgb_r, rgb_g, rgb_b) = match payload.captured_rgb.as_deref() {
+        Some([r, g, b, ..]) => (Some(*r), Some(*g), Some(*b)),
+        _ => (None, None, None),
+    };
 
-    let captured_x = payload.captured_x.or_else(|| {
-        payload
-            .captured_xy
-            .as_ref()
-            .and_then(|v| v.first().copied())
-    });
-    let captured_y = payload
-        .captured_y
-        .or_else(|| payload.captured_xy.as_ref().and_then(|v| v.get(1).copied()));
+    let captured_r = payload.captured_r.or(rgb_r);
+    let captured_g = payload.captured_g.or(rgb_g);
+    let captured_b = payload.captured_b.or(rgb_b);
+
+    let (xy_x, xy_y) = match payload.captured_xy.as_deref() {
+        Some([x, y, ..]) => (Some(*x), Some(*y)),
+        _ => (None, None),
+    };
+
+    let captured_x = payload.captured_x.or(xy_x);
+    let captured_y = payload.captured_y.or(xy_y);
 
     let completed_at = payload
         .completed_at
@@ -958,13 +1005,17 @@ pub async fn post_complete_task_run_handler(
         UPDATE task_runs
         SET status = CASE WHEN status = 'cancelling' THEN 'cancelled' ELSE $1 END,
             completed_at = now(),
-            error_message = COALESCE($2, error_message)
-        WHERE id = $3 AND worker_id = $4 AND status IN ('running', 'cancelling')
+            error_message = COALESCE($2, error_message),
+            output_type = COALESCE($3, output_type),
+            output_value = COALESCE($4, output_value)
+        WHERE id = $5 AND worker_id = $6 AND status IN ('running', 'cancelling')
         RETURNING id
         "#,
     )
     .bind(final_status)
     .bind(payload.error_message.as_deref())
+    .bind(payload.output_type.as_deref())
+    .bind(payload.output_value.as_deref())
     .bind(task_run_id)
     .bind(worker.id)
     .fetch_optional(&state.db)
@@ -1092,7 +1143,6 @@ pub async fn get_task_run_screenshot_upload_url_handler(
 
     let upload_url = storage
         .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
-        .await
         .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
 
     Ok(Json(ScreenshotUploadUrlResponse {
@@ -1129,9 +1179,27 @@ pub async fn post_recording_events_handler(
 
     let count = payload.events.len();
 
-    for event in &payload.events {
-        let captured_at = event.captured_at.unwrap_or_else(chrono::Utc::now);
-        let event_type = event.event_type.trim();
+    if count > 0 {
+        let now = chrono::Utc::now();
+        let mut seqs = Vec::with_capacity(count);
+        let mut event_types = Vec::with_capacity(count);
+        let mut xs = Vec::with_capacity(count);
+        let mut ys = Vec::with_capacity(count);
+        let mut buttons = Vec::with_capacity(count);
+        let mut key_combos = Vec::with_capacity(count);
+        let mut screenshot_keys = Vec::with_capacity(count);
+        let mut captured_ats = Vec::with_capacity(count);
+
+        for event in &payload.events {
+            seqs.push(event.sequence_number);
+            event_types.push(event.event_type.trim());
+            xs.push(event.x);
+            ys.push(event.y);
+            buttons.push(event.button.as_deref());
+            key_combos.push(event.key_combo.as_deref());
+            screenshot_keys.push(event.screenshot_object_key.as_deref());
+            captured_ats.push(event.captured_at.unwrap_or(now));
+        }
 
         sqlx::query(
             r#"
@@ -1139,7 +1207,11 @@ pub async fn post_recording_events_handler(
                 recording_session_id, sequence_number, event_type,
                 x, y, button, key_combo, screenshot_object_key, captured_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            SELECT $1, u.seq, u.event_type, u.x, u.y, u.button, u.key_combo, u.screenshot_key, u.captured_at
+            FROM UNNEST(
+                $2::int4[], $3::text[], $4::int4[], $5::int4[],
+                $6::text[], $7::text[], $8::text[], $9::timestamptz[]
+            ) AS u(seq, event_type, x, y, button, key_combo, screenshot_key, captured_at)
             ON CONFLICT (recording_session_id, sequence_number) DO UPDATE
             SET event_type = EXCLUDED.event_type,
                 x = EXCLUDED.x,
@@ -1151,14 +1223,14 @@ pub async fn post_recording_events_handler(
             "#,
         )
         .bind(session_id)
-        .bind(event.sequence_number)
-        .bind(event_type)
-        .bind(event.x)
-        .bind(event.y)
-        .bind(event.button.as_deref())
-        .bind(event.key_combo.as_deref())
-        .bind(event.screenshot_object_key.as_deref())
-        .bind(captured_at)
+        .bind(&seqs)
+        .bind(&event_types)
+        .bind(&xs)
+        .bind(&ys)
+        .bind(&buttons)
+        .bind(&key_combos)
+        .bind(&screenshot_keys)
+        .bind(&captured_ats)
         .execute(&mut *tx)
         .await?;
     }
@@ -1199,7 +1271,6 @@ pub async fn get_recording_screenshot_upload_url_handler(
 
     let upload_url = storage
         .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
-        .await
         .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
 
     Ok(Json(ScreenshotUploadUrlResponse {
@@ -1246,31 +1317,6 @@ pub async fn post_worker_stop_recording_handler(
     }
 }
 
-#[tracing::instrument(skip(worker, state, payload))]
-pub async fn post_task_run_screenshot_commit_with_key_handler(
-    worker: AuthWorker,
-    State(state): State<AppState>,
-    Path((task_run_id, object_key)): Path<(i64, String)>,
-    payload: Option<Json<CommitScreenshotRequest>>,
-) -> Result<impl IntoResponse, AppError> {
-    let mut req = payload.map(|Json(p)| p).unwrap_or(CommitScreenshotRequest {
-        step_id: None,
-        object_key: None,
-        width: None,
-        height: None,
-    });
-    if req.object_key.is_none() {
-        req.object_key = Some(object_key);
-    }
-    post_task_run_screenshot_commit_handler(
-        worker,
-        State(state),
-        Path(task_run_id),
-        Some(Json(req)),
-    )
-    .await
-}
-
 #[tracing::instrument(skip(_worker, state))]
 pub async fn get_bitmap_upload_url_handler(
     _worker: AuthWorker,
@@ -1281,7 +1327,6 @@ pub async fn get_bitmap_upload_url_handler(
 
     let upload_url = storage
         .generate_presigned_put_url(&object_key, std::time::Duration::from_secs(900))
-        .await
         .map_err(|e| AppError::Internal(format!("Failed to generate upload URL: {}", e)))?;
 
     Ok(Json(ScreenshotUploadUrlResponse {
@@ -1602,7 +1647,6 @@ pub async fn post_register_worker_handler(
     State(state): State<AppState>,
     Json(payload): Json<RegisterWorkerRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    use secrecy::ExposeSecret;
     use std::sync::atomic::Ordering;
 
     let psk = payload
@@ -1619,7 +1663,7 @@ pub async fn post_register_worker_handler(
         }
 
         let expected_psk = state.config.unattended_registration_psk.expose_secret();
-        if provided_psk != expected_psk.as_str() {
+        if provided_psk != expected_psk {
             return Err(AppError::Unauthorized("Invalid pre-shared key".to_string()));
         }
 

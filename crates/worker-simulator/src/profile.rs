@@ -1,7 +1,7 @@
-use rand::Rng;
+use crate::prng::FastPrng;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WorkerProfile {
     /// Standard well-behaved worker executing tasks successfully and sending timely heartbeats.
     Normal,
@@ -17,8 +17,7 @@ pub enum WorkerProfile {
 
 impl WorkerProfile {
     pub fn select_random() -> Self {
-        let mut rng = rand::thread_rng();
-        let roll: u32 = rng.gen_range(0..100);
+        let roll: u32 = FastPrng::gen_range_u32(0, 100);
         match roll {
             0..60 => WorkerProfile::Normal,
             60..75 => WorkerProfile::Flaky,
@@ -53,8 +52,8 @@ impl WorkerProfile {
             "Windows 10 Enterprise x86_64",
             "Debian 12 Bookworm x86_64",
         ];
-        let mut rng = rand::thread_rng();
-        os_list[rng.gen_range(0..os_list.len())].to_string()
+        let idx = FastPrng::gen_range_usize(0, os_list.len());
+        os_list[idx].to_string()
     }
 }
 

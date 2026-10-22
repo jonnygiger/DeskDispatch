@@ -1,6 +1,5 @@
 use chrono::Utc;
 use deskdispatch_protocol::*;
-use rand::Rng;
 use reqwest::{Client, StatusCode};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,22 +7,47 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::image_gen::generate_random_screenshot;
+use crate::prng::FastPrng;
 use crate::profile::WorkerProfile;
 
+#[inline]
 fn random_bool(p: f64) -> bool {
-    rand::thread_rng().gen_bool(p)
+    FastPrng::gen_bool(p)
 }
 
-fn random_range<T, R>(range: R) -> T
-where
-    T: rand::distributions::uniform::SampleUniform,
-    R: rand::distributions::uniform::SampleRange<T>,
-{
-    rand::thread_rng().gen_range(range)
+#[inline]
+fn random_range_i32(min: i32, max: i32) -> i32 {
+    FastPrng::gen_range_i32(min, max)
 }
 
+#[inline]
+fn random_range_u64(min: u64, max: u64) -> u64 {
+    FastPrng::gen_range_u64(min, max)
+}
+
+#[inline]
+fn random_range_usize(min: usize, max: usize) -> usize {
+    FastPrng::gen_range_usize(min, max)
+}
+
+#[inline]
 fn random_flag() -> bool {
-    rand::thread_rng().r#gen()
+    FastPrng::gen_bool(0.5)
+}
+
+/// Zero-allocation helper to extract `host:port` from a URL string.
+#[inline]
+fn extract_host_port(url: &str) -> Option<&str> {
+    let after_scheme = url.split_once("://")?.1;
+    let host_and_rest = after_scheme.split_once('/')?.0;
+    let host_and_port = host_and_rest
+        .split_once('@')
+        .map_or(host_and_rest, |pair| pair.1);
+    if host_and_port.is_empty() {
+        None
+    } else {
+        Some(host_and_port)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +66,7 @@ pub struct SimulatedWorker {
     pub config: WorkerConfig,
     pub client: Client,
     pub api_key: Option<String>,
+    pub auth_header: Option<String>,
     pub cancel_flag: Arc<AtomicBool>,
     pub current_task_run_id: Arc<tokio::sync::Mutex<Option<i64>>>,
 }
@@ -54,11 +79,13 @@ impl SimulatedWorker {
             .unwrap_or_else(|_| Client::new());
 
         let api_key = config.api_key.clone();
+        let auth_header = api_key.as_ref().map(|key| format!("Bearer {}", key));
 
         Self {
             config,
             client,
             api_key,
+            auth_header,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             current_task_run_id: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -83,6 +110,7 @@ impl SimulatedWorker {
                             worker_idx = self.config.worker_index,
                             "Unattended worker registered successfully via PSK"
                         );
+                        self.auth_header = Some(format!("Bearer {}", key));
                         self.api_key = Some(key);
                         registered = true;
                     }
@@ -104,6 +132,7 @@ impl SimulatedWorker {
                                 worker_idx = self.config.worker_index,
                                 "Registered successfully with API key"
                             );
+                            self.auth_header = Some(format!("Bearer {}", key));
                             self.api_key = Some(key);
                         }
                         Err(e) => {
@@ -124,15 +153,15 @@ impl SimulatedWorker {
             }
         }
 
-        let api_key = match self.api_key.clone() {
-            Some(k) => k,
+        let auth_header = match self.auth_header.clone() {
+            Some(h) => h,
             None => return,
         };
 
         // Step 2: Spawn background heartbeat loop
         let hb_worker_idx = self.config.worker_index;
         let hb_client = self.client.clone();
-        let hb_api_key = api_key.clone();
+        let hb_auth_header = auth_header.clone();
         let hb_server_url = self.config.server_url.clone();
         let hb_profile = self.config.profile;
         let hb_cancel_flag = self.cancel_flag.clone();
@@ -175,7 +204,7 @@ impl SimulatedWorker {
                 let url = format!("{}/api/v1/workers/heartbeat", hb_server_url);
                 let res = hb_client
                     .post(&url)
-                    .header("Authorization", format!("Bearer {}", hb_api_key))
+                    .header("Authorization", &hb_auth_header)
                     .json(&hb_req)
                     .send()
                     .await;
@@ -232,7 +261,7 @@ impl SimulatedWorker {
             }
 
             if self.config.profile == WorkerProfile::LaggyNetwork {
-                let extra_delay = random_range(2..8);
+                let extra_delay = random_range_u64(2, 8);
                 tokio::time::sleep(Duration::from_secs(extra_delay)).await;
             }
 
@@ -240,7 +269,7 @@ impl SimulatedWorker {
             let poll_res = self
                 .client
                 .get(&next_url)
-                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Authorization", &auth_header)
                 .send()
                 .await;
 
@@ -263,7 +292,7 @@ impl SimulatedWorker {
                             self.cancel_flag.store(false, Ordering::Relaxed);
 
                             let exec_res = self
-                                .execute_automation(task_run_id, &automation, &api_key)
+                                .execute_automation(task_run_id, &automation, &auth_header)
                                 .await;
                             *self.current_task_run_id.lock().await = None;
 
@@ -284,8 +313,9 @@ impl SimulatedWorker {
                                 recording_session_id = recording_session_id,
                                 "Received start recording assignment"
                             );
-                            let rec_res =
-                                self.execute_recording(recording_session_id, &api_key).await;
+                            let rec_res = self
+                                .execute_recording(recording_session_id, &auth_header)
+                                .await;
                             if let Err(e) = rec_res {
                                 error!(
                                     worker_idx = self.config.worker_index,
@@ -362,7 +392,7 @@ impl SimulatedWorker {
     pub async fn fetch_task_run(
         &self,
         task_run_id: i64,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<TaskRunResponse, String> {
         let url = format!(
             "{}/api/v1/workers/task-runs/{}",
@@ -371,7 +401,7 @@ impl SimulatedWorker {
         let resp = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .send()
             .await
             .map_err(|e| format!("Failed to fetch task run: {}", e))?;
@@ -389,7 +419,7 @@ impl SimulatedWorker {
         &self,
         task_run_id: i64,
         automation: &serde_json::Value,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<(), String> {
         let empty_steps = Vec::new();
         let steps = automation
@@ -398,6 +428,8 @@ impl SimulatedWorker {
             .unwrap_or(&empty_steps);
 
         let mut overall_success = true;
+        let mut task_output_type: Option<String> = None;
+        let mut task_output_value: Option<String> = None;
 
         for (seq, step) in (1..).zip(steps.iter()) {
             if self.cancel_flag.load(Ordering::Relaxed) {
@@ -445,18 +477,35 @@ impl SimulatedWorker {
             );
 
             let started_at = Utc::now();
-            tokio::time::sleep(Duration::from_millis(post_delay_ms.min(1000))).await;
+            let typing_delay = if step_type == "type_text" {
+                let key_delay = step
+                    .get("delay_between_keys_ms")
+                    .and_then(|d| d.as_u64())
+                    .unwrap_or(0);
+                let char_count = step
+                    .get("text_to_type")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.chars().count())
+                    .unwrap_or(0);
+                (key_delay * char_count as u64).min(500)
+            } else {
+                0
+            };
+            tokio::time::sleep(Duration::from_millis(
+                post_delay_ms.min(1000) + typing_delay,
+            ))
+            .await;
 
             // Determine step result based on profile
             let (result_str, captured_r, captured_g, captured_b, captured_x, captured_y, found) =
                 match self.config.profile {
                     WorkerProfile::Flaky if random_bool(0.3) => (
                         "failed",
-                        Some(random_range(0..=255)),
-                        Some(random_range(0..=255)),
-                        Some(random_range(0..=255)),
-                        Some(random_range(0..1920)),
-                        Some(random_range(0..1080)),
+                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                        Some(random_range_i32(0, 1920)),
+                        Some(random_range_i32(0, 1080)),
                         Some(false),
                     ),
                     _ => match step_type {
@@ -477,13 +526,22 @@ impl SimulatedWorker {
                                 Some(matched),
                             )
                         }
+                        "window_control" => (
+                            "success",
+                            Some(100),
+                            Some(150),
+                            Some(200),
+                            Some(0),
+                            Some(0),
+                            Some(true),
+                        ),
                         _ => (
                             "success",
-                            Some(random_range(0..=255)),
-                            Some(random_range(0..=255)),
-                            Some(random_range(0..=255)),
-                            Some(random_range(0..1920)),
-                            Some(random_range(0..1080)),
+                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                            Some(random_range_i32(0, 1920)),
+                            Some(random_range_i32(0, 1080)),
                             Some(true),
                         ),
                     },
@@ -496,7 +554,7 @@ impl SimulatedWorker {
             // Generate & upload screenshot for every step execution
             let mut screenshot_object_key = None;
             match self
-                .upload_task_run_screenshot(task_run_id, step_id, api_key)
+                .upload_task_run_screenshot(task_run_id, step_id, auth_header)
                 .await
             {
                 Ok(key) => {
@@ -515,7 +573,7 @@ impl SimulatedWorker {
                 let auto_id = automation.get("id").and_then(|i| i.as_i64());
                 let bitmap_name = format!("sim_ref_{}_step_{}", self.config.worker_index, step_id);
                 let _ = self
-                    .upload_reference_bitmap(auto_id, &bitmap_name, api_key)
+                    .upload_reference_bitmap(auto_id, &bitmap_name, auth_header)
                     .await;
             }
 
@@ -529,6 +587,7 @@ impl SimulatedWorker {
                         captured_g.unwrap_or(150),
                         captured_b.unwrap_or(100)
                     ]),
+                    "ocr_extract" => serde_json::json!("SIMULATED_OCR_TEXT"),
                     _ => serde_json::json!({
                         "x": captured_x.unwrap_or(800),
                         "y": captured_y.unwrap_or(600),
@@ -539,6 +598,16 @@ impl SimulatedWorker {
                     variable_id: var_id,
                     value: var_val,
                 });
+            }
+
+            if step_type == "ocr_extract"
+                && step
+                    .get("set_as_task_output")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(true)
+            {
+                task_output_type = Some("ocr_text".to_string());
+                task_output_value = Some("SIMULATED_OCR_TEXT".to_string());
             }
 
             if let Some(var_id) = step
@@ -615,7 +684,7 @@ impl SimulatedWorker {
             let res = self
                 .client
                 .post(&result_url)
-                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Authorization", auth_header)
                 .json(&step_req)
                 .send()
                 .await;
@@ -670,12 +739,14 @@ impl SimulatedWorker {
             } else {
                 Some("Simulated execution step failure".to_string())
             },
+            output_type: task_output_type,
+            output_value: task_output_value,
         };
 
         let complete_res = self
             .client
             .post(&complete_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .json(&complete_req)
             .send()
             .await;
@@ -721,25 +792,30 @@ impl SimulatedWorker {
     async fn put_image_with_failsafes(
         &self,
         upload_url: &str,
-        image_bytes: Vec<u8>,
+        image_bytes: &[u8],
     ) -> Result<(), String> {
-        let target_url = if self.config.server_url.contains("http://app:")
+        let (target_url, host_header) = if self.config.server_url.contains("http://app:")
             || self.config.server_url.contains("http://deskdispatch-app:")
         {
-            upload_url
+            let host_hdr = extract_host_port(upload_url);
+            let rewritten = upload_url
                 .replace("http://localhost:9000", "http://rustfs:9000")
-                .replace("http://127.0.0.1:9000", "http://rustfs:9000")
+                .replace("http://127.0.0.1:9000", "http://rustfs:9000");
+            (rewritten, host_hdr)
         } else {
-            upload_url.to_string()
+            (upload_url.to_string(), None)
         };
 
-        let res = self
+        let mut req = self
             .client
             .put(&target_url)
-            .header("Content-Type", "image/png")
-            .body(image_bytes.clone())
-            .send()
-            .await;
+            .header("Content-Type", "image/png");
+
+        if let Some(h) = host_header {
+            req = req.header("Host", h);
+        }
+
+        let res = req.body(image_bytes.to_vec()).send().await;
 
         match res {
             Ok(resp) if resp.status().is_success() => Ok(()),
@@ -747,10 +823,12 @@ impl SimulatedWorker {
                 if resp.status() == StatusCode::FORBIDDEN
                     || resp.status() == StatusCode::BAD_REQUEST =>
             {
-                let retry_res = self
-                    .client
-                    .put(&target_url)
-                    .body(image_bytes)
+                let mut retry_req = self.client.put(&target_url);
+                if let Some(h) = host_header {
+                    retry_req = retry_req.header("Host", h);
+                }
+                let retry_res = retry_req
+                    .body(image_bytes.to_vec())
                     .send()
                     .await
                     .map_err(|e| format!("Failed PUT retry without Content-Type: {}", e))?;
@@ -772,28 +850,26 @@ impl SimulatedWorker {
         }
     }
 
-    pub async fn upload_reference_bitmap(
+    /// Streamlined helper that fetches a presigned upload URL, generates a PNG screenshot,
+    /// and PUTs the PNG data to the storage endpoint.
+    async fn get_and_put_upload_url(
         &self,
-        automation_id: Option<i64>,
-        bitmap_name: &str,
-        api_key: &str,
-    ) -> Result<(i64, String), String> {
-        let url = format!(
-            "{}/api/v1/workers/bitmaps/upload-url",
-            self.config.server_url
-        );
-
+        url: &str,
+        auth_header: &str,
+        err_context: &str,
+    ) -> Result<ScreenshotUploadUrlResponse, String> {
         let resp = self
             .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .get(url)
+            .header("Authorization", auth_header)
             .send()
             .await
-            .map_err(|e| format!("Failed to get bitmap upload URL: {}", e))?;
+            .map_err(|e| format!("Failed to get {} upload URL: {}", err_context, e))?;
 
         if !resp.status().is_success() {
             return Err(format!(
-                "Bitmap upload URL returned status {}",
+                "{} upload URL returned status {}",
+                err_context,
                 resp.status()
             ));
         }
@@ -804,8 +880,25 @@ impl SimulatedWorker {
             .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
 
         let png_bytes = generate_random_screenshot();
+        self.put_image_with_failsafes(&upload_info.upload_url, &png_bytes)
+            .await?;
 
-        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+        Ok(upload_info)
+    }
+
+    pub async fn upload_reference_bitmap(
+        &self,
+        automation_id: Option<i64>,
+        bitmap_name: &str,
+        auth_header: &str,
+    ) -> Result<(i64, String), String> {
+        let url = format!(
+            "{}/api/v1/workers/bitmaps/upload-url",
+            self.config.server_url
+        );
+
+        let upload_info = self
+            .get_and_put_upload_url(&url, auth_header, "bitmap")
             .await?;
 
         let commit_url = format!("{}/api/v1/workers/bitmaps/commit", self.config.server_url);
@@ -821,7 +914,7 @@ impl SimulatedWorker {
         let commit_resp = self
             .client
             .post(&commit_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .json(&commit_req)
             .send()
             .await
@@ -846,36 +939,15 @@ impl SimulatedWorker {
         &self,
         task_run_id: i64,
         step_id: i64,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<String, String> {
         let url = format!(
             "{}/api/v1/workers/task-runs/{}/screenshot-upload-url",
             self.config.server_url, task_run_id
         );
 
-        let resp = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .send()
-            .await
-            .map_err(|e| format!("Failed to get screenshot upload URL: {}", e))?;
-
-        if !resp.status().is_success() {
-            return Err(format!(
-                "Screenshot upload URL returned status {}",
-                resp.status()
-            ));
-        }
-
-        let upload_info = resp
-            .json::<ScreenshotUploadUrlResponse>()
-            .await
-            .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
-
-        let png_bytes = generate_random_screenshot();
-
-        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+        let upload_info = self
+            .get_and_put_upload_url(&url, auth_header, "screenshot")
             .await?;
 
         let commit_url = format!(
@@ -893,7 +965,7 @@ impl SimulatedWorker {
         let commit_res = self
             .client
             .post(&commit_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .json(&commit_req)
             .send()
             .await;
@@ -925,36 +997,15 @@ impl SimulatedWorker {
         &self,
         recording_session_id: i64,
         _sequence_number: i32,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<String, String> {
         let url = format!(
             "{}/api/v1/workers/recordings/{}/screenshot-upload-url",
             self.config.server_url, recording_session_id
         );
 
-        let resp = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .send()
-            .await
-            .map_err(|e| format!("Failed to get recording screenshot upload URL: {}", e))?;
-
-        if !resp.status().is_success() {
-            return Err(format!(
-                "Recording screenshot upload URL returned status {}",
-                resp.status()
-            ));
-        }
-
-        let upload_info = resp
-            .json::<ScreenshotUploadUrlResponse>()
-            .await
-            .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
-
-        let png_bytes = generate_random_screenshot();
-
-        self.put_image_with_failsafes(&upload_info.upload_url, png_bytes)
+        let upload_info = self
+            .get_and_put_upload_url(&url, auth_header, "recording screenshot")
             .await?;
 
         Ok(upload_info.object_key)
@@ -963,7 +1014,7 @@ impl SimulatedWorker {
     async fn execute_recording(
         &self,
         recording_session_id: i64,
-        api_key: &str,
+        auth_header: &str,
     ) -> Result<(), String> {
         let event_types = ["mouse_click", "key_press", "find_pixel_rgb", "find_bitmap"];
         let key_combos = ["ctrl+c", "ctrl+v", "enter", "tab", "backspace", "escape"];
@@ -977,7 +1028,7 @@ impl SimulatedWorker {
 
             let mut screenshot_object_key = None;
             match self
-                .upload_recording_screenshot(recording_session_id, sequence_number, api_key)
+                .upload_recording_screenshot(recording_session_id, sequence_number, auth_header)
                 .await
             {
                 Ok(key) => {
@@ -993,18 +1044,18 @@ impl SimulatedWorker {
                 }
             }
 
-            let ev_type = event_types[random_range(0..event_types.len())];
+            let ev_type = event_types[random_range_usize(0, event_types.len())];
             let (x_opt, y_opt, btn_opt, key_opt) = match ev_type {
                 "key_press" => (
                     None,
                     None,
                     None,
-                    Some(key_combos[random_range(0..key_combos.len())].to_string()),
+                    Some(key_combos[random_range_usize(0, key_combos.len())].to_string()),
                 ),
                 _ => (
-                    Some(random_range(50..1800)),
-                    Some(random_range(50..1000)),
-                    Some(buttons[random_range(0..buttons.len())].to_string()),
+                    Some(random_range_i32(50, 1800)),
+                    Some(random_range_i32(50, 1000)),
+                    Some(buttons[random_range_usize(0, buttons.len())].to_string()),
                     None,
                 ),
             };
@@ -1027,7 +1078,7 @@ impl SimulatedWorker {
             let resp = self
                 .client
                 .post(&event_url)
-                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Authorization", auth_header)
                 .json(&req)
                 .send()
                 .await
@@ -1051,7 +1102,7 @@ impl SimulatedWorker {
         let _ = self
             .client
             .post(&stop_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Authorization", auth_header)
             .send()
             .await;
 
@@ -1062,6 +1113,23 @@ impl SimulatedWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_extract_host_port() {
+        assert_eq!(
+            extract_host_port("http://localhost:9000/bucket/key.png"),
+            Some("localhost:9000")
+        );
+        assert_eq!(
+            extract_host_port("https://rustfs:9000/path?query=1"),
+            Some("rustfs:9000")
+        );
+        assert_eq!(
+            extract_host_port("http://user:pass@127.0.0.1:8080/file"),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(extract_host_port("invalid-url"), None);
+    }
 
     #[test]
     fn test_simulated_worker_initialization() {
@@ -1079,6 +1147,10 @@ mod tests {
         let worker = SimulatedWorker::new(config.clone());
         assert_eq!(worker.config.worker_index, 1);
         assert_eq!(worker.api_key.as_deref(), Some("dd_pk_testkey123"));
+        assert_eq!(
+            worker.auth_header.as_deref(),
+            Some("Bearer dd_pk_testkey123")
+        );
         assert!(!worker.cancel_flag.load(Ordering::Relaxed));
     }
 

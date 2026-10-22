@@ -9,7 +9,6 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use deskdispatch::{AppState, auth::generate_csrf_token, config::Config, routes::*};
-use secrecy::ExposeSecret;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -816,13 +815,475 @@ async fn test_step_type_picker_interface() {
 
     assert!(body_str.contains("Select Step Type"));
     assert!(body_str.contains("/automations/42/steps/new/key_press"));
+    assert!(body_str.contains("/automations/42/steps/new/type_text"));
+    assert!(body_str.contains("/automations/42/steps/new/window_control"));
     assert!(body_str.contains("/automations/42/steps/new/mouse_click"));
     assert!(body_str.contains("/automations/42/steps/new/find_pixel_rgb"));
     assert!(body_str.contains("Key Press"));
+    assert!(body_str.contains("Type Text"));
+    assert!(body_str.contains("Window Control"));
     assert!(body_str.contains("Mouse Click"));
     assert!(body_str.contains("Find Pixel RGB"));
     assert!(body_str.contains("Find Bitmap"));
     assert!(body_str.contains("Branch"));
+}
+
+#[tokio::test]
+async fn test_type_text_step_crud_and_validation() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_type_text_step_crud_and_validation");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
+
+    let state = AppState {
+        db: pool.clone(),
+        storage,
+        config: config.clone(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+
+    let app = Router::new()
+        .route(
+            "/automations",
+            axum::routing::get(get_automations_handler).post(post_automations_handler),
+        )
+        .route(
+            "/automations/{id}",
+            axum::routing::get(get_automation_detail_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new/type_text",
+            axum::routing::get(get_new_type_text_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps",
+            axum::routing::post(post_create_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/edit",
+            axum::routing::get(get_edit_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}",
+            axum::routing::post(post_edit_step_handler),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            deskdispatch::auth::csrf_middleware,
+        ))
+        .with_state(state.clone());
+
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("tt_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&admin_session).unwrap(),
+        config.session_secret.expose_secret(),
+    );
+
+    // 1. Create automation
+    let create_body = format!(
+        "name=Type+Text+Automation&description=Test&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/automations")
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(create_body))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let automation_id: i64 = location
+        .trim_start_matches("/automations/")
+        .parse()
+        .unwrap();
+
+    // 2. GET new type_text step page
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/automations/{}/steps/new/type_text",
+            automation_id
+        ))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 3. POST invalid type_text (empty text_to_type)
+    let invalid_body = format!(
+        "step_type=type_text&text_to_type=&delay_between_keys_ms=50&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(invalid_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // 4. POST valid type_text step
+    let valid_body = format!(
+        "step_type=type_text&label=Type+Greeting&text_to_type=Hello+World&delay_between_keys_ms=50&post_delay_seconds=0.5&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(valid_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Verify DB insertion
+    let step_row = sqlx::query(
+        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1",
+    )
+    .bind(automation_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let step_id: i64 = sqlx::Row::get(&step_row, "id");
+    let step_type: String = sqlx::Row::get(&step_row, "step_type");
+    let label: Option<String> = sqlx::Row::get(&step_row, "label");
+    let post_delay_ms: i32 = sqlx::Row::get(&step_row, "post_delay_ms");
+
+    assert_eq!(step_type, "type_text");
+    assert_eq!(label.as_deref(), Some("Type Greeting"));
+    assert_eq!(post_delay_ms, 500);
+
+    let tt_row = sqlx::query(
+        "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
+    )
+    .bind(step_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let text_to_type: String = sqlx::Row::get(&tt_row, "text_to_type");
+    let delay_between_keys_ms: i32 = sqlx::Row::get(&tt_row, "delay_between_keys_ms");
+
+    assert_eq!(text_to_type, "Hello World");
+    assert_eq!(delay_between_keys_ms, 50);
+
+    // 5. GET edit page
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/automations/{}/steps/{}/edit",
+            automation_id, step_id
+        ))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 6. Update step
+    let edit_body = format!(
+        "step_type=type_text&label=Updated+Greeting&text_to_type=Hello+DeskDispatch&delay_between_keys_ms=100&post_delay_seconds=1.0&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps/{}", automation_id, step_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(edit_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Verify updated values in DB
+    let updated_tt_row = sqlx::query(
+        "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
+    )
+    .bind(step_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let updated_text: String = sqlx::Row::get(&updated_tt_row, "text_to_type");
+    let updated_delay: i32 = sqlx::Row::get(&updated_tt_row, "delay_between_keys_ms");
+
+    assert_eq!(updated_text, "Hello DeskDispatch");
+    assert_eq!(updated_delay, 100);
+
+    // 7. Verify plain-language summary rendering in automation detail page
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(body_str.contains("Type \"Hello DeskDispatch\" (100ms key delay)"));
+}
+
+#[tokio::test]
+async fn test_window_control_step_crud_and_validation() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_window_control_step_crud_and_validation");
+        return;
+    };
+
+    let config = Config::from_env().unwrap();
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
+
+    let state = AppState {
+        db: pool.clone(),
+        storage,
+        config: config.clone(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+
+    let app = Router::new()
+        .route(
+            "/automations",
+            axum::routing::get(get_automations_handler).post(post_automations_handler),
+        )
+        .route(
+            "/automations/{id}",
+            axum::routing::get(get_automation_detail_handler),
+        )
+        .route(
+            "/automations/{id}/steps/new/window_control",
+            axum::routing::get(get_new_window_control_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps",
+            axum::routing::post(post_create_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}/edit",
+            axum::routing::get(get_edit_step_handler),
+        )
+        .route(
+            "/automations/{id}/steps/{sid}",
+            axum::routing::post(post_edit_step_handler),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            deskdispatch::auth::csrf_middleware,
+        ))
+        .with_state(state.clone());
+
+    let (_admin_id, admin_session) = create_test_user(
+        &pool,
+        &format!("wc_admin_{}", uuid::Uuid::new_v4().simple()),
+        "admin",
+    )
+    .await;
+    let csrf_token = deskdispatch::auth::generate_csrf_token(
+        uuid::Uuid::parse_str(&admin_session).unwrap(),
+        config.session_secret.expose_secret(),
+    );
+
+    // 1. Create automation
+    let create_body = format!(
+        "name=Window+Control+Automation&description=Test&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/automations")
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(create_body))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let location = res
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let automation_id: i64 = location
+        .trim_start_matches("/automations/")
+        .parse()
+        .unwrap();
+
+    // 2. GET new window_control step page
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/automations/{}/steps/new/window_control",
+            automation_id
+        ))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 3. POST invalid window_control (empty match_pattern)
+    let invalid_body = format!(
+        "step_type=window_control&action=activate&match_pattern=&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(invalid_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // 4. POST valid window_control step
+    let valid_body = format!(
+        "step_type=window_control&label=Focus+Firefox&action=activate&match_pattern=Mozilla+Firefox&match_type=contains&timeout_seconds=5.0&post_delay_seconds=0.5&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(valid_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Verify DB insertion
+    let step_row = sqlx::query(
+        "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1",
+    )
+    .bind(automation_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let step_id: i64 = sqlx::Row::get(&step_row, "id");
+    let step_type: String = sqlx::Row::get(&step_row, "step_type");
+    let label: Option<String> = sqlx::Row::get(&step_row, "label");
+    let post_delay_ms: i32 = sqlx::Row::get(&step_row, "post_delay_ms");
+
+    assert_eq!(step_type, "window_control");
+    assert_eq!(label.as_deref(), Some("Focus Firefox"));
+    assert_eq!(post_delay_ms, 500);
+
+    let wc_row = sqlx::query(
+        "SELECT action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
+    )
+    .bind(step_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let action: String = sqlx::Row::get(&wc_row, "action");
+    let match_pattern: String = sqlx::Row::get(&wc_row, "match_pattern");
+    let match_type: String = sqlx::Row::get(&wc_row, "match_type");
+    let timeout_ms: i64 = sqlx::Row::get(&wc_row, "timeout_ms");
+
+    assert_eq!(action, "activate");
+    assert_eq!(match_pattern, "Mozilla Firefox");
+    assert_eq!(match_type, "contains");
+    assert_eq!(timeout_ms, 5000);
+
+    // 5. GET edit page
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/automations/{}/steps/{}/edit",
+            automation_id, step_id
+        ))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 6. Update step
+    let edit_body = format!(
+        "step_type=window_control&label=Wait+for+Calc&action=wait&match_pattern=Calculator&match_type=exact&timeout_seconds=10.0&post_delay_seconds=1.0&csrf_token={}",
+        csrf_token
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps/{}", automation_id, step_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(edit_body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // Verify updated values in DB
+    let updated_wc_row = sqlx::query(
+        "SELECT action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
+    )
+    .bind(step_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let updated_action: String = sqlx::Row::get(&updated_wc_row, "action");
+    let updated_pattern: String = sqlx::Row::get(&updated_wc_row, "match_pattern");
+    let updated_match_type: String = sqlx::Row::get(&updated_wc_row, "match_type");
+    let updated_timeout: i64 = sqlx::Row::get(&updated_wc_row, "timeout_ms");
+
+    assert_eq!(updated_action, "wait");
+    assert_eq!(updated_pattern, "Calculator");
+    assert_eq!(updated_match_type, "exact");
+    assert_eq!(updated_timeout, 10000);
+
+    // 7. Verify plain-language summary rendering in automation detail page
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}", automation_id))
+        .header(header::COOKIE, format!("session_id={}", admin_session))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    assert!(body_str.contains("Wait for window matching \"Calculator\" (exact) [timeout 10.0s]"));
 }
 
 #[tokio::test]
@@ -1574,4 +2035,108 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         "Uploaded bitmap option is not selected in step edit screen. HTML excerpt: {}",
         html_edit
     );
+}
+
+#[tokio::test]
+async fn test_ocr_extract_step_crud_and_task_output() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping test_ocr_extract_step_crud_and_task_output");
+        return;
+    };
+
+    let row = sqlx::query(
+        "INSERT INTO users (username, password_hash, display_name, role) VALUES ('ocr_editor', 'hash', 'Test', 'editor') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let user_id: i64 = sqlx::Row::get(&row, "id");
+
+    let session_row = sqlx::query(
+        "INSERT INTO sessions (user_id, expires_at) VALUES ($1, now() + interval '1 hour') RETURNING id",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let session_uuid: uuid::Uuid = sqlx::Row::get(&session_row, "id");
+    let cookie_header = format!("__Host-session_id={}", session_uuid);
+
+    let config = Config::from_env().unwrap();
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
+
+    let state = AppState {
+        db: pool.clone(),
+        storage,
+        config: config.clone(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+
+    let app = deskdispatch::routes::automations::router().with_state(state);
+
+    let automation_id: i64 = sqlx::query_scalar("INSERT INTO automations (name, description, status, created_by) VALUES ('OCR Flow', 'Test OCR', 'draft', $1) RETURNING id")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let csrf = generate_csrf_token(session_uuid, config.session_secret.expose_secret());
+
+    // 1. GET /automations/{id}/steps/new/ocr_extract
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/automations/{}/steps/new/ocr_extract",
+            automation_id
+        ))
+        .header(header::COOKIE, &cookie_header)
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 2. POST /automations/{id}/steps creating ocr_extract step
+    let form_body = format!(
+        "csrf_token={}&step_type=ocr_extract&label=Read+Header&search_x=10&search_y=20&search_width=200&search_height=50&set_as_task_output=true&post_delay_seconds=0.5",
+        csrf
+    );
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/automations/{}/steps", automation_id))
+        .header(header::COOKIE, &cookie_header)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(form_body))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
+    // 3. GET /automations/{id} and verify OCR step is listed
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/automations/{}", automation_id))
+        .header(header::COOKIE, &cookie_header)
+        .body(Body::empty())
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    assert!(html.contains("Read Header"));
+    assert!(html.contains("ocr_extract"));
+    assert!(html.contains("Extract text via OCR"));
 }

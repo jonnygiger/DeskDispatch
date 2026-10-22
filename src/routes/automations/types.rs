@@ -556,6 +556,23 @@ pub struct StepMouseClickTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "automations/step_window_control.html")]
+pub struct StepWindowControlTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub action: String,
+    pub match_pattern: String,
+    pub match_type: String,
+    pub timeout_seconds: f64,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
+#[derive(Template)]
 #[template(path = "automations/step_key_press.html")]
 pub struct StepKeyPressTemplate {
     pub user: AuthUser,
@@ -565,6 +582,21 @@ pub struct StepKeyPressTemplate {
     pub label: String,
     pub post_delay_seconds: f64,
     pub key_combo: String,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
+#[derive(Template)]
+#[template(path = "automations/step_type_text.html")]
+pub struct StepTypeTextTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub text_to_type: String,
+    pub delay_between_keys_ms: i32,
     pub error: Option<String>,
     pub is_edit: bool,
 }
@@ -643,6 +675,9 @@ pub struct StepBranchTemplate {
     pub search_width: Option<i32>,
     pub search_height: Option<i32>,
     pub match_threshold: Option<f32>,
+    pub window_match_pattern: String,
+    pub window_match_type: String,
+    pub window_check_type: String,
     pub on_match_step_id: Option<i64>,
     pub on_no_match_step_id: Option<i64>,
     pub steps: Vec<StepOption>,
@@ -676,8 +711,37 @@ pub struct StepFindBitmapTemplate {
     pub is_edit: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NewOcrExtractQuery {
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+}
+
+#[derive(Template)]
+#[template(path = "automations/step_ocr_extract.html")]
+pub struct StepOcrExtractTemplate {
+    pub user: AuthUser,
+    pub csrf_token: String,
+    pub automation_id: i64,
+    pub step_id: Option<i64>,
+    pub label: String,
+    pub post_delay_seconds: f64,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub region_variable_id: Option<i64>,
+    pub output_variable_id: Option<i64>,
+    pub set_as_task_output: bool,
+    pub variables: Vec<VariableOption>,
+    pub error: Option<String>,
+    pub is_edit: bool,
+}
+
 #[derive(Deserialize)]
-pub struct MouseClickStepForm {
+pub struct StepForm {
     pub step_type: Option<String>,
     pub label: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
@@ -698,6 +762,9 @@ pub struct MouseClickStepForm {
     pub button: Option<String>,
     pub click_type: Option<String>,
     pub key_combo: Option<String>,
+    pub text_to_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub delay_between_keys_ms: Option<i32>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub output_variable_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
@@ -733,7 +800,18 @@ pub struct MouseClickStepForm {
     pub on_match_step_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub on_no_match_step_id: Option<i64>,
+    pub set_as_task_output: Option<String>,
+    pub action: Option<String>,
+    pub match_pattern: Option<String>,
+    pub match_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_number")]
+    pub timeout_seconds: Option<f64>,
+    pub window_match_pattern: Option<String>,
+    pub window_match_type: Option<String>,
+    pub window_check_type: Option<String>,
 }
+
+pub type MouseClickStepForm = StepForm;
 
 #[cfg(test)]
 mod tests {

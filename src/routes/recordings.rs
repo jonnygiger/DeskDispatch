@@ -37,20 +37,6 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct RecordingSessionDetailRow {
-    pub id: i64,
-    pub worker_id: i64,
-    pub worker_display_name: String,
-    pub worker_hostname: String,
-    pub started_by_user_id: i64,
-    pub started_by_display_name: String,
-    pub status: String,
-    pub resulting_automation_id: Option<i64>,
-    pub started_at: DateTime<Utc>,
-    pub ended_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone)]
 pub struct RecordingSessionDetail {
     pub id: i64,
     pub worker_id: i64,
@@ -62,23 +48,6 @@ pub struct RecordingSessionDetail {
     pub resulting_automation_id: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
-}
-
-impl From<RecordingSessionDetailRow> for RecordingSessionDetail {
-    fn from(r: RecordingSessionDetailRow) -> Self {
-        Self {
-            id: r.id,
-            worker_id: r.worker_id,
-            worker_display_name: r.worker_display_name,
-            worker_hostname: r.worker_hostname,
-            started_by_user_id: r.started_by_user_id,
-            started_by_display_name: r.started_by_display_name,
-            status: r.status,
-            resulting_automation_id: r.resulting_automation_id,
-            started_at: r.started_at,
-            ended_at: r.ended_at,
-        }
-    }
 }
 
 impl RecordingSessionDetail {
@@ -317,7 +286,7 @@ async fn fetch_recording_session_detail(
     db: &sqlx::PgPool,
     session_id: i64,
 ) -> Result<Option<RecordingSessionDetail>, sqlx::Error> {
-    let row = sqlx::query_as::<_, RecordingSessionDetailRow>(
+    sqlx::query_as::<_, RecordingSessionDetail>(
         r#"
         SELECT
             rs.id,
@@ -338,9 +307,7 @@ async fn fetch_recording_session_detail(
     )
     .bind(session_id)
     .fetch_optional(db)
-    .await?;
-
-    Ok(row.map(Into::into))
+    .await
 }
 
 /// GET /recordings/{id}
@@ -444,53 +411,39 @@ pub async fn get_recording_review_handler(
     let event_rows = event_rows_res.unwrap_or_default();
     let storage = state.storage_service();
 
-    let mut set = tokio::task::JoinSet::new();
-    for (idx, r) in event_rows.into_iter().enumerate() {
-        let storage = storage.clone();
-        set.spawn(async move {
-            let mut magnifier = None;
-            if let Some(ref key) = r.screenshot_object_key
-                && let Ok(presigned_url) = storage
+    let events: Vec<RecordingEventDetail> = event_rows
+        .into_iter()
+        .map(|r| {
+            let magnifier = r.screenshot_object_key.as_deref().and_then(|key| {
+                storage
                     .generate_presigned_get_url(key, std::time::Duration::from_secs(3600))
-                    .await
-            {
-                magnifier = Some(ImageMagnifier::new(
-                    presigned_url,
-                    1920,
-                    1080,
-                    r.x.and_then(|v| u32::try_from(v).ok()),
-                    r.y.and_then(|v| u32::try_from(v).ok()),
-                ));
+                    .ok()
+                    .map(|presigned_url| {
+                        ImageMagnifier::new(
+                            presigned_url,
+                            1920,
+                            1080,
+                            r.x.and_then(|v| u32::try_from(v).ok()),
+                            r.y.and_then(|v| u32::try_from(v).ok()),
+                        )
+                    })
+            });
+
+            RecordingEventDetail {
+                id: r.id,
+                recording_session_id: r.recording_session_id,
+                sequence_number: r.sequence_number,
+                event_type: r.event_type,
+                x: r.x,
+                y: r.y,
+                button: r.button,
+                key_combo: r.key_combo,
+                screenshot_object_key: r.screenshot_object_key,
+                captured_at: r.captured_at,
+                magnifier,
             }
-
-            (
-                idx,
-                RecordingEventDetail {
-                    id: r.id,
-                    recording_session_id: r.recording_session_id,
-                    sequence_number: r.sequence_number,
-                    event_type: r.event_type,
-                    x: r.x,
-                    y: r.y,
-                    button: r.button,
-                    key_combo: r.key_combo,
-                    screenshot_object_key: r.screenshot_object_key,
-                    captured_at: r.captured_at,
-                    magnifier,
-                },
-            )
-        });
-    }
-
-    let mut indexed_events = Vec::with_capacity(set.len());
-    while let Some(res) = set.join_next().await {
-        if let Ok(pair) = res {
-            indexed_events.push(pair);
-        }
-    }
-    indexed_events.sort_unstable_by_key(|(idx, _)| *idx);
-    let events: Vec<RecordingEventDetail> =
-        indexed_events.into_iter().map(|(_, evt)| evt).collect();
+        })
+        .collect();
 
     let default_automation_name = format!(
         "Recorded Automation - {}",

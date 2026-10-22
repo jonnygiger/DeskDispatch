@@ -21,6 +21,55 @@ async fn get_test_pool() -> Option<sqlx::PgPool> {
         .ok()
 }
 
+struct DashboardCleanupGuard {
+    pool: sqlx::PgPool,
+    user_id: i64,
+    worker1_id: i64,
+    auto1_id: i64,
+}
+
+impl Drop for DashboardCleanupGuard {
+    fn drop(&mut self) {
+        let pool = self.pool.clone();
+        let user_id = self.user_id;
+        let worker1_id = self.worker1_id;
+        let auto1_id = self.auto1_id;
+
+        let cleanup = async move {
+            let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1")
+                .bind(auto1_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1")
+                .bind(worker1_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM automations WHERE created_by = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await;
+        };
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(cleanup);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn test_dashboard_stats_tiles() {
     let Some(pool) = get_test_pool().await else {
@@ -28,7 +77,7 @@ async fn test_dashboard_stats_tiles() {
         return;
     };
 
-    // Seed test user
+    // Seed test user with dummy hash (bypassing expensive password hashing)
     let username = format!("dashuser_{}", Uuid::new_v4().simple());
 
     let user_row = sqlx::query(
@@ -44,7 +93,7 @@ async fn test_dashboard_stats_tiles() {
     .unwrap();
     let user_id: i64 = user_row.get("id");
 
-    // Insert dummy data into automations, task_worker_pcs, task_runs
+    // Insert automations and worker
     let auto1 = sqlx::query(
         "INSERT INTO automations (name, status, created_by) VALUES ('Auto 1', 'active', $1) RETURNING id",
     )
@@ -70,26 +119,23 @@ async fn test_dashboard_stats_tiles() {
     .unwrap();
     let worker1_id: i64 = worker1.get("id");
 
-    let _run1 = sqlx::query(
-        "INSERT INTO task_runs (automation_id, worker_id, status, queued_at) VALUES ($1, $2, 'succeeded', CURRENT_TIMESTAMP)",
-    )
-    .bind(auto1_id)
-    .bind(worker1_id)
-    .execute(&pool)
-    .await
-    .unwrap();
+    // RAII guard ensures cleanup on drop, even if assertions panic
+    let _cleanup_guard = DashboardCleanupGuard {
+        pool: pool.clone(),
+        user_id,
+        worker1_id,
+        auto1_id,
+    };
 
-    let _run2 = sqlx::query(
-        "INSERT INTO task_runs (automation_id, worker_id, status, queued_at) VALUES ($1, $2, 'failed', CURRENT_TIMESTAMP)",
-    )
-    .bind(auto1_id)
-    .bind(worker1_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let _run3 = sqlx::query(
-        "INSERT INTO task_runs (automation_id, worker_id, status, queued_at) VALUES ($1, $2, 'lost', CURRENT_TIMESTAMP)",
+    // Batch seed task runs for test
+    sqlx::query(
+        r#"
+        INSERT INTO task_runs (automation_id, worker_id, status, queued_at)
+        VALUES
+            ($1, $2, 'succeeded', CURRENT_TIMESTAMP),
+            ($1, $2, 'failed', CURRENT_TIMESTAMP),
+            ($1, $2, 'lost', CURRENT_TIMESTAMP)
+        "#,
     )
     .bind(auto1_id)
     .bind(worker1_id)
@@ -166,26 +212,4 @@ async fn test_dashboard_stats_tiles() {
     assert!(html.contains("succeeded"));
     assert!(html.contains("failed"));
     assert!(html.contains("lost"));
-
-    // Clean up test data
-    let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1")
-        .bind(auto1_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1")
-        .bind(worker1_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM automations WHERE created_by = $1")
-        .bind(user_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
-        .bind(user_id)
-        .execute(&pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
-        .execute(&pool)
-        .await;
 }

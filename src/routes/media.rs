@@ -5,7 +5,6 @@ use axum::{
     response::IntoResponse,
 };
 use serde::Deserialize;
-use sqlx::Row;
 use std::time::Duration;
 
 use crate::auth::AuthUser;
@@ -64,18 +63,18 @@ pub async fn get_media_screenshot_handler(
     _user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let row = sqlx::query("SELECT object_storage_key FROM step_screenshots WHERE step_id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await;
+    let key_opt = sqlx::query_scalar::<_, String>(
+        "SELECT object_storage_key FROM step_screenshots WHERE step_id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
 
-    match row {
-        Ok(Some(row)) => {
-            let object_key: String = row.get("object_storage_key");
+    match key_opt {
+        Ok(Some(object_key)) => {
             match state
                 .storage_service()
                 .generate_presigned_get_url(&object_key, Duration::from_secs(900))
-                .await
             {
                 Ok(presigned_url) => (
                     StatusCode::FOUND,
@@ -115,18 +114,17 @@ pub async fn get_media_bitmap_handler(
     _user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let row = sqlx::query("SELECT object_storage_key FROM bitmaps WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await;
+    let key_opt =
+        sqlx::query_scalar::<_, String>("SELECT object_storage_key FROM bitmaps WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await;
 
-    match row {
-        Ok(Some(row)) => {
-            let object_key: String = row.get("object_storage_key");
+    match key_opt {
+        Ok(Some(object_key)) => {
             match state
                 .storage_service()
                 .generate_presigned_get_url(&object_key, Duration::from_secs(900))
-                .await
             {
                 Ok(presigned_url) => (
                     StatusCode::FOUND,

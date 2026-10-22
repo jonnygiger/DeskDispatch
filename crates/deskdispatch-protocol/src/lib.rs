@@ -99,6 +99,8 @@ pub struct StepResultResponse {
 pub struct CompleteTaskRunRequest {
     pub status: String,
     pub error_message: Option<String>,
+    pub output_type: Option<String>,
+    pub output_value: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -204,6 +206,13 @@ pub enum BranchConditionPayload {
         timeout_ms: u64,
         retry_interval_ms: u64,
     },
+    WindowState {
+        match_pattern: String,
+        match_type: String,
+        check_type: String,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -226,6 +235,13 @@ pub enum StepPayload {
         label: Option<String>,
         post_delay_ms: i32,
         key_combo: String,
+    },
+    TypeText {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        text_to_type: String,
+        delay_between_keys_ms: i32,
     },
     FindPixelRgb {
         id: i64,
@@ -264,6 +280,29 @@ pub enum StepPayload {
         on_no_match_step_id: Option<i64>,
         timeout_ms: u64,
         retry_interval_ms: u64,
+    },
+    OcrExtract {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        search_x: Option<i32>,
+        search_y: Option<i32>,
+        search_width: Option<i32>,
+        search_height: Option<i32>,
+        region_variable_id: Option<i64>,
+        output_variable_id: Option<i64>,
+        set_as_task_output: bool,
+        timeout_ms: u64,
+        retry_interval_ms: u64,
+    },
+    WindowControl {
+        id: i64,
+        label: Option<String>,
+        post_delay_ms: i32,
+        action: String,
+        match_pattern: String,
+        match_type: String,
+        timeout_ms: u64,
     },
 }
 

@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.99.0"
 
 [workspace]
-members = [".", "crates/deskdispatch-protocol", "crates/worker-simulator"]
+members = [".", "crates/deskdispatch-protocol", "crates/worker-simulator", "crates/deskdispatch-worker"]
 
 [lints.clippy]
 unwrap_used = "deny"
@@ -27,8 +27,6 @@ serde_json = "1.0"
 sqlx = { version = "0.9", features = ["postgres", "runtime-tokio", "tls-rustls", "macros", "uuid", "chrono"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["compression-gzip", "compression-deflate", "compression-br", "trace", "request-id", "timeout", "catch-panic"] }
-rust-embed = "8.13"
-secrecy = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.28", features = ["v4", "serde"] }

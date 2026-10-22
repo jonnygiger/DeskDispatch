@@ -15,9 +15,52 @@ async fn get_test_pool() -> Option<PgPool> {
         .ok()
 }
 
-async fn create_test_user_and_automation(pool: &PgPool) -> (i64, i64) {
+struct StepPositioningCleanupGuard {
+    pool: PgPool,
+    user_id: Option<i64>,
+    automation_id: Option<i64>,
+}
+
+impl Drop for StepPositioningCleanupGuard {
+    fn drop(&mut self) {
+        let pool = self.pool.clone();
+        let user_id = self.user_id;
+        let auto_id = self.automation_id;
+
+        let cleanup = async move {
+            if let Some(a_id) = auto_id {
+                let _ = sqlx::query("DELETE FROM automation_steps WHERE automation_id = $1")
+                    .bind(a_id)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM automations WHERE id = $1")
+                    .bind(a_id)
+                    .execute(&pool)
+                    .await;
+            }
+            if let Some(u_id) = user_id {
+                let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+                    .bind(u_id)
+                    .execute(&pool)
+                    .await;
+            }
+        };
+
+        let _ = std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                rt.block_on(cleanup);
+            }
+        })
+        .join();
+    }
+}
+
+async fn create_test_user_and_automation(pool: &PgPool) -> (i64, i64, StepPositioningCleanupGuard) {
     let username = format!("user_{}", uuid::Uuid::new_v4().simple());
-    let user_row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role) VALUES ($1, 'hash', $2, 'admin') RETURNING id",
     )
     .bind(&username)
@@ -25,18 +68,22 @@ async fn create_test_user_and_automation(pool: &PgPool) -> (i64, i64) {
     .fetch_one(pool)
     .await
     .unwrap();
-    let user_id: i64 = sqlx::Row::get(&user_row, "id");
 
-    let auto_row = sqlx::query(
+    let auto_id: i64 = sqlx::query_scalar(
         "INSERT INTO automations (name, description, status, created_by) VALUES ('Test Positioning', 'Desc', 'draft', $1) RETURNING id",
     )
     .bind(user_id)
     .fetch_one(pool)
     .await
     .unwrap();
-    let auto_id: i64 = sqlx::Row::get(&auto_row, "id");
 
-    (user_id, auto_id)
+    let guard = StepPositioningCleanupGuard {
+        pool: pool.clone(),
+        user_id: Some(user_id),
+        automation_id: Some(auto_id),
+    };
+
+    (user_id, auto_id, guard)
 }
 
 #[tokio::test]
@@ -46,11 +93,11 @@ async fn test_sparse_position_assignment_and_reordering() {
         return;
     };
 
-    let (_user_id, auto_id) = create_test_user_and_automation(&pool).await;
+    let (_user_id, auto_id, _guard) = create_test_user_and_automation(&pool).await;
 
-    // 1. Insert initial steps sequentially
+    // 1. Insert initial steps sequentially with strongly typed query_scalar
     let step1_pos = 10.0;
-    let step1_row = sqlx::query(
+    let step1_id: i64 = sqlx::query_scalar(
         "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'key_press', 'Step 1', 0) RETURNING id",
     )
     .bind(auto_id)
@@ -58,7 +105,6 @@ async fn test_sparse_position_assignment_and_reordering() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step1_id: i64 = sqlx::Row::get(&step1_row, "id");
 
     let max_pos: f64 =
         sqlx::query_scalar("SELECT MAX(position) FROM automation_steps WHERE automation_id = $1")
@@ -67,7 +113,7 @@ async fn test_sparse_position_assignment_and_reordering() {
             .await
             .unwrap();
     let step2_pos = max_pos + 10.0;
-    let step2_row = sqlx::query(
+    let step2_id: i64 = sqlx::query_scalar(
         "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'key_press', 'Step 2', 0) RETURNING id",
     )
     .bind(auto_id)
@@ -75,14 +121,13 @@ async fn test_sparse_position_assignment_and_reordering() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step2_id: i64 = sqlx::Row::get(&step2_row, "id");
 
     assert_eq!(step1_pos, 10.0);
     assert_eq!(step2_pos, 20.0);
 
     // 2. Insert midpoint step between Step 1 (10.0) and Step 2 (20.0) -> position 15.0
     let midpoint_pos = (step1_pos + step2_pos) / 2.0;
-    let step_mid_row = sqlx::query(
+    let step_mid_id: i64 = sqlx::query_scalar(
         "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, 'key_press', 'Midpoint Step', 0) RETURNING id",
     )
     .bind(auto_id)
@@ -90,7 +135,6 @@ async fn test_sparse_position_assignment_and_reordering() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step_mid_id: i64 = sqlx::Row::get(&step_mid_row, "id");
 
     assert_eq!(midpoint_pos, 15.0);
 
@@ -140,29 +184,19 @@ async fn test_gap_precision_threshold_and_compaction_trigger() {
         return;
     };
 
-    let (_user_id, auto_id) = create_test_user_and_automation(&pool).await;
+    let (_user_id, auto_id, _guard) = create_test_user_and_automation(&pool).await;
 
-    // Insert steps with a gap less than 0.0001 (e.g. 10.0 and 10.00005)
+    // Batch insert steps with a gap less than 0.0001 (e.g. 10.0 and 10.00005) in a single query
     sqlx::query(
-        "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, 10.0, 'key_press', 'Step A', 0)",
+        r#"
+        INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms)
+        SELECT $1, pos, 'key_press', label, 0
+        FROM UNNEST($2::float8[], $3::text[]) AS u(pos, label)
+        "#,
     )
     .bind(auto_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    sqlx::query(
-        "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, 10.00005, 'key_press', 'Step B', 0)",
-    )
-    .bind(auto_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    sqlx::query(
-        "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, 20.0, 'key_press', 'Step C', 0)",
-    )
-    .bind(auto_id)
+    .bind([10.0f64, 10.00005f64, 20.0f64])
+    .bind(["Step A", "Step B", "Step C"])
     .execute(&pool)
     .await
     .unwrap();
@@ -203,9 +237,9 @@ async fn test_reorder_step_swaps_positions_without_unique_constraint_error() {
         return;
     };
 
-    let (_user_id, auto_id) = create_test_user_and_automation(&pool).await;
+    let (_user_id, auto_id, _guard) = create_test_user_and_automation(&pool).await;
 
-    // Insert 2 adjacent steps
+    // Insert 2 adjacent steps using query_scalar
     let step1_id: i64 = sqlx::query_scalar(
         "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, 10.0, 'key_press', 'Step 1', 0) RETURNING id",
     )

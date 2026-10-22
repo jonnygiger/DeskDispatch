@@ -4,7 +4,6 @@ use axum::{
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Redirect, Response},
 };
-use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::str::FromStr;
@@ -129,6 +128,42 @@ mod tests {
             .await
             .unwrap();
         assert!(!is_wrong_valid);
+    }
+
+    #[test]
+    fn test_user_role_permissions_display_from_str_and_serde() {
+        // Arrange
+        let cases = [
+            (UserRole::Admin, "admin", true, true),
+            (UserRole::Editor, "editor", true, false),
+            (UserRole::Viewer, "viewer", false, false),
+        ];
+
+        for (role, expected_str, expected_can_edit, expected_is_admin) in cases {
+            // Act & Assert methods
+            assert_eq!(role.as_str(), expected_str);
+            assert_eq!(role.can_edit(), expected_can_edit);
+            assert_eq!(role.is_admin(), expected_is_admin);
+
+            // Act & Assert Display
+            assert_eq!(role.to_string(), expected_str);
+
+            // Act & Assert FromStr parsing with uppercase variations
+            let upper = expected_str.to_uppercase();
+            let parsed = UserRole::from_str(&upper).expect("parsing valid role string");
+            assert_eq!(parsed, role);
+
+            // Act & Assert Serde JSON roundtrip
+            let json = serde_json::to_string(&role).expect("serializing user role");
+            assert_eq!(json, format!("\"{}\"", expected_str));
+            let deserialized: UserRole =
+                serde_json::from_str(&json).expect("deserializing user role");
+            assert_eq!(deserialized, role);
+        }
+
+        // Act & Assert FromStr error handling for invalid/unknown role string
+        let err = UserRole::from_str("superadmin").unwrap_err();
+        assert_eq!(err, "Unknown user role: superadmin");
     }
 }
 

@@ -47,3 +47,15 @@ Action: Test `.env` line parsing edge cases directly with multi-line string fixt
 ## 2025-03-21 URL Decoding & Flash Message Extraction Edge Cases Coverage
 Learning: `url_decode` in `src/auth/flash.rs` returns `None` when encountering truncated percent escapes (e.g. `"hello%"`, `"hello%2"`), invalid hex escape digits (e.g. `"hello%2G"`), or invalid UTF-8 byte sequences (e.g. `"%FF%FE"`), while `extract_flash_message` defaults level to `FlashLevel::Info` when the `flash_level` cookie is absent or contains an unrecognized string value.
 Action: Unit test `url_decode` boundary inputs, missing header options, default level fallbacks, and clear cookie formatting directly in `src/auth/flash.rs`.
+
+## 2025-03-22 Session Cookie Parsing & Clearing Edge Cases Coverage
+Learning: `extract_session_id` parses semicolon-separated cookie headers by stripping `__Host-session_id=` and `session_id=` prefixes. Key edge cases include invalid UUID values in `__Host-session_id=` gracefully falling back to subsequent valid `session_id=` pairs, precedence of `__Host-session_id` when valid, and avoiding false prefix matches (e.g. `not_session_id=`).
+Action: Test session ID cookie extraction and cookie clearing exact attributes directly in unit tests in `src/auth/session.rs` without requiring database connection fixtures.
+
+## 2025-03-23 Automation Step Helpers Sanitization, Summaries & Branch Validation Coverage
+Learning: Step creation and editing in `src/routes/automations/steps.rs` relies on internal helper functions (`sanitize_label`, `seconds_to_post_delay_ms`, `generate_type_text_summary`, `sanitize_mouse_button`, `sanitize_click_type`, `validate_branch_form`) to clean form inputs, calculate post-delays, format summary labels, and validate branch targets before database mutations.
+Action: Unit test label sanitization edge cases, delay float-to-int conversion clamping, 30-char text truncation formatting, mouse click option sanitization, and branch condition validation rules directly without requiring database fixtures.
+
+## 2025-03-24 UserRole Permissions, Conversions & Parsing Edge Cases Coverage
+Learning: `UserRole` parses string inputs using `s.to_lowercase().as_str()` without `.trim()`, meaning `FromStr` supports case-insensitivity (e.g. `"ADMIN"` -> `UserRole::Admin`) but rejects untrimmed whitespace surrounding role strings (e.g. `"  ADMIN  "` -> `Err("Unknown user role:   ADMIN  ")`).
+Action: In unit tests for `UserRole`, test `as_str()`, `can_edit()`, `is_admin()`, case-insensitive `FromStr` without leading/trailing spaces, invalid role error handling, and Serde JSON serialization/deserialization.
