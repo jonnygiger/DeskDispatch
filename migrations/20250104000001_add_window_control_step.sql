@@ -4,9 +4,9 @@ ALTER TABLE automation_steps DROP CONSTRAINT IF EXISTS automation_steps_step_typ
 
 ALTER TABLE automation_steps
     ADD CONSTRAINT automation_steps_step_type_check
-    CHECK (step_type IN ('mouse_click', 'key_press', 'type_text', 'find_pixel_rgb', 'find_bitmap', 'branch', 'window_control'));
+    CHECK (step_type IN ('mouse_click', 'key_press', 'type_text', 'find_pixel_rgb', 'find_bitmap', 'branch', 'ocr_extract', 'window_control'));
 
-CREATE TABLE step_window_controls (
+CREATE TABLE IF NOT EXISTS step_window_controls (
     step_id       BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
     action        TEXT NOT NULL CHECK (action IN ('activate', 'close', 'minimize', 'maximize', 'wait')),
     match_pattern TEXT NOT NULL,
