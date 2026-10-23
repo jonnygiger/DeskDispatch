@@ -17,9 +17,47 @@ use deskdispatch::routes::{
     post_deactivate_user_handler, post_edit_user_handler, post_login_handler,
     post_password_handler, post_reset_password_handler,
 };
-use sqlx::Row;
 use tower::ServiceExt;
 use uuid::Uuid;
+
+struct UserManagementCleanupGuard {
+    pool: sqlx::PgPool,
+    user_ids: Vec<i64>,
+}
+
+impl Drop for UserManagementCleanupGuard {
+    fn drop(&mut self) {
+        if self.user_ids.is_empty() {
+            return;
+        }
+        let pool = self.pool.clone();
+        let user_ids = self.user_ids.clone();
+
+        let cleanup = async move {
+            let _ = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+                .bind(&user_ids)
+                .execute(&pool)
+                .await;
+        };
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(cleanup);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct TestUserRow {
+    id: i64,
+    display_name: String,
+    must_change_password: bool,
+}
 
 #[test]
 fn test_user_list_item_helpers() {
@@ -140,6 +178,11 @@ async fn test_non_admin_forbidden_from_user_management() {
     .await
     .unwrap();
 
+    let _cleanup_guard = UserManagementCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![editor_id],
+    };
+
     let app = build_test_app(pool.clone(), config);
 
     // Login as editor
@@ -181,12 +224,6 @@ async fn test_non_admin_forbidden_from_user_management() {
 
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-    // Clean up test editor
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(editor_id)
-        .execute(&pool)
-        .await;
 }
 
 #[tokio::test]
@@ -214,6 +251,11 @@ async fn test_full_user_crud_and_last_admin_protection() {
     .fetch_one(&pool)
     .await
     .unwrap();
+
+    let mut cleanup_guard = UserManagementCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+    };
 
     let app = build_test_app(pool.clone(), config.clone());
 
@@ -268,17 +310,17 @@ async fn test_full_user_crud_and_last_admin_protection() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/users");
 
-    // Retrieve created user
-    let new_user_row =
-        sqlx::query("SELECT id, must_change_password, is_active FROM users WHERE username = $1")
-            .bind(&new_username)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    // Retrieve created user using strongly-typed FromRow struct
+    let new_user: TestUserRow = sqlx::query_as(
+        "SELECT id, display_name, must_change_password FROM users WHERE username = $1",
+    )
+    .bind(&new_username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
-    let new_user_id: i64 = new_user_row.get("id");
-    let must_change: bool = new_user_row.get("must_change_password");
-    assert!(must_change);
+    cleanup_guard.user_ids.push(new_user.id);
+    assert!(new_user.must_change_password);
 
     // 4. Edit user via POST /users/{id}
     let edit_form = format!(
@@ -288,7 +330,7 @@ async fn test_full_user_crud_and_last_admin_protection() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/users/{}", new_user_id))
+        .uri(format!("/users/{}", new_user.id))
         .header(header::COOKIE, &cookie_header)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_form))
@@ -298,18 +340,16 @@ async fn test_full_user_crud_and_last_admin_protection() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
     // Verify updated display_name and must_change_password
-    let updated_row =
-        sqlx::query("SELECT display_name, must_change_password FROM users WHERE id = $1")
-            .bind(new_user_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let updated_user: TestUserRow = sqlx::query_as(
+        "SELECT id, display_name, must_change_password FROM users WHERE id = $1",
+    )
+    .bind(new_user.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
-    assert_eq!(
-        updated_row.get::<String, _>("display_name"),
-        "Updated Display Name"
-    );
-    assert!(!updated_row.get::<bool, _>("must_change_password"));
+    assert_eq!(updated_user.display_name, "Updated Display Name");
+    assert!(!updated_user.must_change_password);
 
     // 5. Reset user password via POST /users/{id}/reset-password
     let reset_form = format!(
@@ -319,7 +359,7 @@ async fn test_full_user_crud_and_last_admin_protection() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/users/{}/reset-password", new_user_id))
+        .uri(format!("/users/{}/reset-password", new_user.id))
         .header(header::COOKIE, &cookie_header)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(reset_form))
@@ -329,19 +369,20 @@ async fn test_full_user_crud_and_last_admin_protection() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
     // Verify must_change_password set back to true
-    let reset_row = sqlx::query("SELECT must_change_password FROM users WHERE id = $1")
-        .bind(new_user_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let must_change_after_reset: bool =
+        sqlx::query_scalar("SELECT must_change_password FROM users WHERE id = $1")
+            .bind(new_user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
-    assert!(reset_row.get::<bool, _>("must_change_password"));
+    assert!(must_change_after_reset);
 
     // 6. Deactivate user via POST /users/{id}/deactivate
     let deact_form = format!("csrf_token={}", csrf_token);
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/users/{}/deactivate", new_user_id))
+        .uri(format!("/users/{}/deactivate", new_user.id))
         .header(header::COOKIE, &cookie_header)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(deact_form))
@@ -352,7 +393,7 @@ async fn test_full_user_crud_and_last_admin_protection() {
 
     let deactivated_is_active: bool =
         sqlx::query_scalar("SELECT is_active FROM users WHERE id = $1")
-            .bind(new_user_id)
+            .bind(new_user.id)
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -378,13 +419,6 @@ async fn test_full_user_crud_and_last_admin_protection() {
 
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-
-    // Clean up created users
-    let _ = sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
-        .bind(admin_id)
-        .bind(new_user_id)
-        .execute(&pool)
-        .await;
 }
 
 #[tokio::test]
@@ -412,6 +446,11 @@ async fn test_forced_password_change_redirect() {
     .fetch_one(&pool)
     .await
     .unwrap();
+
+    let _cleanup_guard = UserManagementCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![user_id],
+    };
 
     let app = build_test_app(pool.clone(), config.clone());
 
@@ -488,10 +527,4 @@ async fn test_forced_password_change_redirect() {
             .unwrap();
 
     assert!(!must_change);
-
-    // Clean up
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
-        .execute(&pool)
-        .await;
 }
