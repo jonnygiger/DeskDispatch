@@ -1,14 +1,12 @@
+use super::types::*;
+use crate::AppState;
+use crate::auth::{AuthUser, CsrfForm, log_audit};
+use crate::routes::auth::HtmlTemplate;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Redirect},
 };
-use sqlx::Row;
-
-use super::types::*;
-use crate::AppState;
-use crate::auth::{AuthUser, CsrfForm, log_audit};
-use crate::routes::auth::HtmlTemplate;
 
 pub fn is_valid_var_type(vt: &str) -> bool {
     matches!(vt, "int" | "bool" | "color" | "point" | "string")
@@ -182,7 +180,7 @@ pub async fn post_create_automation_variable_handler(
         }
     };
 
-    let insert_res = sqlx::query(
+    let var_id: i64 = match sqlx::query_scalar::<_, i64>(
         "INSERT INTO automation_variables (automation_id, name, var_type, description) VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(id)
@@ -190,10 +188,9 @@ pub async fn post_create_automation_variable_handler(
     .bind(var_type)
     .bind(&description)
     .fetch_one(&mut *tx)
-    .await;
-
-    let var_id: i64 = match insert_res {
-        Ok(r) => r.get("id"),
+    .await
+    {
+        Ok(v_id) => v_id,
         Err(e) => {
             tracing::error!("Failed to insert automation variable: {}", e);
             let _ = tx.rollback().await;

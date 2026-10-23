@@ -5,7 +5,6 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 use serde::Deserialize;
-use sqlx::Row;
 use std::net::{IpAddr, SocketAddr};
 
 use crate::auth::{
@@ -58,6 +57,7 @@ pub struct LoginForm {
 
 const DUMMY_ARGON2_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$cG03OThscDRvYm9oMDAwMA$R3841R3841R3841R3841R3841R3841R3841R3841";
 
+#[derive(sqlx::FromRow)]
 struct UserRow {
     id: i64,
     password_hash: String,
@@ -92,7 +92,7 @@ pub async fn post_login_handler(
             .into_response();
     }
 
-    let user_res = sqlx::query(
+    let user_res = sqlx::query_as::<_, UserRow>(
         r#"
         SELECT id, password_hash, is_active
         FROM users
@@ -104,13 +104,12 @@ pub async fn post_login_handler(
     .await;
 
     let user_opt = match user_res {
-        Ok(Some(row)) => {
-            let u = UserRow {
-                id: row.get("id"),
-                password_hash: row.get("password_hash"),
-                is_active: row.get("is_active"),
-            };
-            if u.is_active { Some(u) } else { None }
+        Ok(Some(u)) => {
+            if u.is_active {
+                Some(u)
+            } else {
+                None
+            }
         }
         Ok(None) => None,
         Err(e) => {

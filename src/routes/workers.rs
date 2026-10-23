@@ -6,7 +6,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use sqlx::{FromRow, Row};
+use sqlx::FromRow;
 
 use super::auth::HtmlTemplate;
 use crate::auth::worker::{generate_registration_token, hash_token};
@@ -152,14 +152,38 @@ pub async fn post_deactivate_worker_handler(
     }
 }
 
+#[derive(FromRow)]
+struct WakeWorkerRow {
+    display_name: String,
+    mac_address: Option<String>,
+}
+
+#[derive(FromRow)]
+struct WorkerGroupMapRow {
+    worker_id: i64,
+    name: String,
+}
+
+#[derive(FromRow)]
+struct WorkerScreenshotRow {
+    worker_id: i64,
+    step_id: i64,
+}
+
+#[derive(FromRow)]
+struct MemberMapRow {
+    group_id: i64,
+    display_name: String,
+}
+
 #[tracing::instrument(skip(state, user))]
 pub async fn post_wake_worker_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let row = match sqlx::query(
-        "SELECT id, display_name, mac_address FROM task_worker_pcs WHERE id = $1",
+    let row = match sqlx::query_as::<_, WakeWorkerRow>(
+        "SELECT display_name, mac_address FROM task_worker_pcs WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -173,8 +197,8 @@ pub async fn post_wake_worker_handler(
         }
     };
 
-    let mac_address: Option<String> = row.get("mac_address");
-    let display_name: String = row.get("display_name");
+    let mac_address = row.mac_address;
+    let display_name = row.display_name;
 
     let mac = match mac_address {
         Some(m) if !m.trim().is_empty() => m,
@@ -732,7 +756,7 @@ pub async fn post_create_worker_handler(
     let token = generate_registration_token();
     let token_hash = hash_token(&token);
 
-    let row = sqlx::query(
+    let worker_id: i64 = match sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO task_worker_pcs (hostname, display_name, mac_address, api_key_hash, registration_token_hash, registration_token_expires_at, status)
         VALUES ($1, $2, $3, NULL, $4, now() + INTERVAL '24 hours', 'offline')
@@ -744,10 +768,9 @@ pub async fn post_create_worker_handler(
     .bind(mac_address)
     .bind(&token_hash)
     .fetch_one(&state.db)
-    .await;
-
-    let worker_id: i64 = match row {
-        Ok(r) => r.get("id"),
+    .await
+    {
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create task_worker_pc: {}", e);
             return HtmlTemplate(WorkerNewTemplate {
@@ -810,7 +833,7 @@ pub async fn get_workers_handler(
             "#,
         )
         .fetch_all(&state.db),
-        sqlx::query(
+        sqlx::query_as::<_, WorkerGroupMapRow>(
             r#"
             SELECT m.worker_id, g.name
             FROM worker_group_members m
@@ -827,7 +850,7 @@ pub async fn get_workers_handler(
             "#,
         )
         .fetch_all(&state.db),
-        sqlx::query(
+        sqlx::query_as::<_, MemberMapRow>(
             r#"
             SELECT m.group_id, w.display_name
             FROM worker_group_members m
@@ -836,7 +859,7 @@ pub async fn get_workers_handler(
             "#,
         )
         .fetch_all(&state.db),
-        sqlx::query(
+        sqlx::query_as::<_, WorkerScreenshotRow>(
             r#"
             SELECT DISTINCT ON (tr.worker_id) tr.worker_id, ss.step_id
             FROM task_runs tr
@@ -873,21 +896,17 @@ pub async fn get_workers_handler(
         std::collections::HashMap::new();
     if let Ok(group_mappings) = worker_groups_mappings_res {
         for r in group_mappings {
-            let worker_id: i64 = r.get("worker_id");
-            let group_name: String = r.get("name");
             worker_groups_map
-                .entry(worker_id)
+                .entry(r.worker_id)
                 .or_default()
-                .push(group_name);
+                .push(r.name);
         }
     }
 
     let mut worker_ss_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
     if let Ok(ss_rows) = worker_screenshots_res {
         for r in ss_rows {
-            let wid: i64 = r.get("worker_id");
-            let sid: i64 = r.get("step_id");
-            worker_ss_map.insert(wid, sid);
+            worker_ss_map.insert(r.worker_id, r.step_id);
         }
     }
 
@@ -917,12 +936,10 @@ pub async fn get_workers_handler(
         std::collections::HashMap::new();
     if let Ok(member_mappings) = member_mappings_res {
         for r in member_mappings {
-            let group_id: i64 = r.get("group_id");
-            let display_name: String = r.get("display_name");
             group_members_map
-                .entry(group_id)
+                .entry(r.group_id)
                 .or_default()
-                .push(display_name);
+                .push(r.display_name);
         }
     }
 
@@ -1363,7 +1380,7 @@ pub async fn post_create_worker_group_handler(
         }
     };
 
-    let group_row = sqlx::query(
+    let group_id: i64 = match sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO worker_groups (name, description)
         VALUES ($1, $2)
@@ -1373,10 +1390,9 @@ pub async fn post_create_worker_group_handler(
     .bind(name)
     .bind(description)
     .fetch_one(&mut *tx)
-    .await;
-
-    let group_id: i64 = match group_row {
-        Ok(r) => r.get("id"),
+    .await
+    {
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create worker group: {}", e);
             let _ = tx.rollback().await;

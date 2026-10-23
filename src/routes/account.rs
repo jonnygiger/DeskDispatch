@@ -1,7 +1,6 @@
 use askama::Template;
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
-use sqlx::Row;
 
 use super::auth::HtmlTemplate;
 use crate::auth::{
@@ -76,38 +75,37 @@ pub async fn post_password_handler(
             .into_response();
     }
 
-    let user_row = match sqlx::query("SELECT password_hash FROM users WHERE id = $1")
-        .bind(user.id)
-        .fetch_optional(&state.db)
-        .await
-    {
-        Ok(Some(r)) => r,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                HtmlTemplate(AccountPasswordTemplate {
-                    csrf_token,
-                    error: Some("User not found.".to_string()),
-                    success: None,
-                }),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            tracing::error!("Database error during password update: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                HtmlTemplate(AccountPasswordTemplate {
-                    csrf_token,
-                    error: Some("Internal server error.".to_string()),
-                    success: None,
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    let password_hash: String = user_row.get("password_hash");
+    let password_hash =
+        match sqlx::query_scalar::<_, String>("SELECT password_hash FROM users WHERE id = $1")
+            .bind(user.id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(Some(hash)) => hash,
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    HtmlTemplate(AccountPasswordTemplate {
+                        csrf_token,
+                        error: Some("User not found.".to_string()),
+                        success: None,
+                    }),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!("Database error during password update: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    HtmlTemplate(AccountPasswordTemplate {
+                        csrf_token,
+                        error: Some("Internal server error.".to_string()),
+                        success: None,
+                    }),
+                )
+                    .into_response();
+            }
+        };
 
     let is_current_valid = match verify_password_async(
         state.rate_limiter.argon2_semaphore.clone(),
