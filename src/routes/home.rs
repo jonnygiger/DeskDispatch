@@ -113,3 +113,69 @@ pub async fn get_index_handler(State(state): State<AppState>, user: AuthUser) ->
         recent_runs,
     })
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn build_recent_run(status: &str, queued_at: DateTime<Utc>) -> RecentRunItem {
+        RecentRunItem {
+            id: 1,
+            automation_id: 10,
+            automation_name: "Test Automation".to_string(),
+            worker_id: Some(100),
+            worker_name: Some("Worker 1".to_string()),
+            status: status.to_string(),
+            triggered_by: "Admin".to_string(),
+            queued_at,
+        }
+    }
+
+    #[test]
+    fn test_recent_run_item_status_badge_classes() {
+        let now = Utc::now();
+
+        assert_eq!(
+            build_recent_run("succeeded", now).status_badge_class(),
+            "badge-success"
+        );
+        assert_eq!(
+            build_recent_run("failed", now).status_badge_class(),
+            "badge-danger"
+        );
+        assert_eq!(
+            build_recent_run("lost", now).status_badge_class(),
+            "badge-danger"
+        );
+        assert_eq!(
+            build_recent_run("running", now).status_badge_class(),
+            "badge-warning"
+        );
+        assert_eq!(
+            build_recent_run("cancelling", now).status_badge_class(),
+            "badge-warning"
+        );
+        assert_eq!(
+            build_recent_run("queued", now).status_badge_class(),
+            "badge-neutral"
+        );
+        assert_eq!(
+            build_recent_run("unknown", now).status_badge_class(),
+            "badge-neutral"
+        );
+        assert_eq!(
+            build_recent_run("", now).status_badge_class(),
+            "badge-neutral"
+        );
+    }
+
+    #[test]
+    fn test_recent_run_item_formatted_queued_at() {
+        let queued_at = Utc.with_ymd_and_hms(2025, 3, 25, 14, 30, 45).unwrap();
+        let item = build_recent_run("succeeded", queued_at);
+
+        assert_eq!(item.formatted_queued_at(), "2025-03-25 14:30:45");
+    }
+}
