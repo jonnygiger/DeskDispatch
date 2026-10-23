@@ -256,6 +256,38 @@ impl From<reqwest::Error> for StorageError {
     }
 }
 
+/// Zero-allocation helper to parse host and optional port from an endpoint URL
+/// (e.g. "http://rustfs:9000", "http://localhost:9000", "https://s3.us-east-1.amazonaws.com").
+pub fn parse_endpoint_host_port(endpoint: &str) -> Option<(&str, Option<u16>)> {
+    let s = endpoint.trim();
+    let after_scheme = if let Some(rest) = s.strip_prefix("http://") {
+        rest
+    } else if let Some(rest) = s.strip_prefix("https://") {
+        rest
+    } else {
+        s
+    };
+
+    let clean = after_scheme.trim_start_matches('/');
+    let authority = clean
+        .split(&['/', '?', '#'][..])
+        .next()?
+        .trim_end_matches('/');
+    if authority.is_empty() {
+        return None;
+    }
+
+    if let Some((host, port_str)) = authority.rsplit_once(':') {
+        if let Ok(port) = port_str.parse::<u16>() {
+            Some((host, Some(port)))
+        } else {
+            Some((authority, None))
+        }
+    } else {
+        Some((authority, None))
+    }
+}
+
 /// Standalone helper to generate SigV4 presigned URLs for GET, PUT, DELETE, or HEAD requests.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_presigned_url(
@@ -309,17 +341,14 @@ pub fn generate_presigned_url_with_query(
     let (host, canonical_uri, base_url) = match endpoint_url {
         Some(endpoint) => {
             let clean_endpoint = endpoint.trim_end_matches('/');
-            let parsed_url = url::Url::parse(clean_endpoint).map_err(|e| {
-                StorageError::Request(format!("Invalid endpoint URL {}: {}", clean_endpoint, e))
-            })?;
-            let host = parsed_url
-                .host_str()
-                .ok_or_else(|| StorageError::Request("Missing host in endpoint".to_string()))?;
-            let port_part = parsed_url
-                .port()
-                .map(|p| format!(":{}", p))
-                .unwrap_or_default();
-            let full_host = format!("{}{}", host, port_part);
+            let (host_str, port_opt) =
+                parse_endpoint_host_port(clean_endpoint).ok_or_else(|| {
+                    StorageError::Request(format!("Invalid endpoint URL {}", clean_endpoint))
+                })?;
+            let full_host = match port_opt {
+                Some(p) => format!("{}:{}", host_str, p),
+                None => host_str.to_string(),
+            };
             let uri = if clean_key.is_empty() {
                 format!("/{}", bucket)
             } else {
@@ -405,17 +434,21 @@ pub fn generate_presigned_url_with_query(
     let signature_bytes = hmac_sha256(&k_signing, string_to_sign.as_bytes());
     let signature_hex = encode_hex(&signature_bytes);
 
-    let full_url = if clean_key.is_empty() {
-        format!(
+    let mut full_url =
+        String::with_capacity(base_url.len() + clean_key.len() + canonical_query_string.len() + 64);
+    if clean_key.is_empty() {
+        let _ = write!(
+            full_url,
             "{}?{}&X-Amz-Signature={}",
             base_url, canonical_query_string, signature_hex
-        )
+        );
     } else {
-        format!(
+        let _ = write!(
+            full_url,
             "{}/{}?{}&X-Amz-Signature={}",
             base_url, clean_key, canonical_query_string, signature_hex
-        )
-    };
+        );
+    }
 
     Ok(full_url)
 }
@@ -963,6 +996,27 @@ mod tests {
         assert!(decode_base64("A").is_none());
         assert!(decode_base64("AAAAA").is_none());
         assert!(decode_base64("====").is_none());
+    }
+
+    #[test]
+    fn test_parse_endpoint_host_port() {
+        assert_eq!(
+            parse_endpoint_host_port("http://rustfs:9000"),
+            Some(("rustfs", Some(9000)))
+        );
+        assert_eq!(
+            parse_endpoint_host_port("http://localhost:9000/bucket/path"),
+            Some(("localhost", Some(9000)))
+        );
+        assert_eq!(
+            parse_endpoint_host_port("https://s3.us-east-1.amazonaws.com"),
+            Some(("s3.us-east-1.amazonaws.com", None))
+        );
+        assert_eq!(
+            parse_endpoint_host_port("127.0.0.1:8080"),
+            Some(("127.0.0.1", Some(8080)))
+        );
+        assert_eq!(parse_endpoint_host_port("http://"), None);
     }
 
     #[test]
