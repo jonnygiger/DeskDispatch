@@ -64,36 +64,8 @@ pub fn router() -> Router<AppState> {
             get(get_step_type_picker_handler),
         )
         .route(
-            "/automations/{id}/steps/new/key_press",
-            get(get_new_key_press_step_handler),
-        )
-        .route(
-            "/automations/{id}/steps/new/type_text",
-            get(get_new_type_text_step_handler),
-        )
-        .route(
-            "/automations/{id}/steps/new/window_control",
-            get(get_new_window_control_step_handler),
-        )
-        .route(
-            "/automations/{id}/steps/new/mouse_scroll",
-            get(get_new_mouse_scroll_step_handler),
-        )
-        .route(
-            "/automations/{id}/steps/new/mouse_click",
-            get(get_new_mouse_click_step_handler),
-        )
-        .route(
-            "/automations/{id}/steps/new/find_pixel_rgb",
-            get(get_new_find_pixel_rgb_step_handler),
-        )
-        .route(
-            "/automations/{id}/steps/new/find_bitmap",
-            get(get_new_find_bitmap_step_handler),
-        )
-        .route(
-            "/automations/{id}/steps/new/branch",
-            get(get_new_branch_step_handler),
+            "/automations/{id}/steps/new/{step_type}",
+            get(get_new_step_handler),
         )
         .route("/automations/{id}/steps", post(post_create_step_handler))
         .route(

@@ -548,35 +548,47 @@ pub fn generate_window_control_summary(
     match_type: &str,
     timeout_ms: i64,
 ) -> String {
-    let action_str = match action.to_lowercase().as_str() {
-        "activate" => "Focus",
-        "close" => "Close",
-        "minimize" => "Minimize",
-        "maximize" => "Maximize",
-        "wait" => "Wait for",
-        _ => "Control",
-    };
-    let pattern_trimmed = match_pattern.trim();
-    let display_pattern = if pattern_trimmed.chars().count() > 30 {
-        let truncated: String = pattern_trimmed.chars().take(27).collect();
-        format!("{}...", truncated)
+    use std::fmt::Write;
+    let mut buf = String::with_capacity(96);
+    let action_str = if action.eq_ignore_ascii_case("activate") {
+        "Focus"
+    } else if action.eq_ignore_ascii_case("close") {
+        "Close"
+    } else if action.eq_ignore_ascii_case("minimize") {
+        "Minimize"
+    } else if action.eq_ignore_ascii_case("maximize") {
+        "Maximize"
+    } else if action.eq_ignore_ascii_case("wait") {
+        "Wait for"
     } else {
-        pattern_trimmed.to_string()
+        "Control"
     };
 
-    if action == "wait" {
-        format!(
-            "Wait for window matching \"{}\" ({}) [timeout {:.1}s]",
-            display_pattern,
-            match_type,
-            timeout_ms as f64 / 1000.0
-        )
+    let pattern_trimmed = match_pattern.trim();
+    let display_idx = pattern_trimmed
+        .char_indices()
+        .nth(27)
+        .map(|(i, _)| i)
+        .unwrap_or(pattern_trimmed.len());
+    let (display_pattern, suffix) = if display_idx < pattern_trimmed.len() {
+        (&pattern_trimmed[..display_idx], "...")
     } else {
-        format!(
-            "{} window matching \"{}\" ({})",
-            action_str, display_pattern, match_type
-        )
+        (pattern_trimmed, "")
+    };
+
+    if action.eq_ignore_ascii_case("wait") {
+        let _ = write!(
+            buf,
+            "Wait for window matching \"{display_pattern}{suffix}\" ({match_type}) [timeout {:.1}s]",
+            timeout_ms as f64 / 1000.0
+        );
+    } else {
+        let _ = write!(
+            buf,
+            "{action_str} window matching \"{display_pattern}{suffix}\" ({match_type})"
+        );
     }
+    buf
 }
 
 pub fn generate_clipboard_control_summary(
@@ -1164,280 +1176,196 @@ pub async fn get_step_type_picker_handler(
     })
 }
 
-/// GET /automations/{id}/steps/new/key_press
-#[tracing::instrument(skip(user))]
+/// GET /automations/{id}/steps/new/{step_type}
+#[tracing::instrument(skip(state, user))]
+pub async fn get_new_step_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, step_type)): Path<(i64, String)>,
+    Query(query): Query<EditStepQuery>,
+) -> impl IntoResponse {
+    let csrf_token = user.csrf_token.clone();
+    let form = StepForm {
+        reference_bitmap_id: query.reference_bitmap_id,
+        search_x: query.search_x,
+        search_y: query.search_y,
+        search_width: query.search_width,
+        search_height: query.search_height,
+        condition_type: query.condition_type,
+        x: query.x,
+        y: query.y,
+        ..Default::default()
+    };
+    render_step_form(
+        &state.db, user, csrf_token, id, None, &step_type, form, None,
+    )
+    .await
+}
+
 pub async fn get_new_key_press_step_handler(
+    State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    HtmlTemplate(StepKeyPressTemplate {
+    get_new_step_handler(
+        State(state),
         user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
-        key_combo: String::new(),
-        error: None,
-        is_edit: false,
-    })
+        Path((id, "key_press".to_string())),
+        Query(EditStepQuery::default()),
+    )
+    .await
 }
 
-/// GET /automations/{id}/steps/new/ocr_extract
-#[tracing::instrument(skip(state, user))]
 pub async fn get_new_ocr_extract_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
     Query(query): Query<NewOcrExtractQuery>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    let variables = fetch_automation_variables(&state.db, id).await;
-
-    HtmlTemplate(StepOcrExtractTemplate {
-        user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
+    let edit_query = EditStepQuery {
         search_x: query.search_x,
         search_y: query.search_y,
         search_width: query.search_width,
         search_height: query.search_height,
-        region_variable_id: None,
-        output_variable_id: None,
-        set_as_task_output: true,
-        variables,
-        error: None,
-        is_edit: false,
-    })
+        ..Default::default()
+    };
+    get_new_step_handler(
+        State(state),
+        user,
+        Path((id, "ocr_extract".to_string())),
+        Query(edit_query),
+    )
+    .await
 }
 
-/// GET /automations/{id}/steps/new/window_control
-#[tracing::instrument(skip(user))]
 pub async fn get_new_window_control_step_handler(
+    State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    HtmlTemplate(StepWindowControlTemplate {
+    get_new_step_handler(
+        State(state),
         user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
-        action: "activate".to_string(),
-        match_pattern: String::new(),
-        match_type: "contains".to_string(),
-        timeout_seconds: 5.0,
-        error: None,
-        is_edit: false,
-    })
+        Path((id, "window_control".to_string())),
+        Query(EditStepQuery::default()),
+    )
+    .await
 }
 
-/// GET /automations/{id}/steps/new/type_text
-#[tracing::instrument(skip(user))]
 pub async fn get_new_type_text_step_handler(
+    State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    HtmlTemplate(StepTypeTextTemplate {
+    get_new_step_handler(
+        State(state),
         user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
-        text_to_type: String::new(),
-        delay_between_keys_ms: 0,
-        error: None,
-        is_edit: false,
-    })
+        Path((id, "type_text".to_string())),
+        Query(EditStepQuery::default()),
+    )
+    .await
 }
 
-/// GET /automations/{id}/steps/new/branch
-#[tracing::instrument(skip(state, user))]
 pub async fn get_new_branch_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
     Query(query): Query<NewBranchQuery>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    let condition_type = query
-        .condition_type
-        .unwrap_or_else(|| "pixel_rgb".to_string());
-    let (steps, bitmaps) = tokio::join!(
-        fetch_automation_step_options(&state.db, id, None),
-        fetch_available_bitmaps(&state.db, id)
-    );
-
-    HtmlTemplate(StepBranchTemplate {
-        user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
-        condition_type,
+    let edit_query = EditStepQuery {
+        condition_type: query.condition_type,
         x: query.x,
         y: query.y,
-        expected_r: Some(0),
-        expected_g: Some(0),
-        expected_b: Some(0),
-        tolerance: Some(10),
         reference_bitmap_id: query.reference_bitmap_id,
         search_x: query.search_x,
         search_y: query.search_y,
         search_width: query.search_width,
         search_height: query.search_height,
-        match_threshold: Some(0.95),
-        window_match_pattern: String::new(),
-        window_match_type: "contains".to_string(),
-        window_check_type: "exists".to_string(),
-        on_match_step_id: None,
-        on_no_match_step_id: None,
-        steps,
-        bitmaps,
-        error: None,
-        is_edit: false,
-    })
+    };
+    get_new_step_handler(
+        State(state),
+        user,
+        Path((id, "branch".to_string())),
+        Query(edit_query),
+    )
+    .await
 }
 
-/// GET /automations/{id}/steps/new/find_bitmap
-#[tracing::instrument(skip(state, user))]
 pub async fn get_new_find_bitmap_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
     Query(query): Query<NewFindBitmapQuery>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    let (bitmaps, variables) = tokio::join!(
-        fetch_available_bitmaps(&state.db, id),
-        fetch_automation_variables(&state.db, id)
-    );
-
-    HtmlTemplate(StepFindBitmapTemplate {
-        user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
+    let edit_query = EditStepQuery {
         reference_bitmap_id: query.reference_bitmap_id,
         search_x: query.search_x,
         search_y: query.search_y,
         search_width: query.search_width,
         search_height: query.search_height,
-        match_threshold: 0.95,
-        output_found_variable_id: None,
-        output_x_variable_id: None,
-        output_y_variable_id: None,
-        output_region_variable_id: None,
-        bitmaps,
-        variables,
-        error: None,
-        is_edit: false,
-    })
+        ..Default::default()
+    };
+    get_new_step_handler(
+        State(state),
+        user,
+        Path((id, "find_bitmap".to_string())),
+        Query(edit_query),
+    )
+    .await
 }
 
-/// GET /automations/{id}/steps/new/find_pixel_rgb
-#[tracing::instrument(skip(state, user))]
 pub async fn get_new_find_pixel_rgb_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
     Query(query): Query<NewFindPixelRgbQuery>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    let variables = fetch_automation_variables(&state.db, id).await;
-
-    HtmlTemplate(StepFindPixelRgbTemplate {
-        user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
+    let edit_query = EditStepQuery {
         x: query.x,
         y: query.y,
-        output_variable_id: None,
-        variables,
-        error: None,
-        is_edit: false,
-    })
+        ..Default::default()
+    };
+    get_new_step_handler(
+        State(state),
+        user,
+        Path((id, "find_pixel_rgb".to_string())),
+        Query(edit_query),
+    )
+    .await
 }
 
-/// GET /automations/{id}/steps/new/mouse_scroll
-#[tracing::instrument(skip(state, user))]
 pub async fn get_new_mouse_scroll_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    let variables = fetch_automation_variables(&state.db, id).await;
-
-    HtmlTemplate(StepMouseScrollTemplate {
+    get_new_step_handler(
+        State(state),
         user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
-        direction: "down".to_string(),
-        scroll_amount: 3,
-        x_mode: "fixed".to_string(),
-        x: None,
-        x_variable_id: None,
-        y_mode: "fixed".to_string(),
-        y: None,
-        y_variable_id: None,
-        click_mode: "coordinates".to_string(),
-        region_variable_id: None,
-        variables,
-        error: None,
-        is_edit: false,
-    })
+        Path((id, "mouse_scroll".to_string())),
+        Query(EditStepQuery::default()),
+    )
+    .await
 }
 
-/// GET /automations/{id}/steps/new/mouse_click
-#[tracing::instrument(skip(state, user))]
 pub async fn get_new_mouse_click_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
     Query(query): Query<NewMouseClickQuery>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    let variables = fetch_automation_variables(&state.db, id).await;
-
-    HtmlTemplate(StepMouseClickTemplate {
-        user,
-        csrf_token,
-        automation_id: id,
-        step_id: None,
-        label: String::new(),
-        post_delay_seconds: 0.0,
-        x_mode: "fixed".to_string(),
+    let edit_query = EditStepQuery {
         x: query.x,
-        x_variable_id: None,
-        y_mode: "fixed".to_string(),
         y: query.y,
-        y_variable_id: None,
-        click_mode: "coordinates".to_string(),
-        region_variable_id: None,
-        button: "left".to_string(),
-        click_type: "single".to_string(),
-        variables,
-        error: None,
-        is_edit: false,
-    })
+        ..Default::default()
+    };
+    get_new_step_handler(
+        State(state),
+        user,
+        Path((id, "mouse_click".to_string())),
+        Query(edit_query),
+    )
+    .await
 }
 
 // ============================================================================
@@ -1563,17 +1491,15 @@ async fn save_step_details(
             .await?;
         }
         "mouse_scroll" => {
-            let direction = match form
-                .direction
-                .as_deref()
-                .unwrap_or("down")
-                .to_lowercase()
-                .as_str()
-            {
-                "up" => "up",
-                "left" => "left",
-                "right" => "right",
-                _ => "down",
+            let dir_str = form.direction.as_deref().unwrap_or("down");
+            let direction = if dir_str.eq_ignore_ascii_case("up") {
+                "up"
+            } else if dir_str.eq_ignore_ascii_case("left") {
+                "left"
+            } else if dir_str.eq_ignore_ascii_case("right") {
+                "right"
+            } else {
+                "down"
             };
             let scroll_amount = form.scroll_amount.unwrap_or(3).clamp(1, 100);
 
@@ -1635,30 +1561,26 @@ async fn save_step_details(
             .await?;
         }
         "window_control" => {
-            let action = match form
-                .action
-                .as_deref()
-                .unwrap_or("activate")
-                .to_lowercase()
-                .as_str()
-            {
-                "close" => "close",
-                "minimize" => "minimize",
-                "maximize" => "maximize",
-                "wait" => "wait",
-                _ => "activate",
+            let act_str = form.action.as_deref().unwrap_or("activate");
+            let action = if act_str.eq_ignore_ascii_case("close") {
+                "close"
+            } else if act_str.eq_ignore_ascii_case("minimize") {
+                "minimize"
+            } else if act_str.eq_ignore_ascii_case("maximize") {
+                "maximize"
+            } else if act_str.eq_ignore_ascii_case("wait") {
+                "wait"
+            } else {
+                "activate"
             };
             let match_pattern = form.match_pattern.as_deref().unwrap_or("").trim();
-            let match_type = match form
-                .match_type
-                .as_deref()
-                .unwrap_or("contains")
-                .to_lowercase()
-                .as_str()
-            {
-                "exact" => "exact",
-                "starts_with" => "starts_with",
-                _ => "contains",
+            let mt_str = form.match_type.as_deref().unwrap_or("contains");
+            let match_type = if mt_str.eq_ignore_ascii_case("exact") {
+                "exact"
+            } else if mt_str.eq_ignore_ascii_case("starts_with") {
+                "starts_with"
+            } else {
+                "contains"
             };
             let timeout_ms = ((form.timeout_seconds.unwrap_or(5.0).max(0.0)) * 1000.0) as i64;
 
@@ -1858,7 +1780,7 @@ async fn save_step_details(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn render_step_error(
+async fn render_step_form(
     db: &PgPool,
     user: AuthUser,
     csrf_token: String,
@@ -1866,9 +1788,14 @@ async fn render_step_error(
     step_id: Option<i64>,
     step_type: &str,
     form: StepForm,
-    error: String,
+    error: Option<String>,
 ) -> axum::response::Response {
     let is_edit = step_id.is_some();
+    let status = if error.is_some() {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::OK
+    };
     let label = form.label.unwrap_or_default();
     let post_delay_seconds = form.post_delay_seconds.unwrap_or(0.0);
 
@@ -1909,7 +1836,7 @@ async fn render_step_error(
                 on_no_match_step_id: form.on_no_match_step_id,
                 steps: bundle.steps,
                 bitmaps: bundle.bitmaps,
-                error: Some(error),
+                error,
                 is_edit,
             })
             .into_response()
@@ -1922,12 +1849,16 @@ async fn render_step_error(
             label,
             post_delay_seconds,
             key_combo: form.key_combo.unwrap_or_default(),
-            error: Some(error),
+            error,
             is_edit,
         })
         .into_response(),
         "clipboard_control" => {
             let variables = fetch_automation_variables(db, automation_id).await;
+            let set_task_out = form.set_as_task_output.as_deref() == Some("on")
+                || form.set_as_task_output.as_deref() == Some("true")
+                || form.set_as_task_output.as_deref() == Some("1");
+
             HtmlTemplate(StepClipboardControlTemplate {
                 user,
                 csrf_token,
@@ -1940,11 +1871,10 @@ async fn render_step_error(
                 text_to_set: form.text_to_set,
                 input_variable_id: form.input_variable_id,
                 output_variable_id: form.output_variable_id,
-                set_as_task_output: form.set_as_task_output.as_deref() == Some("on")
-                    || form.set_as_task_output.as_deref() == Some("true"),
+                set_as_task_output: set_task_out,
                 timeout_seconds: form.timeout_seconds.unwrap_or(5.0),
                 variables,
-                error: Some(error),
+                error,
                 is_edit,
             })
             .into_response()
@@ -1960,7 +1890,7 @@ async fn render_step_error(
             match_pattern: form.match_pattern.unwrap_or_default(),
             match_type: form.match_type.unwrap_or_else(|| "contains".to_string()),
             timeout_seconds: form.timeout_seconds.unwrap_or(5.0),
-            error: Some(error),
+            error,
             is_edit,
         })
         .into_response(),
@@ -1973,7 +1903,7 @@ async fn render_step_error(
             post_delay_seconds,
             text_to_type: form.text_to_type.unwrap_or_default(),
             delay_between_keys_ms: form.delay_between_keys_ms.unwrap_or(0).max(0),
-            error: Some(error),
+            error,
             is_edit,
         })
         .into_response(),
@@ -1997,7 +1927,7 @@ async fn render_step_error(
                 click_mode: form.click_mode.unwrap_or_else(|| "coordinates".to_string()),
                 region_variable_id: form.region_variable_id,
                 variables,
-                error: Some(error),
+                error,
                 is_edit,
             })
             .into_response()
@@ -2022,7 +1952,7 @@ async fn render_step_error(
                 button: form.button.unwrap_or_else(|| "left".to_string()),
                 click_type: form.click_type.unwrap_or_else(|| "single".to_string()),
                 variables,
-                error: Some(error),
+                error,
                 is_edit,
             })
             .into_response()
@@ -2040,7 +1970,7 @@ async fn render_step_error(
                 y: form.y,
                 output_variable_id: form.output_variable_id,
                 variables,
-                error: Some(error),
+                error,
                 is_edit,
             })
             .into_response()
@@ -2066,16 +1996,17 @@ async fn render_step_error(
                 output_region_variable_id: form.output_region_variable_id,
                 bitmaps: bundle.bitmaps,
                 variables: bundle.variables,
-                error: Some(error),
+                error,
                 is_edit,
             })
             .into_response()
         }
         "ocr_extract" => {
             let variables = fetch_automation_variables(db, automation_id).await;
-            let set_task_out = form.set_as_task_output.as_deref() == Some("on")
-                || form.set_as_task_output.as_deref() == Some("true")
-                || form.set_as_task_output.as_deref() == Some("1");
+            let set_task_out = match form.set_as_task_output.as_deref() {
+                Some(v) => v == "on" || v == "true" || v == "1",
+                None => true,
+            };
 
             HtmlTemplate(StepOcrExtractTemplate {
                 user,
@@ -2092,7 +2023,7 @@ async fn render_step_error(
                 output_variable_id: form.output_variable_id,
                 set_as_task_output: set_task_out,
                 variables,
-                error: Some(error),
+                error,
                 is_edit,
             })
             .into_response()
@@ -2100,7 +2031,31 @@ async fn render_step_error(
         _ => return Redirect::to(&format!("/automations/{}", automation_id)).into_response(),
     };
 
-    (StatusCode::BAD_REQUEST, html_body).into_response()
+    (status, html_body).into_response()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn render_step_error(
+    db: &PgPool,
+    user: AuthUser,
+    csrf_token: String,
+    automation_id: i64,
+    step_id: Option<i64>,
+    step_type: &str,
+    form: StepForm,
+    error: String,
+) -> axum::response::Response {
+    render_step_form(
+        db,
+        user,
+        csrf_token,
+        automation_id,
+        step_id,
+        step_type,
+        form,
+        Some(error),
+    )
+    .await
 }
 
 async fn validate_automation_variables_exist(
@@ -2315,7 +2270,7 @@ pub async fn get_edit_step_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path((id, sid)): Path<(i64, i64)>,
-    Query(query): Query<NewFindBitmapQuery>,
+    Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
