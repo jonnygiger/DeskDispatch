@@ -15,6 +15,21 @@ pub fn generate_csrf_token(session_id: Uuid, session_secret: &str) -> String {
     crate::storage::encode_hex(&mac_result)
 }
 
+pub fn extract_csrf_token_from_form_bytes(bytes: &[u8]) -> Option<String> {
+    for pair in bytes.split(|&b| b == b'&') {
+        if let Some(pos) = pair.iter().position(|&b| b == b'=') {
+            let k = &pair[..pos];
+            let v = &pair[pos + 1..];
+            if k == b"csrf_token" {
+                if let Ok(val_str) = std::str::from_utf8(v) {
+                    return crate::auth::flash::url_decode(val_str);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn validate_csrf_token(token: &str, expected_token: &str) -> bool {
     let a = token.as_bytes();
     let b = expected_token.as_bytes();
@@ -73,9 +88,7 @@ where
             .and_then(|h| h.to_str().ok());
 
         let body_csrf = if header_csrf.is_none() {
-            url::form_urlencoded::parse(&bytes)
-                .find(|(k, _)| k == "csrf_token")
-                .map(|(_, v)| v)
+            extract_csrf_token_from_form_bytes(&bytes)
         } else {
             None
         };
@@ -245,6 +258,18 @@ mod tests {
                 csrf_origin_middleware,
             ))
             .with_state(state)
+    }
+
+    #[test]
+    fn test_extract_csrf_token_from_form_bytes() {
+        let body = b"username=admin&csrf_token=abc%20123&password=pass";
+        assert_eq!(
+            extract_csrf_token_from_form_bytes(body),
+            Some("abc 123".to_string())
+        );
+
+        let body_no_csrf = b"username=admin&password=pass";
+        assert_eq!(extract_csrf_token_from_form_bytes(body_no_csrf), None);
     }
 
     #[test]

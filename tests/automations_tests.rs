@@ -1881,8 +1881,7 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
 
     // 3. Admin creates an automation via POST /automations
     let auto_name = format!("E2E Admin Automation {}", uuid::Uuid::new_v4().simple());
-    let auto_name_encoded: String =
-        url::form_urlencoded::byte_serialize(auto_name.as_bytes()).collect();
+    let auto_name_encoded = deskdispatch::storage::url_encode_component(&auto_name);
     let create_auto_form = format!(
         "csrf_token={}&name={}&description=Created+during+E2E+test",
         csrf_token, auto_name_encoded
@@ -1926,8 +1925,7 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         .await;
 
     // Commit reference bitmap via POST /bitmaps/commit
-    let test_bitmap_name_encoded: String =
-        url::form_urlencoded::byte_serialize(test_bitmap_name.as_bytes()).collect();
+    let test_bitmap_name_encoded = deskdispatch::storage::url_encode_component(&test_bitmap_name);
     let commit_form = format!(
         "csrf_token={}&key={}&name={}",
         csrf_token, bitmap_key, test_bitmap_name_encoded
