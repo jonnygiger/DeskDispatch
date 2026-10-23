@@ -785,8 +785,16 @@ fn perform_ocr_on_captured_image(img: &CapturedImage) -> String {
         let pid = std::process::id();
         let tmp_file = temp_dir.join(format!("deskdispatch_ocr_{}_{}.png", pid, counter));
         if std::fs::write(&tmp_file, &png_bytes).is_ok() {
-            let res = if let Ok(timg) = rusty_tesseract::Image::from_path(&tmp_file) {
-                rusty_tesseract::image_to_string(&timg, &rusty_tesseract::Args::default()).ok()
+            let res = if let Ok(output) = std::process::Command::new("tesseract")
+                .arg(&tmp_file)
+                .arg("stdout")
+                .output()
+            {
+                if output.status.success() {
+                    String::from_utf8(output.stdout).ok()
+                } else {
+                    None
+                }
             } else {
                 None
             };
