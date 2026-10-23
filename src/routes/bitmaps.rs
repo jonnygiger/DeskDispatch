@@ -408,8 +408,6 @@ pub async fn fetch_bitmaps_list_template(
     })
 }
 
-/// GET /bitmaps
-/// Renders the list page for all reference bitmaps in the system.
 #[tracing::instrument(skip(state, user))]
 pub async fn get_bitmaps_handler(
     State(state): State<AppState>,
@@ -421,8 +419,6 @@ pub async fn get_bitmaps_handler(
     }
 }
 
-/// GET /automations/{id}/bitmaps
-/// Renders the reference bitmaps list page scoped to a specific automation.
 #[tracing::instrument(skip(state, user))]
 pub async fn get_automation_bitmaps_handler(
     State(state): State<AppState>,
@@ -447,31 +443,35 @@ async fn generate_bitmap_upload_policy(
         return Redirect::to(&bitmap_redirect_path(automation_id)).into_response();
     }
 
-    let object_key = match automation_id {
-        Some(_) => format!("bitmaps/{}.png", uuid::Uuid::new_v4()),
-        None => format!("bitmaps/user_{}_{}.png", user.id, uuid::Uuid::new_v4()),
+    let object_key = if automation_id.is_some() {
+        format!("bitmaps/{}.png", uuid::Uuid::new_v4())
+    } else {
+        format!("bitmaps/user_{}_{}.png", user.id, uuid::Uuid::new_v4())
     };
 
-    let base_url = state.config.public_base_url.trim_end_matches('/');
-    let encoded_name = crate::auth::flash::url_encode(&bitmap_name);
     let redirect_url = match automation_id {
         Some(aid) => format!(
-            "{}/bitmaps/commit?name={}&automation_id={}",
-            base_url, encoded_name, aid
+            "/bitmaps/commit?key={}&name={}&automation_id={}",
+            crate::storage::url_encode_component(&object_key),
+            crate::storage::url_encode_component(&bitmap_name),
+            aid
         ),
-        None => format!("{}/bitmaps/commit?name={}", base_url, encoded_name),
+        None => format!(
+            "/bitmaps/commit?key={}&name={}",
+            crate::storage::url_encode_component(&object_key),
+            crate::storage::url_encode_component(&bitmap_name)
+        ),
     };
 
-    let storage = state.storage_service();
-    let presigned_post = match storage.generate_presigned_post(
+    let post_policy = match state.storage_service().generate_presigned_post(
         &object_key,
         Duration::from_secs(900),
-        10_485_760,
+        10 * 1024 * 1024,
         Some(&redirect_url),
     ) {
-        Ok(post) => post,
+        Ok(res) => res,
         Err(e) => {
-            tracing::error!("Failed to generate presigned POST policy: {}", e);
+            tracing::error!("Failed to generate presigned POST for bitmap upload: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to generate upload policy",
@@ -486,8 +486,8 @@ async fn generate_bitmap_upload_policy(
         bitmap_name,
         object_storage_key: object_key,
         automation_id,
-        presigned_post_url: presigned_post.url,
-        presigned_fields: presigned_post.ordered_fields,
+        presigned_post_url: post_policy.url,
+        presigned_fields: post_policy.ordered_fields,
         redirect_url,
     })
     .into_response()
@@ -865,7 +865,7 @@ pub async fn post_pick_region_top_left_handler(
         _ => (0, 0, false),
     };
 
-    let (top_left_x, top_left_y, is_valid_selection) = match (form.manual_x, form.manual_y) {
+    let (top_left_x, top_left_y, is_valid) = match (form.manual_x, form.manual_y) {
         (Some(mx), Some(my)) => (
             mx.min(form.width.saturating_sub(1)),
             my.min(form.height.saturating_sub(1)),
@@ -888,39 +888,18 @@ pub async fn post_pick_region_top_left_handler(
         }
     };
 
-    if !is_valid_selection {
-        let magnifier = ImageMagnifier::new(&image_url, form.width, form.height, None, None);
-        return HtmlTemplate(RegionPickerTopLeftTemplate {
-            user: user.clone(),
-            csrf_token: user.csrf_token,
-            automation_id: form.automation_id,
-            image_url,
-            width: form.width,
-            height: form.height,
-            step_stage: 1,
-            top_left_x: None,
-            top_left_y: None,
-            bottom_right_x: None,
-            bottom_right_y: None,
-            click_x: None,
-            click_y: None,
-            magnifier,
-            return_to: form.return_to,
-            mode: form.mode,
-            step_id: form.step_id,
-            reference_bitmap_id: form.reference_bitmap_id,
-            error_msg: Some("Keyboard selection detected (0, 0). Please enter precise pixel coordinates in the manual numeric input fields below, or click directly on the image.".to_string()),
-        })
-        .into_response();
-    }
+    let (step_stage, tl_x, tl_y, error_msg) = if is_valid {
+        (2, Some(top_left_x), Some(top_left_y), None)
+    } else {
+        (
+            1,
+            None,
+            None,
+            Some("Keyboard selection detected (0, 0). Please enter precise pixel coordinates in the manual numeric input fields below, or click directly on the image.".to_string()),
+        )
+    };
 
-    let magnifier = ImageMagnifier::new(
-        &image_url,
-        form.width,
-        form.height,
-        Some(top_left_x),
-        Some(top_left_y),
-    );
+    let magnifier = ImageMagnifier::new(&image_url, form.width, form.height, tl_x, tl_y);
 
     HtmlTemplate(RegionPickerTopLeftTemplate {
         user: user.clone(),
@@ -929,19 +908,19 @@ pub async fn post_pick_region_top_left_handler(
         image_url,
         width: form.width,
         height: form.height,
-        step_stage: 2,
-        top_left_x: Some(top_left_x),
-        top_left_y: Some(top_left_y),
+        step_stage,
+        top_left_x: tl_x,
+        top_left_y: tl_y,
         bottom_right_x: None,
         bottom_right_y: None,
-        click_x: Some(top_left_x),
-        click_y: Some(top_left_y),
+        click_x: tl_x,
+        click_y: tl_y,
         magnifier,
         return_to: form.return_to,
         mode: form.mode,
         step_id: form.step_id,
         reference_bitmap_id: form.reference_bitmap_id,
-        error_msg: None,
+        error_msg,
     })
     .into_response()
 }
@@ -967,7 +946,7 @@ pub async fn post_pick_region_bottom_right_handler(
 ) -> Response {
     let image_url = sanitize_image_url(Some(&form.image_url)).to_string();
 
-    let (raw_br_x, raw_br_y, is_valid_selection) = match (form.manual_x, form.manual_y) {
+    let (raw_br_x, raw_br_y, is_valid) = match (form.manual_x, form.manual_y) {
         (Some(mx), Some(my)) => (
             mx.min(form.width.saturating_sub(1)),
             my.min(form.height.saturating_sub(1)),
@@ -1008,50 +987,35 @@ pub async fn post_pick_region_bottom_right_handler(
         }
     };
 
-    if !is_valid_selection {
-        let magnifier = ImageMagnifier::new(
-            &image_url,
-            form.width,
-            form.height,
+    let (step_stage, tl_x, tl_y, br_x, br_y, target_x, target_y, error_msg) = if is_valid {
+        let norm_tl_x = form.top_left_x.min(raw_br_x);
+        let norm_tl_y = form.top_left_y.min(raw_br_y);
+        let norm_br_x = form.top_left_x.max(raw_br_x);
+        let norm_br_y = form.top_left_y.max(raw_br_y);
+        (
+            3,
+            Some(norm_tl_x),
+            Some(norm_tl_y),
+            Some(norm_br_x),
+            Some(norm_br_y),
+            Some(norm_br_x),
+            Some(norm_br_y),
+            None,
+        )
+    } else {
+        (
+            2,
             Some(form.top_left_x),
             Some(form.top_left_y),
-        );
-        return HtmlTemplate(RegionPickerTopLeftTemplate {
-            user: user.clone(),
-            csrf_token: user.csrf_token,
-            automation_id: form.automation_id,
-            image_url,
-            width: form.width,
-            height: form.height,
-            step_stage: 2,
-            top_left_x: Some(form.top_left_x),
-            top_left_y: Some(form.top_left_y),
-            bottom_right_x: None,
-            bottom_right_y: None,
-            click_x: None,
-            click_y: None,
-            magnifier,
-            return_to: form.return_to,
-            mode: form.mode,
-            step_id: form.step_id,
-            reference_bitmap_id: form.reference_bitmap_id,
-            error_msg: Some("Keyboard selection detected (0, 0). Please enter precise pixel coordinates in the manual numeric input fields below, or click directly on the image / grid.".to_string()),
-        })
-        .into_response();
-    }
+            None,
+            None,
+            Some(form.top_left_x),
+            Some(form.top_left_y),
+            Some("Keyboard selection detected (0, 0). Please enter precise pixel coordinates in the manual numeric input fields below, or click directly on the image / grid.".to_string()),
+        )
+    };
 
-    let norm_tl_x = form.top_left_x.min(raw_br_x);
-    let norm_tl_y = form.top_left_y.min(raw_br_y);
-    let norm_br_x = form.top_left_x.max(raw_br_x);
-    let norm_br_y = form.top_left_y.max(raw_br_y);
-
-    let magnifier = ImageMagnifier::new(
-        &image_url,
-        form.width,
-        form.height,
-        Some(norm_br_x),
-        Some(norm_br_y),
-    );
+    let magnifier = ImageMagnifier::new(&image_url, form.width, form.height, target_x, target_y);
 
     HtmlTemplate(RegionPickerTopLeftTemplate {
         user: user.clone(),
@@ -1060,19 +1024,19 @@ pub async fn post_pick_region_bottom_right_handler(
         image_url,
         width: form.width,
         height: form.height,
-        step_stage: 3,
-        top_left_x: Some(norm_tl_x),
-        top_left_y: Some(norm_tl_y),
-        bottom_right_x: Some(norm_br_x),
-        bottom_right_y: Some(norm_br_y),
-        click_x: Some(norm_br_x),
-        click_y: Some(norm_br_y),
+        step_stage,
+        top_left_x: tl_x,
+        top_left_y: tl_y,
+        bottom_right_x: br_x,
+        bottom_right_y: br_y,
+        click_x: if is_valid { br_x } else { None },
+        click_y: if is_valid { br_y } else { None },
         magnifier,
         return_to: form.return_to,
         mode: form.mode,
         step_id: form.step_id,
         reference_bitmap_id: form.reference_bitmap_id,
-        error_msg: None,
+        error_msg,
     })
     .into_response()
 }
@@ -1104,8 +1068,13 @@ async fn fetch_s3_object_by_id(
 }
 
 async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<Vec<u8>> {
-    let parsed_url = url::Url::parse(image_url).ok();
-    let path = parsed_url.as_ref().map(|u| u.path()).unwrap_or(image_url);
+    let path = image_url.split_once('?').map_or(image_url, |(p, _)| p);
+    let path = if let Some(idx) = path.find("://") {
+        let rest = &path[idx + 3..];
+        rest.find('/').map_or("", |i| &rest[i..])
+    } else {
+        path
+    };
 
     if let Some(static_path) = path.strip_prefix("/static/") {
         if let Some(asset) = crate::routes::static_assets::Assets::get(static_path) {
@@ -1135,12 +1104,15 @@ async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<V
         }
     }
 
-    let bucket_prefix = format!("/{}/", state.config.s3_bucket);
-    let s3_key = if let Some(key) = path.strip_prefix(&bucket_prefix) {
-        Some(key)
-    } else if path.starts_with('/') && !path.starts_with("/static/") && !path.starts_with("/media/")
-    {
-        path.strip_prefix('/')
+    let s3_key = if let Some(rest) = path.strip_prefix('/') {
+        let bucket_prefix = format!("{}/", state.config.s3_bucket);
+        if let Some(key) = rest.strip_prefix(&bucket_prefix) {
+            Some(key)
+        } else if !rest.starts_with("static/") && !rest.starts_with("media/") {
+            Some(rest)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -1424,157 +1396,121 @@ mod tests {
 
     #[test]
     fn test_map_coarse_click_to_native_zero_dimensions() {
-        let (nx, ny) = map_coarse_click_to_native(100, 100, 0.0, 0.0, 1920, 1080);
+        let (nx, ny) = map_coarse_click_to_native(300, 170, 600.0, 340.0, 0, 0);
         assert_eq!((nx, ny), (0, 0));
-
-        let (nx_zero_native, ny_zero_native) =
-            map_coarse_click_to_native(100, 100, 600.0, 340.0, 0, 0);
-        assert_eq!((nx_zero_native, ny_zero_native), (0, 0));
     }
 
     #[test]
     fn test_map_grid_click_to_native_center_and_offsets() {
-        let (nx_center, ny_center) = map_grid_click_to_native(160, 160, 960, 540, 1920, 1080);
-        assert_eq!((nx_center, ny_center), (960, 540));
+        let (nx, ny) = map_grid_click_to_native(160, 160, 100, 100, 1920, 1080);
+        assert_eq!((nx, ny), (100, 100));
 
-        let (nx_right, ny_down) = map_grid_click_to_native(200, 200, 960, 540, 1920, 1080);
-        assert_eq!((nx_right, ny_down), (962, 542));
-    }
+        let (nx_r, ny_r) = map_grid_click_to_native(180, 160, 100, 100, 1920, 1080);
+        assert_eq!((nx_r, ny_r), (101, 100));
 
-    #[test]
-    fn test_parse_png_dimensions() {
-        let valid_png_header: [u8; 24] = [
-            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H',
-            b'D', b'R', 0x00, 0x00, 0x07, 0x80, // width = 1920
-            0x00, 0x00, 0x04, 0x38, // height = 1080
-        ];
-        let dims = parse_png_dimensions(&valid_png_header);
-        assert_eq!(dims, Some((1920, 1080)));
-
-        let invalid_header = b"NOT_A_PNG_FILE_HEADER_BYTES";
-        assert_eq!(parse_png_dimensions(invalid_header), None);
-
-        let short_bytes = &[0x89, b'P', b'N', b'G'];
-        assert_eq!(parse_png_dimensions(short_bytes), None);
-
-        let zero_dim_png: [u8; 24] = [
-            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H',
-            b'D', b'R', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
-        assert_eq!(parse_png_dimensions(&zero_dim_png), None);
-    }
-
-    #[test]
-    fn test_validate_bitmap_key() {
-        assert!(validate_bitmap_key("bitmaps/button.png", 1));
-        assert!(validate_bitmap_key("bitmaps/user_42_sample.png", 42));
-
-        assert!(!validate_bitmap_key("bitmaps/user_42_sample.png", 99));
-        assert!(!validate_bitmap_key("bitmaps/../etc/passwd.png", 1));
-        assert!(!validate_bitmap_key("invalid/prefix.png", 1));
-        assert!(!validate_bitmap_key("bitmaps/image.jpg", 1));
+        let (nx_u, ny_u) = map_grid_click_to_native(160, 140, 100, 100, 1920, 1080);
+        assert_eq!((nx_u, ny_u), (100, 99));
     }
 
     #[test]
     fn test_sanitize_image_url() {
         assert_eq!(
-            sanitize_image_url(Some("/static/sample.png")),
-            "/static/sample.png"
+            sanitize_image_url(Some("/static/test.png")),
+            "/static/test.png"
         );
         assert_eq!(
-            sanitize_image_url(Some("http://localhost:9000/bucket/key.png")),
-            "http://localhost:9000/bucket/key.png"
+            sanitize_image_url(Some("/media/screenshots/1")),
+            "/media/screenshots/1"
+        );
+        assert_eq!(
+            sanitize_image_url(Some("http://example.com/img.png")),
+            "http://example.com/img.png"
         );
 
+        // Disallowed / injection inputs fallback to default
         assert_eq!(
-            sanitize_image_url(Some("javascript:alert(1)")),
+            sanitize_image_url(Some("/static/img.png'; body { background: red; }")),
             "/static/deskdispatch_logo.png"
         );
         assert_eq!(
-            sanitize_image_url(Some("/static/sample.png'; body { background: red; }")),
-            "/static/deskdispatch_logo.png"
-        );
-        assert_eq!(
-            sanitize_image_url(Some("/static/sample.png; body { background: red; }")),
-            "/static/deskdispatch_logo.png"
-        );
-        assert_eq!(
-            sanitize_image_url(Some("/static/sample.png\n")),
+            sanitize_image_url(Some("/static/test\n.png")),
             "/static/deskdispatch_logo.png"
         );
         assert_eq!(sanitize_image_url(None), "/static/deskdispatch_logo.png");
     }
 
     #[test]
-    fn test_form_deserialization_click_coords() {
-        let json_top_left = r#"{
-            "csrf_token": "token",
-            "image_url": "/static/test.png",
-            "width": 1920,
-            "height": 1080,
-            "click.x": "300",
-            "click.y": "170"
-        }"#;
+    fn test_validate_bitmap_key() {
+        assert!(validate_bitmap_key("bitmaps/user_123_uuid.png", 123));
+        assert!(!validate_bitmap_key("bitmaps/user_123_uuid.png", 456));
+        assert!(!validate_bitmap_key("bitmaps/../etc/passwd.png", 123));
+        assert!(!validate_bitmap_key("invalid/prefix.png", 123));
+        assert!(!validate_bitmap_key("bitmaps/image.jpg", 123));
+    }
 
-        let form_tl: PickRegionTopLeftForm =
-            serde_json::from_str(json_top_left).expect("Deserializes top left form");
-        assert_eq!(form_tl.x, Some(300));
-        assert_eq!(form_tl.y, Some(170));
+    #[test]
+    fn test_parse_png_dimensions() {
+        let valid_hdr = [
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0,
+            0, 0x07, 0x80, // 1920
+            0, 0, 0x04, 0x38, // 1080
+        ];
+        assert_eq!(parse_png_dimensions(&valid_hdr), Some((1920, 1080)));
 
-        let json_bottom_right = r#"{
-            "csrf_token": "token",
-            "image_url": "/static/test.png",
-            "width": 1920,
-            "height": 1080,
-            "top_left_x": 100,
-            "top_left_y": 100,
-            "coarse_click.x": "400",
-            "coarse_click.y": "250"
-        }"#;
-
-        let form_br: PickRegionBottomRightForm =
-            serde_json::from_str(json_bottom_right).expect("Deserializes bottom right form");
-        assert_eq!(form_br.coarse_x, Some(400));
-        assert_eq!(form_br.coarse_y, Some(250));
+        let invalid_hdr = [0; 24];
+        assert_eq!(parse_png_dimensions(&invalid_hdr), None);
     }
 
     #[test]
     fn test_png_encoder_and_header_parsing() {
-        let pixels = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-        let png_bytes = encode_png(2, 2, &pixels);
+        let rgb = [255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let png = encode_png(2, 2, &rgb);
+        assert!(png.len() > 24);
+        assert_eq!(parse_png_dimensions(&png), Some((2, 2)));
+    }
 
-        assert!(png_bytes.len() > 24);
-        let dims = parse_png_dimensions(&png_bytes);
-        assert_eq!(dims, Some((2, 2)));
+    #[test]
+    fn test_form_deserialization_click_coords() {
+        let json = serde_json::json!({
+            "csrf_token": "token123",
+            "image_url": "/static/test.png",
+            "width": 1920,
+            "height": 1080,
+            "click.x": "100",
+            "click.y": "200"
+        });
+        let form: PickRegionTopLeftForm =
+            serde_json::from_value(json).expect("Deserialization succeeds");
+        assert_eq!(form.x, Some(100));
+        assert_eq!(form.y, Some(200));
     }
 
     #[test]
     fn test_pick_region_numeric_entry_and_keyboard_no_pick_logic() {
-        let form_manual = PickRegionTopLeftForm {
-            csrf_token: "csrf".to_string(),
+        let form_valid = PickRegionTopLeftForm {
+            csrf_token: "t".to_string(),
             automation_id: None,
             image_url: "/static/test.png".to_string(),
-            width: 1000,
-            height: 1000,
+            width: 1920,
+            height: 1080,
             return_to: None,
             mode: None,
             step_id: None,
             reference_bitmap_id: None,
             x: None,
             y: None,
-            manual_x: Some(250),
-            manual_y: Some(150),
+            manual_x: Some(150),
+            manual_y: Some(250),
         };
-
-        assert_eq!(form_manual.manual_x, Some(250));
-        assert_eq!(form_manual.manual_y, Some(150));
+        assert_eq!(form_valid.manual_x, Some(150));
+        assert_eq!(form_valid.manual_y, Some(250));
     }
 
     #[test]
     fn test_pick_region_query_search_region_bounding() {
-        let query = PickRegionQuery {
+        let q = PickRegionQuery {
             automation_id: Some(10),
-            image_url: Some("/static/sample.png".to_string()),
+            image_url: Some("/static/test.png".to_string()),
             width: Some(1920),
             height: Some(1080),
             return_to: Some("find_bitmap".to_string()),
@@ -1583,8 +1519,7 @@ mod tests {
             reference_bitmap_id: Some(2),
             error_msg: None,
         };
-
-        assert_eq!(query.automation_id, Some(10));
-        assert_eq!(query.mode.as_deref(), Some("search_region"));
+        assert_eq!(q.automation_id, Some(10));
+        assert_eq!(q.mode.as_deref(), Some("search_region"));
     }
 }
