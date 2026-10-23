@@ -4,7 +4,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
-use sqlx::Row;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
@@ -50,7 +49,7 @@ pub struct CancelRunForm {
     pub csrf_token: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TaskRunListItem {
     pub id: i64,
     pub automation_id: i64,
@@ -68,6 +67,101 @@ pub struct TaskRunListItem {
     pub screenshot_step_id: Option<i64>,
     pub output_type: Option<String>,
     pub output_value: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct TaskRunDetailRow {
+    id: i64,
+    automation_id: i64,
+    automation_name: String,
+    schedule_id: Option<i64>,
+    schedule_name: Option<String>,
+    worker_id: Option<i64>,
+    worker_name: Option<String>,
+    worker_screen_width: Option<i32>,
+    worker_screen_height: Option<i32>,
+    status: String,
+    triggered_by: String,
+    queued_at: chrono::DateTime<chrono::Utc>,
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    error_message: Option<String>,
+    output_type: Option<String>,
+    output_value: Option<String>,
+    parameter_overrides: Option<serde_json::Value>,
+    dispatched_automation_json: Option<serde_json::Value>,
+}
+
+impl TaskRunDetailRow {
+    fn into_item(self) -> TaskRunListItem {
+        TaskRunListItem {
+            id: self.id,
+            automation_id: self.automation_id,
+            automation_name: self.automation_name,
+            schedule_id: self.schedule_id,
+            schedule_name: self.schedule_name,
+            worker_id: self.worker_id,
+            worker_name: self.worker_name,
+            status: self.status,
+            triggered_by: self.triggered_by,
+            queued_at: self.queued_at,
+            started_at: self.started_at,
+            completed_at: self.completed_at,
+            error_message: self.error_message,
+            screenshot_step_id: None,
+            output_type: self.output_type,
+            output_value: self.output_value,
+        }
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ExecutedStepRow {
+    id: i64,
+    step_id: i64,
+    step_type: String,
+    label: Option<String>,
+    started_at: chrono::DateTime<chrono::Utc>,
+    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    result: Option<String>,
+    captured_r: Option<i16>,
+    captured_g: Option<i16>,
+    captured_b: Option<i16>,
+    captured_found: Option<bool>,
+    captured_x: Option<i32>,
+    captured_y: Option<i32>,
+    screenshot_object_key: Option<String>,
+    step_screenshot_key: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RunVariableValueRow {
+    variable_id: i64,
+    variable_name: String,
+    var_type: String,
+    value: Option<String>,
+    set_at_step_id: Option<i64>,
+    set_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ParamDefaultRow {
+    name: String,
+    default_value: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ZipStepRow {
+    seq: Option<i32>,
+    step_id: i64,
+    screenshot_object_key: Option<String>,
+    step_screenshot_key: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct CancelRunRow {
+    automation_id: i64,
+    worker_id: Option<i64>,
 }
 
 impl TaskRunListItem {
@@ -122,7 +216,7 @@ impl TaskRunListItem {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AutomationOption {
     pub id: i64,
     pub name: String,
@@ -134,7 +228,7 @@ impl AutomationOption {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct WorkerOption {
     pub id: i64,
     pub display_name: String,
@@ -289,10 +383,13 @@ pub async fn get_runs_handler(
     // and filtered task runs list) concurrently using `tokio::join!`. This reduces page response latency
     // from the cumulative sum of 3 sequential database round-trips to the duration of the single longest query.
     let (auto_rows_res, worker_rows_res, run_rows_res) = tokio::join!(
-        sqlx::query("SELECT id, name FROM automations ORDER BY name ASC").fetch_all(&state.db),
-        sqlx::query("SELECT id, display_name FROM task_worker_pcs ORDER BY display_name ASC")
+        sqlx::query_as::<_, AutomationOption>("SELECT id, name FROM automations ORDER BY name ASC")
             .fetch_all(&state.db),
-        sqlx::query(
+        sqlx::query_as::<_, WorkerOption>(
+            "SELECT id, display_name FROM task_worker_pcs ORDER BY display_name ASC"
+        )
+        .fetch_all(&state.db),
+        sqlx::query_as::<_, TaskRunListItem>(
             r#"
             SELECT
                 tr.id,
@@ -308,7 +405,9 @@ pub async fn get_runs_handler(
                 tr.started_at,
                 tr.completed_at,
                 tr.error_message,
-                ss.step_id AS screenshot_step_id
+                ss.step_id AS screenshot_step_id,
+                tr.output_type,
+                tr.output_value
             FROM task_runs tr
             JOIN automations a ON tr.automation_id = a.id
             LEFT JOIN schedules s ON tr.schedule_id = s.id
@@ -340,50 +439,16 @@ pub async fn get_runs_handler(
         .fetch_all(&state.db)
     );
 
-    let auto_rows = auto_rows_res.unwrap_or_default();
-    let automations = auto_rows
-        .into_iter()
-        .map(|r| AutomationOption {
-            id: r.get("id"),
-            name: r.get("name"),
-        })
-        .collect();
+    let automations = auto_rows_res.unwrap_or_default();
+    let workers = worker_rows_res.unwrap_or_default();
 
-    let worker_rows = worker_rows_res.unwrap_or_default();
-    let workers = worker_rows
-        .into_iter()
-        .map(|r| WorkerOption {
-            id: r.get("id"),
-            display_name: r.get("display_name"),
-        })
-        .collect();
-
-    let run_rows = run_rows_res.unwrap_or_default();
+    let mut run_rows = run_rows_res.unwrap_or_default();
     let limit = 50;
     let has_next_page = run_rows.len() > limit;
-
-    let runs: Vec<TaskRunListItem> = run_rows
-        .into_iter()
-        .take(limit)
-        .map(|r| TaskRunListItem {
-            id: r.get("id"),
-            automation_id: r.get("automation_id"),
-            automation_name: r.get("automation_name"),
-            schedule_id: r.get("schedule_id"),
-            schedule_name: r.get("schedule_name"),
-            worker_id: r.get("worker_id"),
-            worker_name: r.get("worker_name"),
-            status: r.get("status"),
-            triggered_by: r.get("triggered_by"),
-            queued_at: r.get("queued_at"),
-            started_at: r.get("started_at"),
-            completed_at: r.get("completed_at"),
-            error_message: r.get("error_message"),
-            screenshot_step_id: r.get("screenshot_step_id"),
-            output_type: r.get("output_type"),
-            output_value: r.get("output_value"),
-        })
-        .collect();
+    if has_next_page {
+        run_rows.truncate(limit);
+    }
+    let runs = run_rows;
 
     let (next_queued_at, next_id) = if has_next_page {
         if let Some(last_item) = runs.last() {
@@ -419,7 +484,7 @@ pub async fn get_run_status_frame_handler(
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
 
-    let run_row = match sqlx::query(
+    let run_row = match sqlx::query_as::<_, TaskRunDetailRow>(
         r#"
         SELECT
             tr.id,
@@ -429,12 +494,16 @@ pub async fn get_run_status_frame_handler(
             s.name AS schedule_name,
             tr.worker_id,
             w.display_name AS worker_name,
+            w.screen_width AS worker_screen_width,
+            w.screen_height AS worker_screen_height,
             tr.status,
             COALESCE(u.display_name, u.username, s.name, 'Manual') AS triggered_by,
             tr.queued_at,
             tr.started_at,
             tr.completed_at,
             tr.error_message,
+            tr.output_type,
+            tr.output_value,
             tr.parameter_overrides,
             tr.dispatched_automation_json
         FROM task_runs tr
@@ -453,24 +522,7 @@ pub async fn get_run_status_frame_handler(
         _ => return (StatusCode::NOT_FOUND, "Task run not found").into_response(),
     };
 
-    let run_item = TaskRunListItem {
-        id: run_row.get("id"),
-        automation_id: run_row.get("automation_id"),
-        automation_name: run_row.get("automation_name"),
-        schedule_id: run_row.get("schedule_id"),
-        schedule_name: run_row.get("schedule_name"),
-        worker_id: run_row.get("worker_id"),
-        worker_name: run_row.get("worker_name"),
-        status: run_row.get("status"),
-        triggered_by: run_row.get("triggered_by"),
-        queued_at: run_row.get("queued_at"),
-        started_at: run_row.get("started_at"),
-        completed_at: run_row.get("completed_at"),
-        error_message: run_row.get("error_message"),
-        screenshot_step_id: None,
-        output_type: run_row.get("output_type"),
-        output_value: run_row.get("output_value"),
-    };
+    let run_item = run_row.into_item();
 
     let paused = query.paused.unwrap_or(false);
     let auto_refresh = (run_item.status == "queued"
@@ -501,7 +553,7 @@ pub async fn get_run_detail_handler(
     // This reduces page load database wait latency from 3 sequential round-trips to the duration
     // of the single longest query (~66% latency reduction).
     let (run_row_res, step_rows_res, var_rows_res) = tokio::join!(
-        sqlx::query(
+        sqlx::query_as::<_, TaskRunDetailRow>(
             r#"
             SELECT
                 tr.id,
@@ -519,6 +571,8 @@ pub async fn get_run_detail_handler(
                 tr.started_at,
                 tr.completed_at,
                 tr.error_message,
+                tr.output_type,
+                tr.output_value,
                 tr.parameter_overrides,
                 tr.dispatched_automation_json
             FROM task_runs tr
@@ -531,7 +585,7 @@ pub async fn get_run_detail_handler(
         )
         .bind(id)
         .fetch_optional(&state.db),
-        sqlx::query(
+        sqlx::query_as::<_, ExecutedStepRow>(
             r#"
             SELECT
                 trs.id,
@@ -558,7 +612,7 @@ pub async fn get_run_detail_handler(
         )
         .bind(id)
         .fetch_all(&state.db),
-        sqlx::query(
+        sqlx::query_as::<_, RunVariableValueRow>(
             r#"
             SELECT
                 trvv.variable_id,
@@ -582,33 +636,13 @@ pub async fn get_run_detail_handler(
         _ => return Redirect::to("/runs").into_response(),
     };
 
-    let worker_screen_width: u32 = run_row
-        .get::<Option<i32>, _>("worker_screen_width")
-        .unwrap_or(1920)
-        .max(1) as u32;
-    let worker_screen_height: u32 = run_row
-        .get::<Option<i32>, _>("worker_screen_height")
-        .unwrap_or(1080)
-        .max(1) as u32;
+    let worker_screen_width: u32 = run_row.worker_screen_width.unwrap_or(1920).max(1) as u32;
+    let worker_screen_height: u32 = run_row.worker_screen_height.unwrap_or(1080).max(1) as u32;
 
-    let run_item = TaskRunListItem {
-        id: run_row.get("id"),
-        automation_id: run_row.get("automation_id"),
-        automation_name: run_row.get("automation_name"),
-        schedule_id: run_row.get("schedule_id"),
-        schedule_name: run_row.get("schedule_name"),
-        worker_id: run_row.get("worker_id"),
-        worker_name: run_row.get("worker_name"),
-        status: run_row.get("status"),
-        triggered_by: run_row.get("triggered_by"),
-        queued_at: run_row.get("queued_at"),
-        started_at: run_row.get("started_at"),
-        completed_at: run_row.get("completed_at"),
-        error_message: run_row.get("error_message"),
-        screenshot_step_id: None,
-        output_type: run_row.get("output_type"),
-        output_value: run_row.get("output_value"),
-    };
+    let parameter_overrides_json = run_row.parameter_overrides.clone();
+    let dispatched_json = run_row.dispatched_automation_json.clone();
+
+    let run_item = run_row.into_item();
 
     let auto_refresh = run_item.status == "queued"
         || run_item.status == "running"
@@ -617,18 +651,12 @@ pub async fn get_run_detail_handler(
     let step_rows = step_rows_res.unwrap_or_default();
     let var_rows = var_rows_res.unwrap_or_default();
 
-    let mut executed_steps = Vec::new();
+    let mut executed_steps = Vec::with_capacity(step_rows.len());
     for (idx, r) in step_rows.into_iter().enumerate() {
-        let step_id: i64 = r.get("step_id");
-        let screenshot_key: Option<String> = r
-            .get::<Option<String>, _>("screenshot_object_key")
-            .or_else(|| r.get("step_screenshot_key"));
+        let screenshot_key = r.screenshot_object_key.or(r.step_screenshot_key);
 
-        let captured_x: Option<i32> = r.get("captured_x");
-        let captured_y: Option<i32> = r.get("captured_y");
-
-        let target_x = captured_x.map(|x| x.max(0) as u32);
-        let target_y = captured_y.map(|y| y.max(0) as u32);
+        let target_x = r.captured_x.map(|x| x.max(0) as u32);
+        let target_y = r.captured_y.map(|y| y.max(0) as u32);
 
         let magnifier = if let Some(ref key) = screenshot_key {
             let presigned_url = match state
@@ -636,7 +664,7 @@ pub async fn get_run_detail_handler(
                 .generate_presigned_get_url(key, Duration::from_secs(900))
             {
                 Ok(url) => url,
-                Err(_) => format!("/media/screenshots/{}", step_id),
+                Err(_) => format!("/media/screenshots/{}", r.step_id),
             };
 
             Some(ImageMagnifier::new(
@@ -651,41 +679,36 @@ pub async fn get_run_detail_handler(
         };
 
         executed_steps.push(ExecutedStepItem {
-            id: r.get("id"),
-            step_id,
+            id: r.id,
+            step_id: r.step_id,
             step_number: idx + 1,
-            step_type: r.get("step_type"),
-            label: r.get("label"),
-            result: r.get("result"),
-            started_at: r.get("started_at"),
-            completed_at: r.get("completed_at"),
-            captured_r: r.get("captured_r"),
-            captured_g: r.get("captured_g"),
-            captured_b: r.get("captured_b"),
-            captured_found: r.get("captured_found"),
-            captured_x,
-            captured_y,
+            step_type: r.step_type,
+            label: r.label,
+            result: r.result,
+            started_at: r.started_at,
+            completed_at: r.completed_at,
+            captured_r: r.captured_r,
+            captured_g: r.captured_g,
+            captured_b: r.captured_b,
+            captured_found: r.captured_found,
+            captured_x: r.captured_x,
+            captured_y: r.captured_y,
             screenshot_object_key: screenshot_key,
             magnifier,
         });
     }
 
-    let variable_values = var_rows
-        .into_iter()
-        .map(|r| RunVariableValueItem {
-            variable_id: r.get("variable_id"),
-            variable_name: r.get("variable_name"),
-            var_type: r.get("var_type"),
-            value: r.get("value"),
-            set_at_step_id: r.get("set_at_step_id"),
-            set_at: r.get("set_at"),
-        })
-        .collect();
-
-    let parameter_overrides_json: Option<serde_json::Value> =
-        run_row.try_get("parameter_overrides").ok().flatten();
-    let dispatched_json: Option<serde_json::Value> =
-        run_row.try_get("dispatched_automation_json").ok().flatten();
+    let mut variable_values = Vec::with_capacity(var_rows.len());
+    for r in var_rows {
+        variable_values.push(RunVariableValueItem {
+            variable_id: r.variable_id,
+            variable_name: r.variable_name,
+            var_type: r.var_type,
+            value: r.value.unwrap_or_default(),
+            set_at_step_id: r.set_at_step_id,
+            set_at: r.set_at,
+        });
+    }
 
     let mut parameters = Vec::new();
     let overrides_map = parameter_overrides_json
@@ -712,7 +735,7 @@ pub async fn get_run_detail_handler(
             });
         }
     } else {
-        let param_rows = sqlx::query(
+        let param_rows = sqlx::query_as::<_, ParamDefaultRow>(
             "SELECT name, default_value FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC",
         )
         .bind(run_item.automation_id)
@@ -721,18 +744,16 @@ pub async fn get_run_detail_handler(
         .unwrap_or_default();
 
         for p in param_rows {
-            let pname: String = p.get("name");
-            let default_val: String = p.get("default_value");
             let (val_str, is_override) = if let Some(override_val) = overrides_map
-                .and_then(|m| m.get(&pname))
+                .and_then(|m| m.get(&p.name))
                 .and_then(|v| v.as_str())
             {
                 (override_val.to_string(), true)
             } else {
-                (default_val, false)
+                (p.default_value, false)
             };
             parameters.push(RunParameterItem {
-                name: pname,
+                name: p.name,
                 value: val_str,
                 is_override,
             });
@@ -883,7 +904,7 @@ pub async fn get_run_screenshots_zip_handler(
         return (StatusCode::NOT_FOUND, "Task run not found").into_response();
     }
 
-    let step_rows = match sqlx::query(
+    let step_rows = match sqlx::query_as::<_, ZipStepRow>(
         r#"
         SELECT
             trs.seq,
@@ -915,20 +936,16 @@ pub async fn get_run_screenshots_zip_handler(
     let mut count = 0;
 
     for (idx, row) in step_rows.into_iter().enumerate() {
-        let screenshot_key: Option<String> = row
-            .get::<Option<String>, _>("screenshot_object_key")
-            .or_else(|| row.get("step_screenshot_key"));
+        let screenshot_key = row.screenshot_object_key.or(row.step_screenshot_key);
 
         if let Some(key) = screenshot_key
             && let Ok(bytes) = storage.get_object(&key).await
         {
-            let seq: Option<i32> = row.get("seq");
-            let step_id: i64 = row.get("step_id");
             let filename = format!(
                 "step_{:03}_seq_{}_step_{}.png",
                 idx + 1,
-                seq.unwrap_or((idx + 1) as i32),
-                step_id
+                row.seq.unwrap_or((idx + 1) as i32),
+                row.step_id
             );
 
             zip_writer.add_file(&filename, &bytes);
@@ -966,7 +983,7 @@ pub async fn post_cancel_run_handler(
     Path(id): Path<i64>,
     CsrfForm(_form): CsrfForm<CancelRunForm>,
 ) -> Response {
-    let update_res = sqlx::query(
+    let update_res = sqlx::query_as::<_, CancelRunRow>(
         r#"
         UPDATE task_runs
         SET status = CASE WHEN status = 'running' THEN 'cancelling' ELSE 'cancelled' END,
@@ -982,12 +999,9 @@ pub async fn post_cancel_run_handler(
 
     match update_res {
         Ok(Some(row)) => {
-            let automation_id: i64 = row.get("automation_id");
-            let worker_id: Option<i64> = row.get("worker_id");
-
             let details = serde_json::json!({
-                "automation_id": automation_id,
-                "worker_id": worker_id,
+                "automation_id": row.automation_id,
+                "worker_id": row.worker_id,
             });
 
             let _ = log_audit(

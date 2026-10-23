@@ -1116,7 +1116,8 @@ fn validate_branch(
             errors.push(AutomationLintError {
                 step_id: Some(sid),
                 step_number: Some(step_num),
-                message: "Window state branch condition is missing window match pattern.".to_string(),
+                message: "Window state branch condition is missing window match pattern."
+                    .to_string(),
             });
         }
     }

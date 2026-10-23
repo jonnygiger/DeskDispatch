@@ -214,5 +214,4 @@ async fn test_worker_mac_and_manual_wol_wake() {
         .to_str()
         .unwrap();
     assert!(location.contains("wake_success=true"));
-
 }

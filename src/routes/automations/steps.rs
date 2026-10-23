@@ -619,7 +619,11 @@ pub fn generate_clipboard_control_summary(
             let _ = write!(buf, "Clear clipboard");
         }
         "wait_for_change" => {
-            let _ = write!(buf, "Wait for clipboard change [timeout {:.1}s]", timeout_ms as f64 / 1000.0);
+            let _ = write!(
+                buf,
+                "Wait for clipboard change [timeout {:.1}s]",
+                timeout_ms as f64 / 1000.0
+            );
             if let Some(var_name) = output_var_name.map(str::trim).filter(|s| !s.is_empty()) {
                 let _ = write!(buf, " → store in «{}»", var_name);
             }
@@ -1895,8 +1899,12 @@ async fn render_step_error(
                 search_height: form.search_height,
                 match_threshold: form.match_threshold,
                 window_match_pattern: form.window_match_pattern.unwrap_or_default(),
-                window_match_type: form.window_match_type.unwrap_or_else(|| "contains".to_string()),
-                window_check_type: form.window_check_type.unwrap_or_else(|| "exists".to_string()),
+                window_match_type: form
+                    .window_match_type
+                    .unwrap_or_else(|| "contains".to_string()),
+                window_check_type: form
+                    .window_check_type
+                    .unwrap_or_else(|| "exists".to_string()),
                 on_match_step_id: form.on_match_step_id,
                 on_no_match_step_id: form.on_no_match_step_id,
                 steps: bundle.steps,
@@ -3138,20 +3146,42 @@ mod tests {
 
     #[test]
     fn test_generate_clipboard_control_summary() {
-        let s1 = generate_clipboard_control_summary("set_text", Some("Hello World"), None, None, false, 5000);
+        let s1 = generate_clipboard_control_summary(
+            "set_text",
+            Some("Hello World"),
+            None,
+            None,
+            false,
+            5000,
+        );
         assert_eq!(s1, "Set clipboard to \"Hello World\"");
 
-        let s2 = generate_clipboard_control_summary("set_text", None, Some("my_var"), None, false, 5000);
+        let s2 =
+            generate_clipboard_control_summary("set_text", None, Some("my_var"), None, false, 5000);
         assert_eq!(s2, "Set clipboard to «my_var»");
 
-        let s3 = generate_clipboard_control_summary("get_text", None, None, Some("out_var"), true, 5000);
-        assert_eq!(s3, "Read clipboard text → store in «out_var» (set as task output)");
+        let s3 =
+            generate_clipboard_control_summary("get_text", None, None, Some("out_var"), true, 5000);
+        assert_eq!(
+            s3,
+            "Read clipboard text → store in «out_var» (set as task output)"
+        );
 
         let s4 = generate_clipboard_control_summary("clear", None, None, None, false, 5000);
         assert_eq!(s4, "Clear clipboard");
 
-        let s5 = generate_clipboard_control_summary("wait_for_change", None, None, Some("out_var"), false, 5000);
-        assert_eq!(s5, "Wait for clipboard change [timeout 5.0s] → store in «out_var»");
+        let s5 = generate_clipboard_control_summary(
+            "wait_for_change",
+            None,
+            None,
+            Some("out_var"),
+            false,
+            5000,
+        );
+        assert_eq!(
+            s5,
+            "Wait for clipboard change [timeout 5.0s] → store in «out_var»"
+        );
     }
 
     #[test]

@@ -560,7 +560,9 @@ pub async fn fetch_full_automation_json_with_overrides(
                     } else if r.condition_type == "window_state" {
                         BranchConditionPayload::WindowState {
                             match_pattern: r.window_match_pattern.unwrap_or_default(),
-                            match_type: r.window_match_type.unwrap_or_else(|| "contains".to_string()),
+                            match_type: r
+                                .window_match_type
+                                .unwrap_or_else(|| "contains".to_string()),
                             check_type: r.window_check_type.unwrap_or_else(|| "exists".to_string()),
                             timeout_ms: 5000,
                             retry_interval_ms: 250,

@@ -547,7 +547,6 @@ pub fn generate_presigned_post_policy(
     })
 }
 
-
 /// Storage service wrapper for S3 / RustFS operations.
 #[derive(Clone, Debug)]
 pub struct StorageService {

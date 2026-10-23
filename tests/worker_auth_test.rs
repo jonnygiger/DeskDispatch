@@ -183,5 +183,4 @@ async fn test_worker_auth_extractor_integration() {
     assert_eq!(resp_json["worker_id"], worker_id);
     assert_eq!(resp_json["hostname"], hostname);
     assert_eq!(resp_json["display_name"], display_name);
-
 }
