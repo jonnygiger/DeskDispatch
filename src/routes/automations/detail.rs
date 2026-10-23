@@ -1,15 +1,13 @@
-use axum::{
-    extract::{Path, State},
-    response::{IntoResponse, Redirect},
-};
-use sqlx::Row;
-
 use super::parameters::validate_parameter_default_value;
 use super::steps::fetch_automation_step_views;
 use super::types::*;
 use crate::AppState;
 use crate::auth::{AuthUser, CsrfForm, log_audit};
 use crate::routes::auth::HtmlTemplate;
+use axum::{
+    extract::{Path, State},
+    response::{IntoResponse, Redirect},
+};
 
 /// GET /automations/{id}
 #[tracing::instrument(skip(state, user))]
@@ -240,7 +238,7 @@ pub async fn post_run_now_automation_handler(
     // Bolt Optimization: Concurrently fetch automation status, parameters, and step count using `tokio::join!`.
     // Reduces database round-trips from 4 to 2 on manual run triggers while preserving all validation rules and flash error cookies.
     let (auto_row_res, defined_params_res, step_count_res) = tokio::join!(
-        sqlx::query("SELECT status FROM automations WHERE id = $1")
+        sqlx::query_scalar::<_, String>("SELECT status FROM automations WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db),
         sqlx::query_as::<_, AutomationParameterItem>(
@@ -255,12 +253,10 @@ pub async fn post_run_now_automation_handler(
         .fetch_one(&state.db)
     );
 
-    let auto_row = match auto_row_res {
-        Ok(Some(row)) => row,
+    let status = match auto_row_res {
+        Ok(Some(status)) => status,
         _ => return Redirect::to("/automations").into_response(),
     };
-
-    let status: String = auto_row.get("status");
 
     // Refuse draft or archived automations
     if status != "active" {
@@ -370,7 +366,7 @@ pub async fn post_run_now_automation_handler(
         }
     };
 
-    let run_res = sqlx::query(
+    let task_run_id: i64 = match sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO task_runs (automation_id, schedule_id, worker_id, target_worker_group_id, parameter_overrides, status, triggered_by_user_id, queued_at)
         VALUES ($1, NULL, NULL, $2, $3, 'queued', $4, now())
@@ -382,10 +378,9 @@ pub async fn post_run_now_automation_handler(
     .bind(&parameter_overrides_json)
     .bind(user.id)
     .fetch_one(&mut *tx)
-    .await;
-
-    let task_run_id: i64 = match run_res {
-        Ok(row) => row.get("id"),
+    .await
+    {
+        Ok(run_id) => run_id,
         Err(e) => {
             tracing::error!(
                 "Failed to queue manual task run for automation {}: {}",

@@ -1,16 +1,14 @@
-use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::{IntoResponse, Redirect},
-};
-use sqlx::Row;
-
 use super::types::*;
 use crate::AppState;
 use crate::auth::{AuthUser, CsrfForm, log_audit};
 use crate::routes::auth::HtmlTemplate;
 use crate::routes::automations::variables::{
     ensure_all_automations_have_success_variable, ensure_success_variable,
+};
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Redirect},
 };
 
 /// GET /automations
@@ -157,7 +155,7 @@ pub async fn post_automations_handler(
 
     let description = form.description.unwrap_or_default().trim().to_string();
 
-    let record = sqlx::query(
+    let record = sqlx::query_scalar::<_, i64>(
         "INSERT INTO automations (name, description, status, created_by) VALUES ($1, $2, 'draft', $3) RETURNING id",
     )
     .bind(name)
@@ -167,8 +165,7 @@ pub async fn post_automations_handler(
     .await;
 
     match record {
-        Ok(row) => {
-            let id: i64 = row.get("id");
+        Ok(id) => {
             let _ = ensure_success_variable(&state.db, id).await;
             let _ = log_audit(
                 &state.db,

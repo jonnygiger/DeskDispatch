@@ -6,7 +6,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use sqlx::{FromRow, Row};
+use sqlx::FromRow;
 use std::str::FromStr;
 
 use super::auth::HtmlTemplate;
@@ -307,7 +307,7 @@ pub async fn post_create_user_handler(
             }
         };
 
-    let row = sqlx::query(
+    let new_user_id: i64 = match sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO users (username, password_hash, display_name, role, is_active, must_change_password)
         VALUES ($1, $2, $3, $4, true, $5)
@@ -320,10 +320,9 @@ pub async fn post_create_user_handler(
     .bind(role_str)
     .bind(form.must_change_password)
     .fetch_one(&state.db)
-    .await;
-
-    let new_user_id: i64 = match row {
-        Ok(r) => r.get("id"),
+    .await
+    {
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to insert user: {}", e);
             return HtmlTemplate(NewUserTemplate {
@@ -356,13 +355,43 @@ pub async fn post_create_user_handler(
     Redirect::to("/users").into_response()
 }
 
+#[derive(FromRow)]
+struct EditUserRow {
+    id: i64,
+    username: String,
+    display_name: String,
+    role: String,
+    is_active: bool,
+    must_change_password: bool,
+}
+
+#[derive(FromRow)]
+struct UserTargetRow {
+    username: String,
+    role: String,
+    is_active: bool,
+}
+
+#[derive(FromRow)]
+struct UserDeactTargetRow {
+    role: String,
+    is_active: bool,
+}
+
+#[derive(FromRow)]
+struct UserResetRow {
+    id: i64,
+    username: String,
+    display_name: String,
+}
+
 #[tracing::instrument(skip(state, user))]
 pub async fn get_edit_user_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let row = match sqlx::query(
+    let row = match sqlx::query_as::<_, EditUserRow>(
         "SELECT id, username, display_name, role, is_active, must_change_password FROM users WHERE id = $1",
     )
     .bind(id)
@@ -379,12 +408,12 @@ pub async fn get_edit_user_handler(
 
     HtmlTemplate(EditUserTemplate {
         user,
-        target_user_id: row.get("id"),
-        username: row.get("username"),
-        display_name: row.get("display_name"),
-        role: row.get("role"),
-        is_active: row.get("is_active"),
-        must_change_password: row.get("must_change_password"),
+        target_user_id: row.id,
+        username: row.username,
+        display_name: row.display_name,
+        role: row.role,
+        is_active: row.is_active,
+        must_change_password: row.must_change_password,
         error: None,
     })
     .into_response()
@@ -400,23 +429,24 @@ pub async fn post_edit_user_handler(
     let display_name = form.display_name.trim();
     let new_role_str = form.role.trim();
 
-    let target_row =
-        match sqlx::query("SELECT id, username, role, is_active FROM users WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(Some(r)) => r,
-            Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
-            Err(e) => {
-                tracing::error!("Failed to fetch target user: {}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
-            }
-        };
+    let target_row = match sqlx::query_as::<_, UserTargetRow>(
+        "SELECT username, role, is_active FROM users WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
+        Err(e) => {
+            tracing::error!("Failed to fetch target user: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    };
 
-    let target_username: String = target_row.get("username");
-    let current_role_str: String = target_row.get("role");
-    let current_is_active: bool = target_row.get("is_active");
+    let target_username = target_row.username;
+    let current_role_str = target_row.role;
+    let current_is_active = target_row.is_active;
 
     if display_name.is_empty() {
         return HtmlTemplate(EditUserTemplate {
@@ -546,10 +576,12 @@ pub async fn post_deactivate_user_handler(
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let target_row = match sqlx::query("SELECT role, is_active FROM users WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
+    let target_row = match sqlx::query_as::<_, UserDeactTargetRow>(
+        "SELECT role, is_active FROM users WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
     {
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
@@ -559,8 +591,8 @@ pub async fn post_deactivate_user_handler(
         }
     };
 
-    let role_str: String = target_row.get("role");
-    let is_active: bool = target_row.get("is_active");
+    let role_str = target_row.role;
+    let is_active = target_row.is_active;
 
     if role_str == "admin" && is_active {
         let active_admins: i64 = match sqlx::query_scalar(
@@ -620,10 +652,12 @@ pub async fn get_reset_password_handler(
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let row = match sqlx::query("SELECT id, username, display_name FROM users WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
+    let row = match sqlx::query_as::<_, UserResetRow>(
+        "SELECT id, username, display_name FROM users WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
     {
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
@@ -635,9 +669,9 @@ pub async fn get_reset_password_handler(
 
     HtmlTemplate(ResetPasswordTemplate {
         user,
-        target_user_id: row.get("id"),
-        target_username: row.get("username"),
-        target_display_name: row.get("display_name"),
+        target_user_id: row.id,
+        target_username: row.username,
+        target_display_name: row.display_name,
         must_change_password: true,
         error: None,
     })
@@ -651,10 +685,12 @@ pub async fn post_reset_password_handler(
     RequireAdmin(user): RequireAdmin,
     CsrfForm(form): CsrfForm<ResetPasswordForm>,
 ) -> impl IntoResponse {
-    let row = match sqlx::query("SELECT id, username, display_name FROM users WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
+    let row = match sqlx::query_as::<_, UserResetRow>(
+        "SELECT id, username, display_name FROM users WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
     {
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "User not found").into_response(),
@@ -664,8 +700,8 @@ pub async fn post_reset_password_handler(
         }
     };
 
-    let target_username: String = row.get("username");
-    let target_display_name: String = row.get("display_name");
+    let target_username = row.username;
+    let target_display_name = row.display_name;
 
     if form.new_password != form.confirm_password {
         return HtmlTemplate(ResetPasswordTemplate {

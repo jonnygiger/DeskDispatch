@@ -2,7 +2,6 @@ use crate::auth::AuthUser;
 use crate::de::deserialize_option_number;
 use askama::Template;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,8 +75,33 @@ impl SlaStats {
     }
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct SlaRow {
+    total_24h: i64,
+    success_24h: i64,
+    total_7d: i64,
+    success_7d: i64,
+    total_30d: i64,
+    success_30d: i64,
+    total_365d: i64,
+    success_365d: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AutoSlaRow {
+    automation_id: i64,
+    total_24h: i64,
+    success_24h: i64,
+    total_7d: i64,
+    success_7d: i64,
+    total_30d: i64,
+    success_30d: i64,
+    total_365d: i64,
+    success_365d: i64,
+}
+
 pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaStats {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, SlaRow>(
         r#"
         SELECT
             COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '24 hours') AS total_24h,
@@ -104,15 +128,6 @@ pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaS
     .flatten();
 
     if let Some(r) = row {
-        let total_24h: i64 = r.get("total_24h");
-        let success_24h: i64 = r.get("success_24h");
-        let total_7d: i64 = r.get("total_7d");
-        let success_7d: i64 = r.get("success_7d");
-        let total_30d: i64 = r.get("total_30d");
-        let success_30d: i64 = r.get("success_30d");
-        let total_365d: i64 = r.get("total_365d");
-        let success_365d: i64 = r.get("success_365d");
-
         let calc_uptime = |success: i64, total: i64| -> f64 {
             if total == 0 {
                 100.0
@@ -122,14 +137,14 @@ pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaS
         };
 
         SlaStats {
-            daily_uptime: calc_uptime(success_24h, total_24h),
-            weekly_uptime: calc_uptime(success_7d, total_7d),
-            monthly_uptime: calc_uptime(success_30d, total_30d),
-            yearly_uptime: calc_uptime(success_365d, total_365d),
-            total_runs_24h: total_24h,
-            total_runs_7d: total_7d,
-            total_runs_30d: total_30d,
-            total_runs_365d: total_365d,
+            daily_uptime: calc_uptime(r.success_24h, r.total_24h),
+            weekly_uptime: calc_uptime(r.success_7d, r.total_7d),
+            monthly_uptime: calc_uptime(r.success_30d, r.total_30d),
+            yearly_uptime: calc_uptime(r.success_365d, r.total_365d),
+            total_runs_24h: r.total_24h,
+            total_runs_7d: r.total_7d,
+            total_runs_30d: r.total_30d,
+            total_runs_365d: r.total_365d,
         }
     } else {
         SlaStats::default()
@@ -137,7 +152,7 @@ pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaS
 }
 
 pub async fn fetch_all_automations_sla(db: &sqlx::PgPool) -> HashMap<i64, SlaStats> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, AutoSlaRow>(
         r#"
         SELECT
             tr.automation_id,
@@ -173,27 +188,17 @@ pub async fn fetch_all_automations_sla(db: &sqlx::PgPool) -> HashMap<i64, SlaSta
     };
 
     for r in rows {
-        let auto_id: i64 = r.get("automation_id");
-        let total_24h: i64 = r.get("total_24h");
-        let success_24h: i64 = r.get("success_24h");
-        let total_7d: i64 = r.get("total_7d");
-        let success_7d: i64 = r.get("success_7d");
-        let total_30d: i64 = r.get("total_30d");
-        let success_30d: i64 = r.get("success_30d");
-        let total_365d: i64 = r.get("total_365d");
-        let success_365d: i64 = r.get("success_365d");
-
         map.insert(
-            auto_id,
+            r.automation_id,
             SlaStats {
-                daily_uptime: calc_uptime(success_24h, total_24h),
-                weekly_uptime: calc_uptime(success_7d, total_7d),
-                monthly_uptime: calc_uptime(success_30d, total_30d),
-                yearly_uptime: calc_uptime(success_365d, total_365d),
-                total_runs_24h: total_24h,
-                total_runs_7d: total_7d,
-                total_runs_30d: total_30d,
-                total_runs_365d: total_365d,
+                daily_uptime: calc_uptime(r.success_24h, r.total_24h),
+                weekly_uptime: calc_uptime(r.success_7d, r.total_7d),
+                monthly_uptime: calc_uptime(r.success_30d, r.total_30d),
+                yearly_uptime: calc_uptime(r.success_365d, r.total_365d),
+                total_runs_24h: r.total_24h,
+                total_runs_7d: r.total_7d,
+                total_runs_30d: r.total_30d,
+                total_runs_365d: r.total_365d,
             },
         );
     }
