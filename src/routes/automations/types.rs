@@ -691,6 +691,18 @@ pub struct NewFindBitmapQuery {
     pub search_height: Option<i32>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct EditStepQuery {
+    pub reference_bitmap_id: Option<i64>,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub condition_type: Option<String>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct NewBranchQuery {
     pub condition_type: Option<String>,
@@ -790,7 +802,7 @@ pub struct StepOcrExtractTemplate {
     pub is_edit: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 pub struct StepForm {
     pub step_type: Option<String>,
     pub label: Option<String>,
