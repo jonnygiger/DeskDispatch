@@ -20,7 +20,6 @@ use deskdispatch::routes::{
     get_index_handler, get_login_handler, get_password_handler, post_login_handler,
     post_logout_handler, post_password_handler,
 };
-use sqlx::Row;
 use std::net::IpAddr;
 use std::time::Duration;
 use tower::ServiceExt;
@@ -221,6 +220,43 @@ async fn get_test_pool() -> Option<sqlx::PgPool> {
         .ok()
 }
 
+struct AuthCleanupGuard {
+    pool: sqlx::PgPool,
+    user_id: i64,
+}
+
+impl Drop for AuthCleanupGuard {
+    fn drop(&mut self) {
+        let pool = self.pool.clone();
+        let user_id = self.user_id;
+
+        let cleanup = async move {
+            let _ = sqlx::query("DELETE FROM audit_log WHERE user_id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await;
+        };
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(cleanup);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn test_unauthenticated_redirect_to_login() {
     let Some(pool) = get_test_pool().await else {
@@ -276,7 +312,7 @@ async fn test_full_auth_and_password_workflow() {
         .unwrap()
         .to_string();
 
-    let user_row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO users (username, password_hash, display_name, role, is_active)
         VALUES ($1, $2, 'Test User', 'editor', true)
@@ -289,7 +325,10 @@ async fn test_full_auth_and_password_workflow() {
     .await
     .unwrap();
 
-    let user_id: i64 = user_row.get("id");
+    let _cleanup_guard = AuthCleanupGuard {
+        pool: pool.clone(),
+        user_id,
+    };
 
     let config = Config::from_env().unwrap();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
@@ -409,15 +448,14 @@ async fn test_full_auth_and_password_workflow() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // Verify audit log row created
-    let audit_row = sqlx::query(
-        "SELECT count(*) as count FROM audit_log WHERE user_id = $1 AND action = 'password_change'",
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE user_id = $1 AND action = 'password_change'",
     )
     .bind(user_id)
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let audit_count: i64 = audit_row.get("count");
     assert_eq!(audit_count, 1);
 
     // 6. Logout
@@ -432,10 +470,4 @@ async fn test_full_auth_and_password_workflow() {
 
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-
-    // Cleanup test user
-    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
-        .execute(&pool)
-        .await;
 }
