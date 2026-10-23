@@ -569,14 +569,12 @@ impl StepRunner {
                         check_type,
                         timeout_ms,
                         ..
-                    } => {
-                        self.input.check_window_state(
-                            match_pattern,
-                            match_type,
-                            check_type,
-                            *timeout_ms,
-                        )
-                    }
+                    } => self.input.check_window_state(
+                        match_pattern,
+                        match_type,
+                        check_type,
+                        *timeout_ms,
+                    ),
                 };
 
                 let target_step_id = if is_match {
@@ -658,26 +656,24 @@ impl StepRunner {
                     "clear" => {
                         let _ = self.input.clipboard_clear();
                     }
-                    "wait_for_change" => {
-                        match self.input.clipboard_wait_for_change(*timeout_ms) {
-                            Ok(read_text) => {
-                                if let Some(vid) = output_variable_id {
-                                    updates.push(VariableUpdateItem {
-                                        variable_id: *vid,
-                                        value: serde_json::json!(read_text),
-                                    });
-                                }
-                                if *set_as_task_output {
-                                    self.task_output_type = Some("string".to_string());
-                                    self.task_output_value = Some(read_text);
-                                }
+                    "wait_for_change" => match self.input.clipboard_wait_for_change(*timeout_ms) {
+                        Ok(read_text) => {
+                            if let Some(vid) = output_variable_id {
+                                updates.push(VariableUpdateItem {
+                                    variable_id: *vid,
+                                    value: serde_json::json!(read_text),
+                                });
                             }
-                            Err(e) => {
-                                warn!("Clipboard wait_for_change failed: {}", e);
-                                return Ok((None, *id, "failed".to_string(), None, captured));
+                            if *set_as_task_output {
+                                self.task_output_type = Some("string".to_string());
+                                self.task_output_value = Some(read_text);
                             }
                         }
-                    }
+                        Err(e) => {
+                            warn!("Clipboard wait_for_change failed: {}", e);
+                            return Ok((None, *id, "failed".to_string(), None, captured));
+                        }
+                    },
                     _ => {}
                 }
 

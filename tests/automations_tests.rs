@@ -2145,7 +2145,9 @@ async fn test_ocr_extract_step_crud_and_task_output() {
 #[tokio::test]
 async fn test_clipboard_control_step_crud_and_validation() {
     let Some(pool) = get_test_pool().await else {
-        println!("Database not available, skipping test_clipboard_control_step_crud_and_validation");
+        println!(
+            "Database not available, skipping test_clipboard_control_step_crud_and_validation"
+        );
         return;
     };
 
