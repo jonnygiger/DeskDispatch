@@ -19,8 +19,82 @@ async fn get_test_pool() -> Option<PgPool> {
         .ok()
 }
 
+struct RunNowCleanupGuard {
+    pool: PgPool,
+    user_id: i64,
+    automation_ids: Vec<i64>,
+    worker_group_ids: Vec<i64>,
+}
+
+impl Drop for RunNowCleanupGuard {
+    fn drop(&mut self) {
+        let pool = self.pool.clone();
+        let user_id = self.user_id;
+        let automation_ids = std::mem::take(&mut self.automation_ids);
+        let worker_group_ids = std::mem::take(&mut self.worker_group_ids);
+
+        let cleanup = async move {
+            if !automation_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM step_key_presses WHERE step_id IN (SELECT id FROM automation_steps WHERE automation_id = ANY($1))")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM automation_steps WHERE automation_id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM automation_parameters WHERE automation_id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM automations WHERE id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !worker_group_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM worker_groups WHERE id = ANY($1)")
+                    .bind(&worker_group_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            let _ = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+                .bind(user_id)
+                .execute(&pool)
+                .await;
+        };
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(cleanup);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct TaskRunDbRow {
+    automation_id: i64,
+    target_worker_group_id: Option<i64>,
+    parameter_overrides: Option<serde_json::Value>,
+    dispatched_automation_json: Option<serde_json::Value>,
+    status: String,
+}
+
 async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, String) {
-    let row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role) VALUES ($1, 'hash', $2, $3) RETURNING id",
     )
     .bind(username)
@@ -30,9 +104,7 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
     .await
     .unwrap();
 
-    let user_id: i64 = sqlx::Row::get(&row, "id");
-
-    let session_row = sqlx::query(
+    let session_id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO sessions (user_id, expires_at) VALUES ($1, now() + interval '1 hour') RETURNING id",
     )
     .bind(user_id)
@@ -40,7 +112,6 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
     .await
     .unwrap();
 
-    let session_id: uuid::Uuid = sqlx::Row::get(&session_row, "id");
     (user_id, session_id.to_string())
 }
 
@@ -94,7 +165,7 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
         ))
         .with_state(state);
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("run_now_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
@@ -105,22 +176,30 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
         config.session_secret.expose_secret(),
     );
 
+    let mut cleanup_guard = RunNowCleanupGuard {
+        pool: pool.clone(),
+        user_id: admin_id,
+        automation_ids: Vec::new(),
+        worker_group_ids: Vec::new(),
+    };
+
     // 1. Create worker group
-    let wg_row = sqlx::query(
+    let worker_group_id: i64 = sqlx::query_scalar(
         "INSERT INTO worker_groups (name, description) VALUES ($1, 'Test Group') RETURNING id",
     )
     .bind(format!("WG_{}", uuid::Uuid::new_v4().simple()))
     .fetch_one(&pool)
     .await
     .unwrap();
-    let worker_group_id: i64 = sqlx::Row::get(&wg_row, "id");
+    cleanup_guard.worker_group_ids.push(worker_group_id);
 
     // 2. Create active automation
-    let auto_row = sqlx::query("INSERT INTO automations (name, description, status, created_by) VALUES ('Overridden Automation', 'Desc', 'active', 1) RETURNING id")
+    let automation_id: i64 = sqlx::query_scalar("INSERT INTO automations (name, description, status, created_by) VALUES ('Overridden Automation', 'Desc', 'active', $1) RETURNING id")
+        .bind(admin_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let automation_id: i64 = sqlx::Row::get(&auto_row, "id");
+    cleanup_guard.automation_ids.push(automation_id);
 
     // 3. Add parameter to automation
     sqlx::query("INSERT INTO automation_parameters (automation_id, name, param_type, default_value, description) VALUES ($1, 'max_retries', 'int', '3', 'Max Retry Count')")
@@ -130,12 +209,12 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
         .unwrap();
 
     // 4. Add step to automation (active step required for Run Now)
-    let step_row = sqlx::query("INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, 10.0, 'key_press', 'Press Key', 0) RETURNING id")
+    let step_id: i64 = sqlx::query_scalar("INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, 10.0, 'key_press', 'Press Key', 0) RETURNING id")
         .bind(automation_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let step_id: i64 = sqlx::Row::get(&step_row, "id");
+
     sqlx::query("INSERT INTO step_key_presses (step_id, key_combo) VALUES ($1, 'enter')")
         .bind(step_id)
         .execute(&pool)
@@ -190,31 +269,23 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
     let task_run_id: i64 = location.trim_start_matches("/runs/").parse().unwrap();
 
     // 7. Verify task_run DB row
-    let run_db_row = sqlx::query("SELECT automation_id, target_worker_group_id, parameter_overrides, dispatched_automation_json, status FROM task_runs WHERE id = $1")
+    let run_db_row: TaskRunDbRow = sqlx::query_as("SELECT automation_id, target_worker_group_id, parameter_overrides, dispatched_automation_json, status FROM task_runs WHERE id = $1")
         .bind(task_run_id)
         .fetch_one(&pool)
         .await
         .unwrap();
 
-    let db_auto_id: i64 = sqlx::Row::get(&run_db_row, "automation_id");
-    let db_group_id: Option<i64> = sqlx::Row::get(&run_db_row, "target_worker_group_id");
-    let db_overrides_json: Option<serde_json::Value> =
-        sqlx::Row::get(&run_db_row, "parameter_overrides");
-    let db_dispatched_json: Option<serde_json::Value> =
-        sqlx::Row::get(&run_db_row, "dispatched_automation_json");
-    let db_status: String = sqlx::Row::get(&run_db_row, "status");
+    assert_eq!(run_db_row.automation_id, automation_id);
+    assert_eq!(run_db_row.target_worker_group_id, Some(worker_group_id));
+    assert_eq!(run_db_row.status, "queued");
 
-    assert_eq!(db_auto_id, automation_id);
-    assert_eq!(db_group_id, Some(worker_group_id));
-    assert_eq!(db_status, "queued");
-
-    let overrides_obj = db_overrides_json.expect("Expected parameter_overrides JSON");
+    let overrides_obj = run_db_row.parameter_overrides.expect("Expected parameter_overrides JSON");
     assert_eq!(
         overrides_obj.get("max_retries").and_then(|v| v.as_str()),
         Some("10")
     );
 
-    let dispatched_obj = db_dispatched_json.expect("Expected dispatched_automation_json");
+    let dispatched_obj = run_db_row.dispatched_automation_json.expect("Expected dispatched_automation_json");
     let params_val = dispatched_obj
         .get("parameters")
         .expect("Expected parameters in dispatched json");
@@ -261,12 +332,11 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
     assert_eq!(cancel_status, "cancelled");
 
     // 10. Test running -> cancelling state display
-    let run2_row = sqlx::query("INSERT INTO task_runs (automation_id, status, queued_at, started_at) VALUES ($1, 'running', now(), now()) RETURNING id")
+    let task_run2_id: i64 = sqlx::query_scalar("INSERT INTO task_runs (automation_id, status, queued_at, started_at) VALUES ($1, 'running', now(), now()) RETURNING id")
         .bind(automation_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let task_run2_id: i64 = sqlx::Row::get(&run2_row, "id");
 
     // Cancel running task run -> transitions to 'cancelling'
     let req = Request::builder()

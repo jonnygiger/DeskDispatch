@@ -6,7 +6,6 @@ use axum::{
 use deskdispatch::AppState;
 use deskdispatch::auth::LoginRateLimiter;
 use deskdispatch::config::Config;
-use sqlx::Row;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -80,7 +79,7 @@ async fn test_dashboard_stats_tiles() {
     // Seed test user with dummy hash (bypassing expensive password hashing)
     let username = format!("dashuser_{}", Uuid::new_v4().simple());
 
-    let user_row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO users (username, password_hash, display_name, role, is_active)
         VALUES ($1, 'hash', 'Dashboard Tester', 'admin', true)
@@ -91,19 +90,17 @@ async fn test_dashboard_stats_tiles() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let user_id: i64 = user_row.get("id");
 
     // Insert automations and worker
-    let auto1 = sqlx::query(
+    let auto1_id: i64 = sqlx::query_scalar(
         "INSERT INTO automations (name, status, created_by) VALUES ('Auto 1', 'active', $1) RETURNING id",
     )
     .bind(user_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let auto1_id: i64 = auto1.get("id");
 
-    let _auto2 = sqlx::query(
+    let _auto2_id: i64 = sqlx::query_scalar(
         "INSERT INTO automations (name, status, created_by) VALUES ('Auto 2', 'draft', $1) RETURNING id",
     )
     .bind(user_id)
@@ -111,13 +108,12 @@ async fn test_dashboard_stats_tiles() {
     .await
     .unwrap();
 
-    let worker1 = sqlx::query(
+    let worker1_id: i64 = sqlx::query_scalar(
         "INSERT INTO task_worker_pcs (hostname, display_name, api_key_hash, status) VALUES ('host1', 'Worker 1', E'\\\\x1234', 'online') RETURNING id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    let worker1_id: i64 = worker1.get("id");
 
     // RAII guard ensures cleanup on drop, even if assertions panic
     let _cleanup_guard = DashboardCleanupGuard {
