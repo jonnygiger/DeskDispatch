@@ -23,54 +23,54 @@ pub async fn get_automations_handler(
     let status_filter = query.status.unwrap_or_else(|| "all".to_string());
     let search_query = query.q.unwrap_or_default();
 
-    let mut sql = String::from(
-        r#"
-        SELECT
-            a.id,
-            a.name,
-            a.description,
-            a.status,
-            COALESCE(s.step_count, 0) AS step_count,
-            a.updated_at,
-            lr.id AS last_run_id,
-            lr.status AS last_run_status,
-            lr.queued_at AS last_run_at
-        FROM automations a
-        LEFT JOIN (
-            SELECT automation_id, COUNT(*) AS step_count
-            FROM automation_steps
-            GROUP BY automation_id
-        ) s ON a.id = s.automation_id
-        LEFT JOIN LATERAL (
-            SELECT id, status, queued_at
-            FROM task_runs
-            WHERE automation_id = a.id
-            ORDER BY queued_at DESC, id DESC
-            LIMIT 1
-        ) lr ON true
-        WHERE 1=1
-        "#,
-    );
+    let status_param = if status_filter == "all" || status_filter.is_empty() {
+        None
+    } else {
+        Some(status_filter.as_str())
+    };
 
-    if status_filter != "all" {
-        sql.push_str(&format!(
-            " AND a.status = '{}'",
-            status_filter.replace('\'', "''")
-        ));
-    }
-
-    if !search_query.trim().is_empty() {
-        let escaped = search_query.trim().replace('\'', "''");
-        sql.push_str(&format!(
-            " AND (a.name ILIKE '%{}%' OR a.description ILIKE '%{}%')",
-            escaped, escaped
-        ));
-    }
-
-    sql.push_str(" ORDER BY a.updated_at DESC, a.id DESC");
+    let search_trimmed = search_query.trim();
+    let search_param = if search_trimmed.is_empty() {
+        None
+    } else {
+        Some(format!("%{}%", search_trimmed))
+    };
 
     let (rows_res, sla_map) = tokio::join!(
-        sqlx::query_as::<_, AutomationListItemRow>(sqlx::AssertSqlSafe(sql)).fetch_all(&state.db),
+        sqlx::query_as::<_, AutomationListItemRow>(
+            r#"
+            SELECT
+                a.id,
+                a.name,
+                a.description,
+                a.status,
+                COALESCE(s.step_count, 0) AS step_count,
+                a.updated_at,
+                lr.id AS last_run_id,
+                lr.status AS last_run_status,
+                lr.queued_at AS last_run_at
+            FROM automations a
+            LEFT JOIN (
+                SELECT automation_id, COUNT(*) AS step_count
+                FROM automation_steps
+                WHERE deleted_at IS NULL
+                GROUP BY automation_id
+            ) s ON a.id = s.automation_id
+            LEFT JOIN LATERAL (
+                SELECT id, status, queued_at
+                FROM task_runs
+                WHERE automation_id = a.id
+                ORDER BY queued_at DESC, id DESC
+                LIMIT 1
+            ) lr ON true
+            WHERE ($1::TEXT IS NULL OR a.status = $1)
+              AND ($2::TEXT IS NULL OR a.name ILIKE $2 OR a.description ILIKE $2)
+            ORDER BY a.updated_at DESC, a.id DESC
+            "#,
+        )
+        .bind(status_param)
+        .bind(search_param.as_deref())
+        .fetch_all(&state.db),
         fetch_all_automations_sla(&state.db)
     );
 

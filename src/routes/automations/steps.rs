@@ -491,19 +491,28 @@ pub fn generate_type_text_summary(text_to_type: &str, delay_between_keys_ms: i32
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
     let trimmed = text_to_type.trim();
-    let display_text = if trimmed.len() > 30 {
-        format!("{}...", &trimmed[..30])
-    } else {
-        trimmed.to_string()
-    };
 
     if delay_between_keys_ms > 0 {
-        let _ = write!(
-            buf,
-            "Type \"{display_text}\" ({delay_between_keys_ms}ms key delay)"
-        );
+        if trimmed.len() > 30 {
+            let _ = write!(
+                buf,
+                "Type \"{}...\" ({}ms key delay)",
+                &trimmed[..30],
+                delay_between_keys_ms
+            );
+        } else {
+            let _ = write!(
+                buf,
+                "Type \"{}\" ({}ms key delay)",
+                trimmed, delay_between_keys_ms
+            );
+        }
     } else {
-        let _ = write!(buf, "Type \"{display_text}\"");
+        if trimmed.len() > 30 {
+            let _ = write!(buf, "Type \"{}...\"", &trimmed[..30]);
+        } else {
+            let _ = write!(buf, "Type \"{}\"", trimmed);
+        }
     }
     buf
 }
@@ -601,51 +610,43 @@ pub fn generate_clipboard_control_summary(
 ) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(96);
-    match action.to_lowercase().as_str() {
-        "set_text" => {
-            let _ = write!(buf, "Set clipboard to ");
-            if let Some(var_name) = input_var_name.map(str::trim).filter(|s| !s.is_empty()) {
-                let _ = write!(buf, "«{}»", var_name);
-            } else if let Some(txt) = text_to_set.map(str::trim).filter(|s| !s.is_empty()) {
-                let display = if txt.chars().count() > 30 {
-                    let trunc: String = txt.chars().take(27).collect();
-                    format!("\"{}...\"", trunc)
-                } else {
-                    format!("\"{}\"", txt)
-                };
-                let _ = write!(buf, "{}", display);
+    if action.eq_ignore_ascii_case("set_text") {
+        let _ = write!(buf, "Set clipboard to ");
+        if let Some(var_name) = input_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+            let _ = write!(buf, "«{}»", var_name);
+        } else if let Some(txt) = text_to_set.map(str::trim).filter(|s| !s.is_empty()) {
+            if txt.chars().count() > 30 {
+                let _ = write!(buf, "\"{}\"...", txt.chars().take(27).collect::<String>());
             } else {
-                let _ = write!(buf, "text");
+                let _ = write!(buf, "\"{}\"", txt);
             }
+        } else {
+            let _ = write!(buf, "text");
         }
-        "get_text" => {
-            let _ = write!(buf, "Read clipboard text");
-            if let Some(var_name) = output_var_name.map(str::trim).filter(|s| !s.is_empty()) {
-                let _ = write!(buf, " → store in «{}»", var_name);
-            }
-            if set_as_task_output {
-                let _ = write!(buf, " (set as task output)");
-            }
+    } else if action.eq_ignore_ascii_case("get_text") {
+        let _ = write!(buf, "Read clipboard text");
+        if let Some(var_name) = output_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+            let _ = write!(buf, " → store in «{}»", var_name);
         }
-        "clear" => {
-            let _ = write!(buf, "Clear clipboard");
+        if set_as_task_output {
+            let _ = write!(buf, " (set as task output)");
         }
-        "wait_for_change" => {
-            let _ = write!(
-                buf,
-                "Wait for clipboard change [timeout {:.1}s]",
-                timeout_ms as f64 / 1000.0
-            );
-            if let Some(var_name) = output_var_name.map(str::trim).filter(|s| !s.is_empty()) {
-                let _ = write!(buf, " → store in «{}»", var_name);
-            }
-            if set_as_task_output {
-                let _ = write!(buf, " (set as task output)");
-            }
+    } else if action.eq_ignore_ascii_case("clear") {
+        let _ = write!(buf, "Clear clipboard");
+    } else if action.eq_ignore_ascii_case("wait_for_change") {
+        let _ = write!(
+            buf,
+            "Wait for clipboard change [timeout {:.1}s]",
+            timeout_ms as f64 / 1000.0
+        );
+        if let Some(var_name) = output_var_name.map(str::trim).filter(|s| !s.is_empty()) {
+            let _ = write!(buf, " → store in «{}»", var_name);
         }
-        _ => {
-            let _ = write!(buf, "Clipboard operation");
+        if set_as_task_output {
+            let _ = write!(buf, " (set as task output)");
         }
+    } else {
+        let _ = write!(buf, "Clipboard operation");
     }
     buf
 }
