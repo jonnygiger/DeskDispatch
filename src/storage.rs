@@ -460,8 +460,9 @@ pub fn generate_presigned_url_with_query(
     let signature_bytes = hmac_sha256(&k_signing, string_to_sign.as_bytes());
     let signature_hex = encode_hex(&signature_bytes);
 
-    let mut full_url =
-        String::with_capacity(base_url.len() + encoded_key_path.len() + canonical_query_string.len() + 64);
+    let mut full_url = String::with_capacity(
+        base_url.len() + encoded_key_path.len() + canonical_query_string.len() + 64,
+    );
     if clean_key.is_empty() {
         let _ = write!(
             full_url,

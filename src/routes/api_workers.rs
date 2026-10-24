@@ -1477,10 +1477,7 @@ pub async fn get_worker_bitmap_handler(
         .await
         .map_err(|e| AppError::Internal(format!("Failed to fetch bitmap {id}: {e}")))?;
 
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, "image/png")],
-        bytes,
-    ))
+    Ok(([(axum::http::header::CONTENT_TYPE, "image/png")], bytes))
 }
 
 #[tracing::instrument(skip(_worker, state))]

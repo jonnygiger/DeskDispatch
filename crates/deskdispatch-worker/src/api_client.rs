@@ -336,10 +336,7 @@ impl WorkerApiClient {
             .as_ref()
             .ok_or_else(|| "API key required to download bitmap".to_string())?;
 
-        let url = format!(
-            "{}/api/v1/workers/bitmaps/{}",
-            self.server_url, bitmap_id
-        );
+        let url = format!("{}/api/v1/workers/bitmaps/{}", self.server_url, bitmap_id);
         let resp = self
             .client
             .get(&url)

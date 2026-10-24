@@ -2199,10 +2199,10 @@ async fn validate_step_form(
             let is_region_mode = form.click_mode.as_deref() == Some("region")
                 || (form.click_mode.is_none() && form.region_variable_id.is_some());
             if is_region_mode {
-                if form.region_variable_id.is_none() {
-                    return Err("Please select a valid Region variable.".to_string());
-                }
-                validate_automation_variables_exist(db, automation_id, &[form.region_variable_id.unwrap()]).await?;
+                let reg_id = form
+                    .region_variable_id
+                    .ok_or_else(|| "Please select a valid Region variable.".to_string())?;
+                validate_automation_variables_exist(db, automation_id, &[reg_id]).await?;
             } else {
                 validate_literal_or_reference(
                     form.x_mode.as_deref(),
@@ -2222,22 +2222,26 @@ async fn validate_step_form(
             let is_region_mode = form.click_mode.as_deref() == Some("region")
                 || (form.click_mode.is_none() && form.region_variable_id.is_some());
             if is_region_mode {
-                if form.region_variable_id.is_none() {
-                    return Err("Please select a valid Region variable.".to_string());
-                }
-                validate_automation_variables_exist(db, automation_id, &[form.region_variable_id.unwrap()]).await?;
+                let reg_id = form
+                    .region_variable_id
+                    .ok_or_else(|| "Please select a valid Region variable.".to_string())?;
+                validate_automation_variables_exist(db, automation_id, &[reg_id]).await?;
             } else {
                 let mut var_ids = Vec::new();
                 if form.x_mode.as_deref() == Some("variable") {
                     match form.x_variable_id.filter(|&id| id > 0) {
                         Some(id) => var_ids.push(id),
-                        None => return Err("Please select a variable for X coordinate.".to_string()),
+                        None => {
+                            return Err("Please select a variable for X coordinate.".to_string());
+                        }
                     }
                 }
                 if form.y_mode.as_deref() == Some("variable") {
                     match form.y_variable_id.filter(|&id| id > 0) {
                         Some(id) => var_ids.push(id),
-                        None => return Err("Please select a variable for Y coordinate.".to_string()),
+                        None => {
+                            return Err("Please select a variable for Y coordinate.".to_string());
+                        }
                     }
                 }
                 validate_automation_variables_exist(db, automation_id, &var_ids).await?;
@@ -2265,13 +2269,7 @@ async fn validate_step_form(
                                 "Please select an input variable for clipboard text.".to_string()
                             );
                         }
-                    } else if form
-                        .text_to_set
-                        .as_deref()
-                        .unwrap_or("")
-                        .trim()
-                        .is_empty()
-                    {
+                    } else if form.text_to_set.as_deref().unwrap_or("").trim().is_empty() {
                         return Err("Text to set cannot be empty.".to_string());
                     }
                 }

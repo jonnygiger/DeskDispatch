@@ -135,8 +135,14 @@ impl Modifiers {
 fn is_modifier(code: u16) -> bool {
     matches!(
         code,
-        KEY_LEFTCTRL | KEY_RIGHTCTRL | KEY_LEFTSHIFT | KEY_RIGHTSHIFT | KEY_LEFTALT
-            | KEY_RIGHTALT | KEY_LEFTMETA | KEY_RIGHTMETA
+        KEY_LEFTCTRL
+            | KEY_RIGHTCTRL
+            | KEY_LEFTSHIFT
+            | KEY_RIGHTSHIFT
+            | KEY_LEFTALT
+            | KEY_RIGHTALT
+            | KEY_LEFTMETA
+            | KEY_RIGHTMETA
     )
 }
 
@@ -198,10 +204,10 @@ static DIGITS: [&str; 10] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 static LETTERS_QWERTY: [&str; 10] = ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"];
 static LETTERS_HOME: [&str; 9] = ["a", "s", "d", "f", "g", "h", "j", "k", "l"];
 static LETTERS_BOTTOM: [&str; 7] = ["z", "x", "c", "v", "b", "n", "m"];
-static F_KEYS: [&str; 10] = [
-    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10",
+static F_KEYS: [&str; 10] = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"];
+static KP_DIGITS: [&str; 9] = [
+    "KP_1", "KP_2", "KP_3", "KP_4", "KP_5", "KP_6", "KP_7", "KP_8", "KP_9",
 ];
-static KP_DIGITS: [&str; 9] = ["KP_1", "KP_2", "KP_3", "KP_4", "KP_5", "KP_6", "KP_7", "KP_8", "KP_9"];
 
 fn eviocgbit(event_type: u8, len: usize) -> libc::c_ulong {
     ((2u64 << 30) | ((len as u64) << 16) | (u64::from(b'E') << 8) | (0x20 + u64::from(event_type)))
@@ -243,7 +249,13 @@ fn read_abs_info(file: &File, abs: u8) -> Option<InputAbsInfo> {
 fn read_device_name(file: &File) -> String {
     let mut buf = [0u8; 256];
     // SAFETY: EVIOCGNAME writes at most 255 bytes plus NUL into `buf`.
-    let ret = unsafe { libc::ioctl(file.as_raw_fd(), 0x80ff4506u64 as libc::c_ulong, buf.as_mut_ptr()) };
+    let ret = unsafe {
+        libc::ioctl(
+            file.as_raw_fd(),
+            0x80ff4506u64 as libc::c_ulong,
+            buf.as_mut_ptr(),
+        )
+    };
     if ret < 0 {
         return String::new();
     }
@@ -382,13 +394,7 @@ fn spawn_reader(
             }
 
             // SAFETY: buffer is sized to hold whole `InputEvent` records and is valid for writes.
-            let bytes_read = unsafe {
-                libc::read(
-                    fd,
-                    buffer.as_mut_ptr().cast(),
-                    buffer.len(),
-                )
-            };
+            let bytes_read = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
             if bytes_read <= 0 {
                 continue;
             }
@@ -463,8 +469,8 @@ fn scale_abs(info: &InputAbsInfo, raw: i32, screen_extent: u32) -> i32 {
     if max <= min || screen_extent == 0 {
         return raw;
     }
-    let scaled = (f64::from(raw - min) / f64::from(max - min) * f64::from(screen_extent - 1))
-        .round() as i32;
+    let scaled =
+        (f64::from(raw - min) / f64::from(max - min) * f64::from(screen_extent - 1)).round() as i32;
     scaled.clamp(0, screen_extent as i32 - 1)
 }
 
@@ -526,9 +532,7 @@ async fn flush_events(
     }
 
     let batch = events.clone();
-    let response = api_client
-        .post_recording_events(session_id, batch)
-        .await?;
+    let response = api_client.post_recording_events(session_id, batch).await?;
     events.clear();
     Ok(response.stop_requested)
 }
@@ -713,11 +717,11 @@ async fn handle_raw_input(
         }
         (DeviceRole::PrimaryPointer | DeviceRole::SecondaryPointer, EV_REL) => {
             if input.code == REL_X {
-                state.pointer_x =
-                    (state.pointer_x + input.value).clamp(0, state.screen_width.saturating_sub(1) as i32);
+                state.pointer_x = (state.pointer_x + input.value)
+                    .clamp(0, state.screen_width.saturating_sub(1) as i32);
             } else if input.code == REL_Y {
-                state.pointer_y =
-                    (state.pointer_y + input.value).clamp(0, state.screen_height.saturating_sub(1) as i32);
+                state.pointer_y = (state.pointer_y + input.value)
+                    .clamp(0, state.screen_height.saturating_sub(1) as i32);
             }
         }
         (DeviceRole::PrimaryPointer | DeviceRole::SecondaryPointer, EV_KEY) => {
