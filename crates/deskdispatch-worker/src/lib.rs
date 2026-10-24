@@ -1,6 +1,7 @@
 pub mod api_client;
 pub mod config;
 pub mod engine;
+pub mod recording;
 pub mod runner;
 pub mod service;
 

@@ -2,6 +2,7 @@ use clap::Parser;
 use deskdispatch_protocol::*;
 use deskdispatch_worker::api_client::WorkerApiClient;
 use deskdispatch_worker::config::{CliArgs, Commands, ServiceAction, WorkerConfig};
+use deskdispatch_worker::recording;
 use deskdispatch_worker::runner::StepRunner;
 use deskdispatch_worker::service::SystemdServiceManager;
 use std::sync::Arc;
@@ -178,6 +179,18 @@ async fn run_worker_loop(args: CliArgs) -> Result<(), Box<dyn std::error::Error>
                     recording_session_id = recording_session_id,
                     "Start recording assignment received"
                 );
+                if let Err(e) =
+                    recording::run_recording_session(&config, &api_client, recording_session_id)
+                        .await
+                {
+                    error!(
+                        recording_session_id = recording_session_id,
+                        "Recording session error: {}", e
+                    );
+                    let _ = api_client
+                        .post_worker_stop_recording(recording_session_id)
+                        .await;
+                }
             }
             Err(e) => {
                 warn!(

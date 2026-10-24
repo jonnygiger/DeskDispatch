@@ -65,6 +65,10 @@ pub fn router() -> Router<AppState> {
             "/api/v1/workers/bitmaps/commit",
             post(post_bitmap_commit_handler),
         )
+        .route(
+            "/api/v1/workers/bitmaps/{id}",
+            get(get_worker_bitmap_handler),
+        )
 }
 
 #[tracing::instrument(skip(db))]
@@ -95,6 +99,7 @@ struct StepRow {
     id: i64,
     label: Option<String>,
     post_delay_ms: i32,
+    step_type: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -192,6 +197,31 @@ struct BranchRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct OcrExtractRow {
+    step_id: i64,
+    search_x: Option<i32>,
+    search_y: Option<i32>,
+    search_width: Option<i32>,
+    search_height: Option<i32>,
+    region_variable_id: Option<i64>,
+    output_variable_id: Option<i64>,
+    set_as_task_output: bool,
+    timeout_ms: i64,
+    retry_interval_ms: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct ClipboardControlRow {
+    step_id: i64,
+    action: String,
+    text_to_set: Option<String>,
+    input_variable_id: Option<i64>,
+    output_variable_id: Option<i64>,
+    set_as_task_output: bool,
+    timeout_ms: i64,
+}
+
+#[derive(sqlx::FromRow)]
 struct AutomationMetaRow {
     id: i64,
     name: String,
@@ -279,7 +309,7 @@ pub async fn fetch_full_automation_json_with_overrides(
     .fetch_all(db);
 
     let steps_fut = sqlx::query_as::<_, StepRow>(
-        "SELECT id, label, post_delay_ms FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+        "SELECT id, label, post_delay_ms, step_type FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(db);
@@ -358,6 +388,31 @@ pub async fn fetch_full_automation_json_with_overrides(
     .bind(automation_id)
     .fetch_all(db);
 
+    let ocr_fut = sqlx::query_as::<_, OcrExtractRow>(
+        r#"
+        SELECT oe.step_id, oe.search_x, oe.search_y, oe.search_width, oe.search_height,
+               oe.region_variable_id, oe.output_variable_id, oe.set_as_task_output,
+               oe.timeout_ms, oe.retry_interval_ms
+        FROM step_ocr_extracts oe
+        JOIN automation_steps s ON oe.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
+    let cb_fut = sqlx::query_as::<_, ClipboardControlRow>(
+        r#"
+        SELECT scc.step_id, scc.action, scc.text_to_set, scc.input_variable_id,
+               scc.output_variable_id, scc.set_as_task_output, scc.timeout_ms
+        FROM step_clipboard_controls scc
+        JOIN automation_steps s ON scc.step_id = s.id
+        WHERE s.automation_id = $1 AND s.deleted_at IS NULL
+        "#,
+    )
+    .bind(automation_id)
+    .fetch_all(db);
+
     let (
         param_rows,
         var_rows,
@@ -370,9 +425,11 @@ pub async fn fetch_full_automation_json_with_overrides(
         find_pixel_rows,
         find_bitmap_rows,
         branch_rows,
+        ocr_rows,
+        clipboard_rows,
     ) = tokio::try_join!(
         params_fut, vars_fut, steps_fut, mc_fut, ms_fut, kp_fut, tt_fut, wc_fut, fp_fut, fb_fut,
-        branch_fut
+        branch_fut, ocr_fut, cb_fut
     )?;
 
     let mut parameters_map = HashMap::with_capacity(param_rows.len());
@@ -417,6 +474,8 @@ pub async fn fetch_full_automation_json_with_overrides(
         FindPixel(FindPixelRow),
         FindBitmap(FindBitmapRow),
         Branch(BranchRow),
+        OcrExtract(OcrExtractRow),
+        ClipboardControl(ClipboardControlRow),
     }
 
     let mut details_map = HashMap::with_capacity(step_rows.len());
@@ -443,6 +502,12 @@ pub async fn fetch_full_automation_json_with_overrides(
     }
     for r in branch_rows {
         details_map.insert(r.step_id, StepDetail::Branch(r));
+    }
+    for r in ocr_rows {
+        details_map.insert(r.step_id, StepDetail::OcrExtract(r));
+    }
+    for r in clipboard_rows {
+        details_map.insert(r.step_id, StepDetail::ClipboardControl(r));
     }
 
     let mut steps_list = Vec::with_capacity(step_rows.len());
@@ -592,7 +657,41 @@ pub async fn fetch_full_automation_json_with_overrides(
                         retry_interval_ms: 250,
                     });
                 }
+                StepDetail::OcrExtract(r) => {
+                    steps_list.push(StepPayload::OcrExtract {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        search_x: r.search_x,
+                        search_y: r.search_y,
+                        search_width: r.search_width,
+                        search_height: r.search_height,
+                        region_variable_id: r.region_variable_id,
+                        output_variable_id: r.output_variable_id,
+                        set_as_task_output: r.set_as_task_output,
+                        timeout_ms: r.timeout_ms.max(0) as u64,
+                        retry_interval_ms: r.retry_interval_ms.max(0) as u64,
+                    });
+                }
+                StepDetail::ClipboardControl(r) => {
+                    steps_list.push(StepPayload::ClipboardControl {
+                        id: step_id,
+                        label,
+                        post_delay_ms,
+                        action: r.action,
+                        text_to_set: r.text_to_set,
+                        input_variable_id: r.input_variable_id,
+                        output_variable_id: r.output_variable_id,
+                        set_as_task_output: r.set_as_task_output,
+                        timeout_ms: r.timeout_ms.max(0) as u64,
+                    });
+                }
             }
+        } else {
+            return Err(sqlx::Error::Protocol(format!(
+                "Step {step_id} of automation {id} has type '{}' but no detail row",
+                step.step_type
+            )));
         }
     }
 
@@ -1357,6 +1456,31 @@ pub async fn post_worker_stop_recording_handler(
             session_id
         ))),
     }
+}
+
+#[tracing::instrument(skip(_worker, state))]
+pub async fn get_worker_bitmap_handler(
+    _worker: AuthWorker,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, AppError> {
+    let object_key =
+        sqlx::query_scalar::<_, String>("SELECT object_storage_key FROM bitmaps WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Bitmap {id} not found")))?;
+
+    let bytes = state
+        .storage_service()
+        .get_object(&object_key)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to fetch bitmap {id}: {e}")))?;
+
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "image/png")],
+        bytes,
+    ))
 }
 
 #[tracing::instrument(skip(_worker, state))]

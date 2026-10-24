@@ -105,9 +105,8 @@ where
             return Err((StatusCode::FORBIDDEN, "Invalid CSRF token").into_response());
         }
 
-        let req = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
-        let value: T = match axum::Form::<T>::from_request(req, state).await {
-            Ok(axum::Form(v)) => v,
+        let value: T = match serde_html_form::from_bytes(&bytes) {
+            Ok(v) => v,
             Err(e) => {
                 tracing::error!("Failed to deserialize CsrfForm payload: {}", e);
                 return Err(

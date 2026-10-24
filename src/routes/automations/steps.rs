@@ -1794,6 +1794,54 @@ async fn save_step_details(
             .execute(&mut **tx)
             .await?;
         }
+        "clipboard_control" => {
+            let set_task_out = matches!(
+                form.set_as_task_output.as_deref(),
+                Some("on" | "true" | "1")
+            );
+            let action = match form.action.as_deref().unwrap_or("set_text") {
+                "get_text" => "get_text",
+                "clear" => "clear",
+                "wait_for_change" => "wait_for_change",
+                _ => "set_text",
+            };
+            let text_mode = form.text_mode.as_deref().unwrap_or("literal");
+            let text_to_set = if action == "set_text" && text_mode != "variable" {
+                form.text_to_set.clone()
+            } else {
+                None
+            };
+            let input_variable_id = if action == "set_text" && text_mode == "variable" {
+                form.input_variable_id
+            } else {
+                None
+            };
+            let timeout_ms = ((form.timeout_seconds.unwrap_or(5.0).max(0.0)) * 1000.0) as i64;
+
+            sqlx::query(
+                r#"
+                INSERT INTO step_clipboard_controls
+                    (step_id, action, text_to_set, input_variable_id, output_variable_id, set_as_task_output, timeout_ms)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (step_id) DO UPDATE SET
+                    action = EXCLUDED.action,
+                    text_to_set = EXCLUDED.text_to_set,
+                    input_variable_id = EXCLUDED.input_variable_id,
+                    output_variable_id = EXCLUDED.output_variable_id,
+                    set_as_task_output = EXCLUDED.set_as_task_output,
+                    timeout_ms = EXCLUDED.timeout_ms
+                "#,
+            )
+            .bind(step_id)
+            .bind(action)
+            .bind(text_to_set)
+            .bind(input_variable_id)
+            .bind(form.output_variable_id)
+            .bind(set_task_out)
+            .bind(timeout_ms)
+            .execute(&mut **tx)
+            .await?;
+        }
         _ => {}
     }
     Ok(())
@@ -2154,6 +2202,7 @@ async fn validate_step_form(
                 if form.region_variable_id.is_none() {
                     return Err("Please select a valid Region variable.".to_string());
                 }
+                validate_automation_variables_exist(db, automation_id, &[form.region_variable_id.unwrap()]).await?;
             } else {
                 validate_literal_or_reference(
                     form.x_mode.as_deref(),
@@ -2167,6 +2216,82 @@ async fn validate_step_form(
                     form.y_variable_id,
                     "Y coordinate",
                 )?;
+            }
+        }
+        "mouse_scroll" => {
+            let is_region_mode = form.click_mode.as_deref() == Some("region")
+                || (form.click_mode.is_none() && form.region_variable_id.is_some());
+            if is_region_mode {
+                if form.region_variable_id.is_none() {
+                    return Err("Please select a valid Region variable.".to_string());
+                }
+                validate_automation_variables_exist(db, automation_id, &[form.region_variable_id.unwrap()]).await?;
+            } else {
+                let mut var_ids = Vec::new();
+                if form.x_mode.as_deref() == Some("variable") {
+                    match form.x_variable_id.filter(|&id| id > 0) {
+                        Some(id) => var_ids.push(id),
+                        None => return Err("Please select a variable for X coordinate.".to_string()),
+                    }
+                }
+                if form.y_mode.as_deref() == Some("variable") {
+                    match form.y_variable_id.filter(|&id| id > 0) {
+                        Some(id) => var_ids.push(id),
+                        None => return Err("Please select a variable for Y coordinate.".to_string()),
+                    }
+                }
+                validate_automation_variables_exist(db, automation_id, &var_ids).await?;
+            }
+            if let Some(amount) = form.scroll_amount
+                && !(1..=100).contains(&amount)
+            {
+                return Err("Scroll amount must be between 1 and 100.".to_string());
+            }
+        }
+        "clipboard_control" => {
+            let action = form.action.as_deref().unwrap_or("set_text");
+            let var_ids: Vec<i64> = [form.input_variable_id, form.output_variable_id]
+                .into_iter()
+                .flatten()
+                .collect();
+            validate_automation_variables_exist(db, automation_id, &var_ids).await?;
+
+            match action {
+                "set_text" => {
+                    let text_mode = form.text_mode.as_deref().unwrap_or("literal");
+                    if text_mode == "variable" {
+                        if form.input_variable_id.is_none() {
+                            return Err(
+                                "Please select an input variable for clipboard text.".to_string()
+                            );
+                        }
+                    } else if form
+                        .text_to_set
+                        .as_deref()
+                        .unwrap_or("")
+                        .trim()
+                        .is_empty()
+                    {
+                        return Err("Text to set cannot be empty.".to_string());
+                    }
+                }
+                "get_text" | "wait_for_change" => {
+                    if form.output_variable_id.is_none() {
+                        return Err(
+                            "Please select an output variable to store the clipboard text."
+                                .to_string(),
+                        );
+                    }
+                }
+                "clear" => {}
+                other => {
+                    return Err(format!("Invalid clipboard action: {other}"));
+                }
+            }
+            if let Some(t) = form.timeout_seconds
+                && t < 0.0
+            {
+                return Err("Timeout cannot be negative.".to_string());
             }
         }
         "find_pixel_rgb" => {

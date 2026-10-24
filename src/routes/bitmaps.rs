@@ -522,11 +522,14 @@ async fn generate_bitmap_upload_policy(
         ),
     };
 
+    let base_url = state.config.public_base_url.trim_end_matches('/');
+    let absolute_redirect_url = format!("{base_url}{redirect_url}");
+
     let post_policy = match state.storage_service().generate_presigned_post(
         &object_key,
         Duration::from_secs(900),
         10 * 1024 * 1024,
-        Some(&redirect_url),
+        Some(&absolute_redirect_url),
     ) {
         Ok(res) => res,
         Err(e) => {

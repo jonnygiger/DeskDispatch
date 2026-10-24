@@ -379,8 +379,23 @@ pub struct EditAutomationForm {
 pub struct RunNowForm {
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub worker_group_id: Option<i64>,
+    // Form bodies are flat key/value pairs, so parameter overrides are sent as
+    // two parallel lists (one hidden name input and one value input per
+    // parameter). The document order of the inputs pairs them up again.
     #[serde(default)]
-    pub parameters: std::collections::HashMap<String, String>,
+    pub parameter_name: Vec<String>,
+    #[serde(default)]
+    pub parameter_value: Vec<String>,
+}
+
+impl RunNowForm {
+    pub fn parameter_overrides(&self) -> std::collections::HashMap<String, String> {
+        self.parameter_name
+            .iter()
+            .zip(self.parameter_value.iter())
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    }
 }
 
 #[derive(Template)]

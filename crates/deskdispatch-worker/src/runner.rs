@@ -393,6 +393,7 @@ impl StepRunner {
             StepPayload::FindBitmap {
                 id,
                 post_delay_ms,
+                reference_bitmap_id,
                 reference_bitmap_key,
                 search_x,
                 search_y,
@@ -406,7 +407,7 @@ impl StepRunner {
                 ..
             } => {
                 let template_img = match self
-                    .get_or_download_bitmap(reference_bitmap_key.as_deref())
+                    .get_or_download_bitmap(Some(*reference_bitmap_id), reference_bitmap_key.as_deref())
                     .await
                 {
                     Ok(img) => img,
@@ -525,6 +526,7 @@ impl StepRunner {
                     }
 
                     BranchConditionPayload::Bitmap {
+                        reference_bitmap_id,
                         reference_bitmap_key,
                         search_x,
                         search_y,
@@ -534,7 +536,7 @@ impl StepRunner {
                         ..
                     } => {
                         if let Ok(template_img) = self
-                            .get_or_download_bitmap(reference_bitmap_key.as_deref())
+                            .get_or_download_bitmap(*reference_bitmap_id, reference_bitmap_key.as_deref())
                             .await
                         {
                             let screen = capture_screen(
@@ -649,7 +651,7 @@ impl StepRunner {
                             });
                         }
                         if *set_as_task_output {
-                            self.task_output_type = Some("string".to_string());
+                            self.task_output_type = Some("ocr_text".to_string());
                             self.task_output_value = Some(read_text);
                         }
                     }
@@ -665,7 +667,7 @@ impl StepRunner {
                                 });
                             }
                             if *set_as_task_output {
-                                self.task_output_type = Some("string".to_string());
+                                self.task_output_type = Some("ocr_text".to_string());
                                 self.task_output_value = Some(read_text);
                             }
                         }
@@ -760,18 +762,25 @@ impl StepRunner {
         }
     }
 
-    async fn get_or_download_bitmap(&mut self, key: Option<&str>) -> Result<CapturedImage, String> {
-        let key_str = key.ok_or_else(|| "Missing reference bitmap storage key".to_string())?;
+    async fn get_or_download_bitmap(
+        &mut self,
+        bitmap_id: Option<i64>,
+        key: Option<&str>,
+    ) -> Result<CapturedImage, String> {
+        let bitmap_id =
+            bitmap_id.ok_or_else(|| "Missing reference bitmap id".to_string())?;
+        let cache_key = key
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("bitmap:{bitmap_id}"));
 
-        if let Some(cached) = self.bitmap_cache.get(key_str) {
+        if let Some(cached) = self.bitmap_cache.get(&cache_key) {
             return Ok(cached.clone());
         }
 
-        let media_url = format!("{}/media/bitmaps/{}", self.config.server_url, key_str);
-        let bytes = self.api_client.download_image_bytes(&media_url).await?;
+        let bytes = self.api_client.download_bitmap(bitmap_id).await?;
 
         let img = CapturedImage::decode_png(&bytes)?;
-        self.bitmap_cache.insert(key_str.to_string(), img.clone());
+        self.bitmap_cache.insert(cache_key, img.clone());
         Ok(img)
     }
 }

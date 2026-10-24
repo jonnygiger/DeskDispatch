@@ -695,31 +695,35 @@ pub async fn post_create_schedule_handler(
     }
 
     let now = Utc::now();
-    let next_run_at = if form.is_enabled {
-        match compute_next_run_at(cron_expression, timezone, &now) {
-            Ok(next_dt) => Some(next_dt),
-            Err(err_msg) => {
-                return HtmlTemplate(ScheduleFormTemplate {
-                    user,
-                    is_edit: false,
-                    schedule_id: None,
-                    automation_id: Some(form.automation_id),
-                    name: name.to_string(),
-                    cron_expression: cron_expression.to_string(),
-                    timezone: timezone.to_string(),
-                    worker_group_id: form.worker_group_id,
-                    overlap_policy: form.overlap_policy.clone(),
-                    max_queue_age_secs: form.max_queue_age_secs,
-                    wol_enabled: form.wol_enabled,
-                    wol_warmup_secs,
-                    is_enabled: form.is_enabled,
-                    automations,
-                    worker_groups,
-                    error: Some(err_msg),
-                })
-                .into_response();
-            }
+    // Validate the cron expression even when the schedule starts disabled: a
+    // stored-but-invalid pattern would otherwise be enabled later with no
+    // next run time and silently never fire.
+    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
+        Ok(next_dt) => next_dt,
+        Err(err_msg) => {
+            return HtmlTemplate(ScheduleFormTemplate {
+                user,
+                is_edit: false,
+                schedule_id: None,
+                automation_id: Some(form.automation_id),
+                name: name.to_string(),
+                cron_expression: cron_expression.to_string(),
+                timezone: timezone.to_string(),
+                worker_group_id: form.worker_group_id,
+                overlap_policy: form.overlap_policy.clone(),
+                max_queue_age_secs: form.max_queue_age_secs,
+                wol_enabled: form.wol_enabled,
+                wol_warmup_secs,
+                is_enabled: form.is_enabled,
+                automations,
+                worker_groups,
+                error: Some(err_msg),
+            })
+            .into_response();
         }
+    };
+    let next_run_at = if form.is_enabled {
+        Some(parsed_next_run_at)
     } else {
         None
     };
@@ -900,31 +904,33 @@ pub async fn post_edit_schedule_handler(
     }
 
     let now = Utc::now();
-    let next_run_at = if form.is_enabled {
-        match compute_next_run_at(cron_expression, timezone, &now) {
-            Ok(next_dt) => Some(next_dt),
-            Err(err_msg) => {
-                return HtmlTemplate(ScheduleFormTemplate {
-                    user,
-                    is_edit: true,
-                    schedule_id: Some(id),
-                    automation_id: Some(form.automation_id),
-                    name: name.to_string(),
-                    cron_expression: cron_expression.to_string(),
-                    timezone: timezone.to_string(),
-                    worker_group_id: form.worker_group_id,
-                    overlap_policy: form.overlap_policy.clone(),
-                    max_queue_age_secs: form.max_queue_age_secs,
-                    wol_enabled: form.wol_enabled,
-                    wol_warmup_secs,
-                    is_enabled: form.is_enabled,
-                    automations,
-                    worker_groups,
-                    error: Some(err_msg),
-                })
-                .into_response();
-            }
+    // Validate the pattern even for a disabled schedule (see create handler).
+    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
+        Ok(next_dt) => next_dt,
+        Err(err_msg) => {
+            return HtmlTemplate(ScheduleFormTemplate {
+                user,
+                is_edit: true,
+                schedule_id: Some(id),
+                automation_id: Some(form.automation_id),
+                name: name.to_string(),
+                cron_expression: cron_expression.to_string(),
+                timezone: timezone.to_string(),
+                worker_group_id: form.worker_group_id,
+                overlap_policy: form.overlap_policy.clone(),
+                max_queue_age_secs: form.max_queue_age_secs,
+                wol_enabled: form.wol_enabled,
+                wol_warmup_secs,
+                is_enabled: form.is_enabled,
+                automations,
+                worker_groups,
+                error: Some(err_msg),
+            })
+            .into_response();
         }
+    };
+    let next_run_at = if form.is_enabled {
+        Some(parsed_next_run_at)
     } else {
         None
     };
@@ -1032,7 +1038,24 @@ pub async fn post_toggle_schedule_handler(
 
     let now = Utc::now();
     let next_run_at = if new_enabled {
-        compute_next_run_at(&cron_expr, &timezone, &now).ok()
+        match compute_next_run_at(&cron_expr, &timezone, &now) {
+            Ok(next_dt) => Some(next_dt),
+            Err(err_msg) => {
+                tracing::warn!(schedule_id = id, error = %err_msg, "Refusing to enable schedule with invalid cron expression");
+                let flash = crate::auth::FlashMessage::error(format!(
+                    "Cannot enable schedule: {err_msg}"
+                ));
+                let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+                return (
+                    [
+                        (axum::http::header::SET_COOKIE, c1),
+                        (axum::http::header::SET_COOKIE, c2),
+                    ],
+                    Redirect::to("/schedules"),
+                )
+                    .into_response();
+            }
+        }
     } else {
         None
     };

@@ -321,8 +321,9 @@ pub async fn post_run_now_automation_handler(
     let defined_params = defined_params_res.unwrap_or_default();
 
     let mut clean_overrides = std::collections::HashMap::new();
+    let submitted_overrides = form.parameter_overrides();
     for param in &defined_params {
-        if let Some(val) = form.parameters.get(&param.name) {
+        if let Some(val) = submitted_overrides.get(&param.name) {
             let val_trimmed = val.trim();
             if !val_trimmed.is_empty() {
                 if let Err(e) = validate_parameter_default_value(&param.param_type, val_trimmed) {
