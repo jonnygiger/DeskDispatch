@@ -863,3 +863,377 @@ async fn test_docker_e2e_simulator_workflow_and_screenshot() {
 
     println!("[E2E Simulator Test] Simulator workflow E2E test completed successfully!");
 }
+
+#[tokio::test]
+async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
+    let _guard = DockerLogGuard;
+    println!("[E2E Recording Test] Step 1: Building Docker images...");
+    let build_status = Command::new("docker")
+        .args(["compose", "build"])
+        .status()
+        .expect("Failed to execute docker compose build");
+    assert!(build_status.success(), "docker compose build failed");
+
+    println!("[E2E Recording Test] Step 2: Starting Docker container stack...");
+    let up_status = Command::new("docker")
+        .args(["compose", "up", "-d"])
+        .status()
+        .expect("Failed to execute docker compose up -d");
+    assert!(up_status.success(), "docker compose up -d failed");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("Failed to build reqwest HTTP client");
+
+    let base_url = "http://localhost:3000";
+
+    println!("[E2E Recording Test] Step 3: Polling /readyz health check endpoint...");
+    wait_for_stack_ready(&client, base_url).await;
+
+    // 1. Authenticate as admin
+    println!("[E2E Recording Test] Step 4: Authenticating as admin...");
+    let session_cookie = login_as_admin(&client, base_url).await;
+
+    // 2. Register a dedicated recording worker node
+    println!("[E2E Recording Test] Step 5: Registering recording worker via WPS PSK...");
+    let reg_url = format!("{}/api/v1/workers/register", base_url);
+    let reg_req_json = serde_json::json!({
+        "psk": "deskdispatch_psk_prod_secret_1234",
+        "hostname": "e2e-rec-worker",
+        "display_name": "E2E Recording Worker"
+    }).to_string();
+
+    let reg_resp = client
+        .post(&reg_url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(reg_req_json)
+        .send()
+        .await
+        .expect("Failed to register worker via PSK");
+
+    let reg_body = reg_resp.text().await.expect("Failed to read reg response");
+    let reg_json: serde_json::Value = serde_json::from_str(&reg_body).expect("Failed to parse reg response JSON");
+    let rec_worker_id = reg_json.get("worker_id").and_then(|v| v.as_i64()).expect("Missing worker_id");
+    let rec_api_key = reg_json.get("api_key").and_then(|v| v.as_str()).expect("Missing api_key");
+    let auth_header_val = format!("Bearer {}", rec_api_key);
+
+    println!("[E2E Recording Test] Registered recording worker ID: {}", rec_worker_id);
+
+    // 3. Start recording session on the active worker
+    println!("[E2E Recording Test] Step 6: Starting worker recording session...");
+    let start_rec_page_url = format!("{}/workers/{}/record", base_url, rec_worker_id);
+    let start_rec_page_resp = client
+        .get(&start_rec_page_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .send()
+        .await
+        .expect("Failed to GET /workers/{id}/record");
+
+    let start_rec_html = start_rec_page_resp
+        .text()
+        .await
+        .expect("Failed to read record start page HTML");
+
+    let rec_csrf_token = extract_input_value(&start_rec_html, "csrf_token")
+        .expect("CSRF token not found in recording start page");
+
+    let start_rec_action_url = format!("{}/workers/{}/record/start", base_url, rec_worker_id);
+    let mut start_rec_form = HashMap::new();
+    start_rec_form.insert("csrf_token", rec_csrf_token.as_str());
+
+    let start_rec_resp = client
+        .post(&start_rec_action_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .form(&start_rec_form)
+        .send()
+        .await
+        .expect("Failed to POST /workers/{id}/record/start");
+
+    assert_eq!(
+        start_rec_resp.status(),
+        reqwest::StatusCode::SEE_OTHER,
+        "Expected 303 redirect after starting recording"
+    );
+
+    let rec_redirect = start_rec_resp
+        .headers()
+        .get("location")
+        .and_then(|h| h.to_str().ok())
+        .expect("Missing Location header in start recording redirect");
+
+    let session_id_str = rec_redirect.trim_start_matches("/recordings/");
+    let session_id: i64 = session_id_str
+        .split('?')
+        .next()
+        .unwrap_or(session_id_str)
+        .parse()
+        .expect("Failed to parse recording session_id from redirect location");
+
+    println!(
+        "[E2E Recording Test] Started recording session ID: {}",
+        session_id
+    );
+
+    // 4. Submit recorded events via worker API (simulating worker recording actions)
+    println!("[E2E Recording Test] Step 7: Submitting simulated worker recording events...");
+    let worker_events_url = format!("{}/api/v1/workers/recordings/{}/events", base_url, session_id);
+    let upload_url_endpoint = format!("{}/api/v1/workers/recordings/{}/screenshot-upload-url", base_url, session_id);
+
+    let upload_info_resp = client
+        .get(&upload_url_endpoint)
+        .header("Authorization", &auth_header_val)
+        .send()
+        .await
+        .expect("Failed to GET recording screenshot upload URL");
+
+    assert_eq!(upload_info_resp.status(), reqwest::StatusCode::OK);
+    let upload_info_body = upload_info_resp.text().await.expect("Failed to read upload info body");
+    let info: serde_json::Value = serde_json::from_str(&upload_info_body).expect("Failed to parse upload info JSON");
+
+    let upload_url = info.get("upload_url").and_then(|v| v.as_str()).expect("Missing upload_url");
+    let obj_key = info.get("object_key").and_then(|v| v.as_str()).expect("Missing object_key");
+
+    let mut put_target = upload_url.to_string();
+    if put_target.contains("http://rustfs:9000") {
+        put_target = put_target.replace("http://rustfs:9000", "http://localhost:9000");
+    }
+    let sample_png = create_sample_png_bytes(100, 100);
+    let put_resp = client
+        .put(&put_target)
+        .header("Content-Type", "image/png")
+        .body(sample_png)
+        .send()
+        .await
+        .expect("Failed to PUT event screenshot to S3");
+
+    assert_eq!(put_resp.status(), reqwest::StatusCode::OK);
+    let event_shot_key = Some(obj_key.to_string());
+
+    let events_req_body = serde_json::json!({
+        "events": [
+            {
+                "sequence_number": 1,
+                "event_type": "mouse_click",
+                "x": 500,
+                "y": 300,
+                "button": "left",
+                "key_combo": null,
+                "screenshot_object_key": event_shot_key
+            },
+            {
+                "sequence_number": 2,
+                "event_type": "key_press",
+                "x": null,
+                "y": null,
+                "button": null,
+                "key_combo": "enter",
+                "screenshot_object_key": null
+            }
+        ]
+    }).to_string();
+
+    let events_post_resp = client
+        .post(&worker_events_url)
+        .header("Authorization", &auth_header_val)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(events_req_body)
+        .send()
+        .await
+        .expect("Failed to POST recording events");
+
+    assert_eq!(events_post_resp.status(), reqwest::StatusCode::OK);
+
+    // Stop recording session via POST /recordings/{session_id}/stop
+    println!("[E2E Recording Test] Step 8: Stopping recording session...");
+    let stop_rec_url = format!("{}/recordings/{}/stop", base_url, session_id);
+    let mut stop_rec_form = HashMap::new();
+    stop_rec_form.insert("csrf_token", rec_csrf_token.as_str());
+
+    let stop_rec_resp = client
+        .post(&stop_rec_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .form(&stop_rec_form)
+        .send()
+        .await
+        .expect("Failed to POST /recordings/{session_id}/stop");
+
+    assert_eq!(stop_rec_resp.status(), reqwest::StatusCode::SEE_OTHER);
+
+    // 5. Fetch GET /recordings/{session_id}/review to review captured events and form
+    println!("[E2E Recording Test] Step 9: Fetching recording review page...");
+    let review_url = format!("{}/recordings/{}/review", base_url, session_id);
+    let review_resp = client
+        .get(&review_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .send()
+        .await
+        .expect("Failed to GET /recordings/{session_id}/review");
+
+    assert_eq!(review_resp.status(), reqwest::StatusCode::OK);
+
+    let review_html = review_resp
+        .text()
+        .await
+        .expect("Failed to read recording review page HTML");
+
+    let review_csrf_token = extract_input_value(&review_html, "csrf_token")
+        .expect("CSRF token not found on recording review page");
+
+    // 6. Convert recording into draft automation via POST /recordings/{session_id}/convert
+    println!("[E2E Recording Test] Step 10: Converting recording to draft automation...");
+    let convert_url = format!("{}/recordings/{}/convert", base_url, session_id);
+    let auto_title = format!("E2E Draft Recording Automation {}", uuid::Uuid::new_v4().simple());
+    let mut convert_form = HashMap::new();
+    convert_form.insert("csrf_token", review_csrf_token.as_str());
+    convert_form.insert("automation_name", auto_title.as_str());
+    convert_form.insert("automation_description", "Converted from E2E recording session");
+
+    let convert_resp = client
+        .post(&convert_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .form(&convert_form)
+        .send()
+        .await
+        .expect("Failed to POST /recordings/{session_id}/convert");
+
+    assert_eq!(
+        convert_resp.status(),
+        reqwest::StatusCode::SEE_OTHER,
+        "Expected 303 See Other redirect after converting recording"
+    );
+
+    let convert_redirect = convert_resp
+        .headers()
+        .get("location")
+        .and_then(|h| h.to_str().ok())
+        .expect("Missing Location header in convert recording redirect");
+
+    let auto_id_str = convert_redirect.trim_start_matches("/automations/");
+    let converted_auto_id: i64 = auto_id_str
+        .split('?')
+        .next()
+        .unwrap_or(auto_id_str)
+        .parse()
+        .expect("Failed to parse converted automation ID from redirect URL");
+
+    println!(
+        "[E2E Recording Test] Converted to draft automation ID: {}",
+        converted_auto_id
+    );
+
+    // 7. Fetch converted draft automation detail page and verify screenshot thumbnails
+    println!("[E2E Recording Test] Step 11: Fetching draft automation page and testing screenshot thumbnails...");
+    let auto_page_url = format!("{}/automations/{}", base_url, converted_auto_id);
+    let auto_page_resp = client
+        .get(&auto_page_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .send()
+        .await
+        .expect("Failed to GET /automations/{id}");
+
+    assert_eq!(auto_page_resp.status(), reqwest::StatusCode::OK);
+
+    let auto_page_html = auto_page_resp
+        .text()
+        .await
+        .expect("Failed to read draft automation page HTML");
+
+    assert!(
+        auto_page_html.contains(&auto_title),
+        "Draft automation title '{}' not found in page HTML",
+        auto_title
+    );
+
+    // Find screenshot step ID from /media/screenshots/{step_id} link in HTML
+    let step_id_opt = {
+        let pattern = "/media/screenshots/";
+        let mut found = None;
+        let mut search_idx = 0;
+        while let Some(pos) = auto_page_html[search_idx..].find(pattern) {
+            let abs_pos = search_idx + pos + pattern.len();
+            if let Some(end) = auto_page_html[abs_pos..].find('"') {
+                let candidate = &auto_page_html[abs_pos..abs_pos + end];
+                if let Ok(num) = candidate.parse::<i64>() {
+                    found = Some(num);
+                    break;
+                }
+            }
+            search_idx = abs_pos;
+        }
+        found
+    };
+
+    let step_id = step_id_opt.expect("No step screenshot thumbnail (/media/screenshots/{id}) found on draft automation page");
+
+    println!(
+        "[E2E Recording Test] Found screenshot step ID {} on converted draft automation page!",
+        step_id
+    );
+
+    // 8. Fetch /media/screenshots/{step_id} and follow redirect to verify image loads cleanly (200 OK)
+    println!("[E2E Recording Test] Step 12: Requesting /media/screenshots/{} and verifying image loads...", step_id);
+    let media_url = format!("{}/media/screenshots/{}", base_url, step_id);
+    let media_resp = client
+        .get(&media_url)
+        .header(reqwest::header::COOKIE, &session_cookie)
+        .send()
+        .await
+        .expect("Failed to GET /media/screenshots/{step_id}");
+
+    assert!(
+        media_resp.status() == reqwest::StatusCode::FOUND || media_resp.status() == reqwest::StatusCode::SEE_OTHER,
+        "Expected redirect for media screenshot, got {}",
+        media_resp.status()
+    );
+
+    let presigned_get_location = media_resp
+        .headers()
+        .get("location")
+        .and_then(|h| h.to_str().ok())
+        .expect("Missing Location header in /media/screenshots/{step_id} redirect");
+
+    let mut direct_s3_url = presigned_get_location.to_string();
+    if direct_s3_url.contains("http://rustfs:9000") {
+        direct_s3_url = direct_s3_url.replace("http://rustfs:9000", "http://localhost:9000");
+    }
+
+    println!(
+        "[E2E Recording Test] Fetching presigned image URL: {}",
+        direct_s3_url
+    );
+
+    let img_resp = client
+        .get(&direct_s3_url)
+        .send()
+        .await
+        .expect("Failed to fetch image from presigned GET URL");
+
+    assert_eq!(
+        img_resp.status(),
+        reqwest::StatusCode::OK,
+        "Presigned image GET request returned status {}, expected 200 OK!",
+        img_resp.status()
+    );
+
+    let img_bytes = img_resp
+        .bytes()
+        .await
+        .expect("Failed to read screenshot image bytes");
+
+    assert!(
+        img_bytes.len() > 10,
+        "Screenshot image response body is unexpectedly small ({} bytes)",
+        img_bytes.len()
+    );
+
+    // PNG header signature verification: 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'
+    assert_eq!(
+        &img_bytes[0..8],
+        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
+        "Screenshot image header signature is not a valid PNG image!"
+    );
+
+    println!("[E2E Recording Test] Worker recording and draft automation screenshot E2E test completed successfully!");
+}
