@@ -2434,8 +2434,8 @@ pub async fn get_edit_step_handler(
 
     let mut form = StepForm {
         step_type: Some(step_row.step_type.clone()),
-        label: Some(label),
-        post_delay_seconds: Some(post_delay_seconds),
+        label,
+        post_delay_seconds,
         ..Default::default()
     };
 
