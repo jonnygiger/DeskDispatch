@@ -340,13 +340,12 @@ async fn test_full_user_crud_and_last_admin_protection() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
     // Verify updated display_name and must_change_password
-    let updated_user: TestUserRow = sqlx::query_as(
-        "SELECT id, display_name, must_change_password FROM users WHERE id = $1",
-    )
-    .bind(new_user.id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let updated_user: TestUserRow =
+        sqlx::query_as("SELECT id, display_name, must_change_password FROM users WHERE id = $1")
+            .bind(new_user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     assert_eq!(updated_user.display_name, "Updated Display Name");
     assert!(!updated_user.must_change_password);
