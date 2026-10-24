@@ -8,6 +8,73 @@ use deskdispatch::{AppState, config::Config, routes::*};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
+struct MediaCleanupGuard {
+    pool: PgPool,
+    user_ids: Vec<i64>,
+    automation_ids: Vec<i64>,
+    bitmap_ids: Vec<i64>,
+}
+
+impl Drop for MediaCleanupGuard {
+    fn drop(&mut self) {
+        if self.user_ids.is_empty()
+            && self.automation_ids.is_empty()
+            && self.bitmap_ids.is_empty()
+        {
+            return;
+        }
+        let pool = self.pool.clone();
+        let user_ids = self.user_ids.clone();
+        let automation_ids = self.automation_ids.clone();
+        let bitmap_ids = self.bitmap_ids.clone();
+
+        let cleanup = async move {
+            if !bitmap_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM bitmaps WHERE id = ANY($1)")
+                    .bind(&bitmap_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !automation_ids.is_empty() {
+                let _ = sqlx::query(
+                    "DELETE FROM step_screenshots WHERE step_id IN (SELECT id FROM automation_steps WHERE automation_id = ANY($1))",
+                )
+                .bind(&automation_ids)
+                .execute(&pool)
+                .await;
+                let _ = sqlx::query("DELETE FROM automation_steps WHERE automation_id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM automations WHERE id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !user_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM sessions WHERE user_id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+            }
+        };
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(cleanup);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
 async fn get_test_pool() -> Option<PgPool> {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
@@ -20,7 +87,7 @@ async fn get_test_pool() -> Option<PgPool> {
 }
 
 async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, String) {
-    let row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role) VALUES ($1, 'hash', $2, $3) RETURNING id",
     )
     .bind(username)
@@ -30,9 +97,7 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
     .await
     .unwrap();
 
-    let user_id: i64 = sqlx::Row::get(&row, "id");
-
-    let session_row = sqlx::query(
+    let session_id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO sessions (user_id, expires_at) VALUES ($1, now() + interval '1 hour') RETURNING id",
     )
     .bind(user_id)
@@ -40,7 +105,6 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
     .await
     .unwrap();
 
-    let session_id: uuid::Uuid = sqlx::Row::get(&session_row, "id");
     (user_id, session_id.to_string())
 }
 
@@ -79,24 +143,30 @@ async fn test_media_screenshot_redirects() {
     )
     .await;
 
+    let mut cleanup_guard = MediaCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![user_id],
+        automation_ids: Vec::new(),
+        bitmap_ids: Vec::new(),
+    };
+
     // Insert dummy automation, step, and screenshot
-    let auto_row = sqlx::query(
+    let auto_id: i64 = sqlx::query_scalar(
         "INSERT INTO automations (name, description, status, created_by) VALUES ('Media Test', 'Desc', 'draft', $1) RETURNING id",
     )
     .bind(user_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let auto_id: i64 = sqlx::Row::get(&auto_row, "id");
+    cleanup_guard.automation_ids.push(auto_id);
 
-    let step_row = sqlx::query(
+    let step_id: i64 = sqlx::query_scalar(
         "INSERT INTO automation_steps (automation_id, position, step_type) VALUES ($1, 10.0, 'key_press') RETURNING id",
     )
     .bind(auto_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step_id: i64 = sqlx::Row::get(&step_row, "id");
 
     let obj_key = format!("screenshots/step_{}.png", step_id);
     sqlx::query(
@@ -148,7 +218,7 @@ async fn test_media_screenshot_redirects() {
 
     // Insert dummy bitmap
     let bitmap_key = format!("bitmaps/ref_{}.png", uuid::Uuid::new_v4().simple());
-    let bitmap_row = sqlx::query(
+    let bitmap_id: i64 = sqlx::query_scalar(
         "INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by) VALUES ($1, 'Ref Image', $2, 100, 100, $3) RETURNING id",
     )
     .bind(auto_id)
@@ -157,7 +227,7 @@ async fn test_media_screenshot_redirects() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let bitmap_id: i64 = sqlx::Row::get(&bitmap_row, "id");
+    cleanup_guard.bitmap_ids.push(bitmap_id);
 
     // 3. GET existing bitmap -> Expect 302 FOUND with Location header
     let req_bm = Request::builder()
