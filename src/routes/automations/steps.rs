@@ -2430,12 +2430,12 @@ pub async fn get_edit_step_handler(
     };
 
     let label = step_row.label;
-    let post_delay_seconds = Some(step_row.post_delay_ms as f64 / 1000.0);
+    let post_delay_seconds = step_row.post_delay_ms as f64 / 1000.0;
 
     let mut form = StepForm {
         step_type: Some(step_row.step_type.clone()),
         label,
-        post_delay_seconds,
+        post_delay_seconds: Some(post_delay_seconds),
         ..Default::default()
     };
 
