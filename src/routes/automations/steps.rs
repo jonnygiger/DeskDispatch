@@ -2429,8 +2429,8 @@ pub async fn get_edit_step_handler(
         _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     };
 
-    let label = step_row.label.unwrap_or_default();
-    let post_delay_seconds = step_row.post_delay_ms as f64 / 1000.0;
+    let label = step_row.label;
+    let post_delay_seconds = Some(step_row.post_delay_ms as f64 / 1000.0);
 
     let mut form = StepForm {
         step_type: Some(step_row.step_type.clone()),
