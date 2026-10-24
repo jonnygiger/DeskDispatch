@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
+use std::borrow::Cow;
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
@@ -61,10 +62,10 @@ pub fn router() -> Router<AppState> {
 }
 
 #[inline]
-pub fn bitmap_redirect_path(automation_id: Option<i64>) -> String {
+pub fn bitmap_redirect_path(automation_id: Option<i64>) -> Cow<'static, str> {
     match automation_id {
-        Some(aid) => format!("/automations/{}/bitmaps", aid),
-        None => "/bitmaps".to_string(),
+        Some(aid) => Cow::Owned(format!("/automations/{}/bitmaps", aid)),
+        None => Cow::Borrowed("/bitmaps"),
     }
 }
 
@@ -237,6 +238,24 @@ pub struct BitmapsConfirmTemplate {
     pub automation_id: Option<i64>,
 }
 
+#[derive(Debug, Default)]
+pub struct RegionPickerParams {
+    pub step_stage: u8,
+    pub top_left_x: Option<u32>,
+    pub top_left_y: Option<u32>,
+    pub bottom_right_x: Option<u32>,
+    pub bottom_right_y: Option<u32>,
+    pub click_x: Option<u32>,
+    pub click_y: Option<u32>,
+    pub target_x: Option<u32>,
+    pub target_y: Option<u32>,
+    pub return_to: Option<String>,
+    pub mode: Option<String>,
+    pub step_id: Option<i64>,
+    pub reference_bitmap_id: Option<i64>,
+    pub error_msg: Option<String>,
+}
+
 #[derive(Template)]
 #[template(path = "bitmaps/pick_region.html")]
 pub struct RegionPickerTopLeftTemplate {
@@ -259,6 +278,42 @@ pub struct RegionPickerTopLeftTemplate {
     pub step_id: Option<i64>,
     pub reference_bitmap_id: Option<i64>,
     pub error_msg: Option<String>,
+}
+
+impl RegionPickerTopLeftTemplate {
+    pub fn build(
+        user: AuthUser,
+        automation_id: Option<i64>,
+        image_url: String,
+        width: u32,
+        height: u32,
+        params: RegionPickerParams,
+    ) -> Self {
+        let csrf_token = user.csrf_token.clone();
+        let magnifier =
+            ImageMagnifier::new(&image_url, width, height, params.target_x, params.target_y);
+        Self {
+            user,
+            csrf_token,
+            automation_id,
+            image_url,
+            width,
+            height,
+            step_stage: params.step_stage,
+            top_left_x: params.top_left_x,
+            top_left_y: params.top_left_y,
+            bottom_right_x: params.bottom_right_x,
+            bottom_right_y: params.bottom_right_y,
+            click_x: params.click_x,
+            click_y: params.click_y,
+            magnifier,
+            return_to: params.return_to,
+            mode: params.mode,
+            step_id: params.step_id,
+            reference_bitmap_id: params.reference_bitmap_id,
+            error_msg: params.error_msg,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -408,15 +463,20 @@ pub async fn fetch_bitmaps_list_template(
     })
 }
 
-#[tracing::instrument(skip(state, user))]
-pub async fn get_bitmaps_handler(
-    State(state): State<AppState>,
+async fn render_bitmaps_list(
+    db: &sqlx::PgPool,
     user: AuthUser,
-) -> impl IntoResponse {
-    match fetch_bitmaps_list_template(&state.db, user, None).await {
+    automation_id: Option<i64>,
+) -> Response {
+    match fetch_bitmaps_list_template(db, user, automation_id).await {
         Ok(tmpl) => HtmlTemplate(tmpl).into_response(),
         Err(redirect) => redirect.into_response(),
     }
+}
+
+#[tracing::instrument(skip(state, user))]
+pub async fn get_bitmaps_handler(State(state): State<AppState>, user: AuthUser) -> Response {
+    render_bitmaps_list(&state.db, user, None).await
 }
 
 #[tracing::instrument(skip(state, user))]
@@ -424,11 +484,8 @@ pub async fn get_automation_bitmaps_handler(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<i64>,
-) -> impl IntoResponse {
-    match fetch_bitmaps_list_template(&state.db, user, Some(id)).await {
-        Ok(tmpl) => HtmlTemplate(tmpl).into_response(),
-        Err(redirect) => redirect.into_response(),
-    }
+) -> Response {
+    render_bitmaps_list(&state.db, user, Some(id)).await
 }
 
 async fn generate_bitmap_upload_policy(
@@ -493,6 +550,18 @@ async fn generate_bitmap_upload_policy(
     .into_response()
 }
 
+async fn process_bitmap_upload(
+    state: &AppState,
+    user: AuthUser,
+    form: BitmapUploadForm,
+    automation_id: Option<i64>,
+) -> Response {
+    if form.csrf_token != user.csrf_token {
+        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
+    }
+    generate_bitmap_upload_policy(state, user, form.csrf_token, &form.name, automation_id).await
+}
+
 /// POST /bitmaps
 /// Handles initial bitmap name submission, generating an S3 presigned POST policy form.
 #[tracing::instrument(skip(state, user, form))]
@@ -501,10 +570,7 @@ pub async fn post_bitmaps_handler(
     RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<BitmapUploadForm>,
 ) -> Response {
-    if form.csrf_token != user.csrf_token {
-        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
-    }
-    generate_bitmap_upload_policy(&state, user, form.csrf_token, &form.name, None).await
+    process_bitmap_upload(&state, user, form, None).await
 }
 
 /// POST /automations/{id}/bitmaps
@@ -516,10 +582,7 @@ pub async fn post_automation_bitmaps_handler(
     Path(id): Path<i64>,
     CsrfForm(form): CsrfForm<BitmapUploadForm>,
 ) -> Response {
-    if form.csrf_token != user.csrf_token {
-        return (StatusCode::BAD_REQUEST, "Invalid CSRF token").into_response();
-    }
-    generate_bitmap_upload_policy(&state, user, form.csrf_token, &form.name, Some(id)).await
+    process_bitmap_upload(&state, user, form, Some(id)).await
 }
 
 /// Validates bitmap key prefix, extension, path safety, and user binding without heap allocations.
@@ -809,34 +872,25 @@ pub async fn get_pick_region_handler(
     user: AuthUser,
     Query(query): Query<PickRegionQuery>,
 ) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
     let image_url = sanitize_image_url(query.image_url.as_deref()).to_string();
     let width = query.width.unwrap_or(1920);
     let height = query.height.unwrap_or(1080);
 
-    let magnifier = ImageMagnifier::new(&image_url, width, height, None, None);
-
-    HtmlTemplate(RegionPickerTopLeftTemplate {
+    HtmlTemplate(RegionPickerTopLeftTemplate::build(
         user,
-        csrf_token,
-        automation_id: query.automation_id,
+        query.automation_id,
         image_url,
         width,
         height,
-        step_stage: 1,
-        top_left_x: None,
-        top_left_y: None,
-        bottom_right_x: None,
-        bottom_right_y: None,
-        click_x: None,
-        click_y: None,
-        magnifier,
-        return_to: query.return_to,
-        mode: query.mode,
-        step_id: query.step_id,
-        reference_bitmap_id: query.reference_bitmap_id,
-        error_msg: None,
-    })
+        RegionPickerParams {
+            step_stage: 1,
+            return_to: query.return_to,
+            mode: query.mode,
+            step_id: query.step_id,
+            reference_bitmap_id: query.reference_bitmap_id,
+            ..Default::default()
+        },
+    ))
 }
 
 /// GET /automations/{id}/bitmaps/pick-region
@@ -899,29 +953,28 @@ pub async fn post_pick_region_top_left_handler(
         )
     };
 
-    let magnifier = ImageMagnifier::new(&image_url, form.width, form.height, tl_x, tl_y);
-
-    HtmlTemplate(RegionPickerTopLeftTemplate {
-        user: user.clone(),
-        csrf_token: user.csrf_token,
-        automation_id: form.automation_id,
+    HtmlTemplate(RegionPickerTopLeftTemplate::build(
+        user,
+        form.automation_id,
         image_url,
-        width: form.width,
-        height: form.height,
-        step_stage,
-        top_left_x: tl_x,
-        top_left_y: tl_y,
-        bottom_right_x: None,
-        bottom_right_y: None,
-        click_x: tl_x,
-        click_y: tl_y,
-        magnifier,
-        return_to: form.return_to,
-        mode: form.mode,
-        step_id: form.step_id,
-        reference_bitmap_id: form.reference_bitmap_id,
-        error_msg,
-    })
+        form.width,
+        form.height,
+        RegionPickerParams {
+            step_stage,
+            top_left_x: tl_x,
+            top_left_y: tl_y,
+            click_x: tl_x,
+            click_y: tl_y,
+            target_x: tl_x,
+            target_y: tl_y,
+            return_to: form.return_to,
+            mode: form.mode,
+            step_id: form.step_id,
+            reference_bitmap_id: form.reference_bitmap_id,
+            error_msg,
+            ..Default::default()
+        },
+    ))
     .into_response()
 }
 
@@ -1015,29 +1068,29 @@ pub async fn post_pick_region_bottom_right_handler(
         )
     };
 
-    let magnifier = ImageMagnifier::new(&image_url, form.width, form.height, target_x, target_y);
-
-    HtmlTemplate(RegionPickerTopLeftTemplate {
-        user: user.clone(),
-        csrf_token: user.csrf_token,
-        automation_id: form.automation_id,
+    HtmlTemplate(RegionPickerTopLeftTemplate::build(
+        user,
+        form.automation_id,
         image_url,
-        width: form.width,
-        height: form.height,
-        step_stage,
-        top_left_x: tl_x,
-        top_left_y: tl_y,
-        bottom_right_x: br_x,
-        bottom_right_y: br_y,
-        click_x: if is_valid { br_x } else { None },
-        click_y: if is_valid { br_y } else { None },
-        magnifier,
-        return_to: form.return_to,
-        mode: form.mode,
-        step_id: form.step_id,
-        reference_bitmap_id: form.reference_bitmap_id,
-        error_msg,
-    })
+        form.width,
+        form.height,
+        RegionPickerParams {
+            step_stage,
+            top_left_x: tl_x,
+            top_left_y: tl_y,
+            bottom_right_x: br_x,
+            bottom_right_y: br_y,
+            click_x: if is_valid { br_x } else { None },
+            click_y: if is_valid { br_y } else { None },
+            target_x,
+            target_y,
+            return_to: form.return_to,
+            mode: form.mode,
+            step_id: form.step_id,
+            reference_bitmap_id: form.reference_bitmap_id,
+            error_msg,
+        },
+    ))
     .into_response()
 }
 

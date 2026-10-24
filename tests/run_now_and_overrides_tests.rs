@@ -47,10 +47,11 @@ impl Drop for RunNowCleanupGuard {
                     .bind(&automation_ids)
                     .execute(&pool)
                     .await;
-                let _ = sqlx::query("DELETE FROM automation_parameters WHERE automation_id = ANY($1)")
-                    .bind(&automation_ids)
-                    .execute(&pool)
-                    .await;
+                let _ =
+                    sqlx::query("DELETE FROM automation_parameters WHERE automation_id = ANY($1)")
+                        .bind(&automation_ids)
+                        .execute(&pool)
+                        .await;
                 let _ = sqlx::query("DELETE FROM automations WHERE id = ANY($1)")
                     .bind(&automation_ids)
                     .execute(&pool)
@@ -279,13 +280,17 @@ async fn test_run_now_with_worker_group_and_parameter_overrides() {
     assert_eq!(run_db_row.target_worker_group_id, Some(worker_group_id));
     assert_eq!(run_db_row.status, "queued");
 
-    let overrides_obj = run_db_row.parameter_overrides.expect("Expected parameter_overrides JSON");
+    let overrides_obj = run_db_row
+        .parameter_overrides
+        .expect("Expected parameter_overrides JSON");
     assert_eq!(
         overrides_obj.get("max_retries").and_then(|v| v.as_str()),
         Some("10")
     );
 
-    let dispatched_obj = run_db_row.dispatched_automation_json.expect("Expected dispatched_automation_json");
+    let dispatched_obj = run_db_row
+        .dispatched_automation_json
+        .expect("Expected dispatched_automation_json");
     let params_val = dispatched_obj
         .get("parameters")
         .expect("Expected parameters in dispatched json");
