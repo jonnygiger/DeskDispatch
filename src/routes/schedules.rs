@@ -1620,4 +1620,54 @@ mod tests {
         assert!(CronPattern::parse("* * * 13 *").is_err());
         assert!(CronPattern::parse("* * * * 8").is_err());
     }
+
+    #[test]
+    fn test_cron_pattern_next_after_edge_cases() {
+        use chrono::TimeZone;
+
+        // 1. Sunday representation edge cases: 0, 7, and SUN
+        let p_sun0 = CronPattern::parse("0 12 * * 0").unwrap();
+        let p_sun7 = CronPattern::parse("0 12 * * 7").unwrap();
+        let p_sun_name = CronPattern::parse("0 12 * * SUN").unwrap();
+
+        assert_eq!(p_sun0.weekdays, p_sun7.weekdays);
+        assert_eq!(p_sun0.weekdays, p_sun_name.weekdays);
+        assert!(p_sun0.contains_weekday(0));
+
+        // 2. Day-of-month (DOM) AND Day-of-week (DOW) OR-logic handling
+        // Standard cron behavior: when BOTH DOM and DOW are specified (not wildcard '*'),
+        // an occurrence matches if DOM matches OR DOW matches.
+        // E.g., "0 9 15 * MON" -> 9:00 AM on the 15th OR any Monday.
+        let cron_or = CronPattern::parse("0 9 15 * MON").unwrap();
+
+        // Base date: Wednesday Jan 15, 2025 at 08:00 UTC (DOM matches 15)
+        let base_dom_match = Utc.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap();
+        let next_dom = cron_or.next_after(&base_dom_match).unwrap();
+        assert_eq!(next_dom, Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap());
+
+        // Base date: Monday Jan 20, 2025 at 08:00 UTC (DOW matches MON, even though DOM is 20)
+        let base_dow_match = Utc.with_ymd_and_hms(2025, 1, 20, 8, 0, 0).unwrap();
+        let next_dow = cron_or.next_after(&base_dow_match).unwrap();
+        assert_eq!(next_dow, Utc.with_ymd_and_hms(2025, 1, 20, 9, 0, 0).unwrap());
+
+        // 3. Step range expressions (e.g. 1-10/2 -> 1, 3, 5, 7, 9)
+        let p_step_range = CronPattern::parse("1-10/2 10 * * *").unwrap();
+        assert!(p_step_range.contains_minute(1));
+        assert!(p_step_range.contains_minute(3));
+        assert!(p_step_range.contains_minute(5));
+        assert!(p_step_range.contains_minute(7));
+        assert!(p_step_range.contains_minute(9));
+        assert!(!p_step_range.contains_minute(2));
+        assert!(!p_step_range.contains_minute(10));
+
+        // 4. Year/month boundary rollover (Dec 31 to Jan 1)
+        // Expression: "0 0 1 1 *" (Midnight on Jan 1st)
+        let cron_year_end = CronPattern::parse("0 0 1 1 *").unwrap();
+        let dec_31 = Utc.with_ymd_and_hms(2025, 12, 31, 23, 30, 0).unwrap();
+        let next_year_jan1 = cron_year_end.next_after(&dec_31).unwrap();
+        assert_eq!(
+            next_year_jan1,
+            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+        );
+    }
 }
