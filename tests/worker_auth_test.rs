@@ -73,9 +73,7 @@ async fn test_worker_auth_extractor_integration() {
     };
 
     let raw_api_key = format!("test_key_{}", Uuid::new_v4().simple());
-    let mut hasher = Sha256::new();
-    hasher.update(raw_api_key.as_bytes());
-    let api_key_hash: Vec<u8> = hasher.finalize().to_vec();
+    let api_key_hash = Sha256::digest(raw_api_key.as_bytes()).to_vec();
 
     let hostname = format!("worker-host-{}", Uuid::new_v4().simple());
     let display_name = "Auth Test Worker PC";

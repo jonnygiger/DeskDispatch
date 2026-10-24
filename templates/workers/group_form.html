@@ -32,7 +32,7 @@
     <form method="post"
         {% if is_edit %}
             {% if let Some(gid) = group_id %}
-            action="/worker-groups/{{ gid }}"
+            action="/worker-groups/{{ gid }}/edit"
             {% endif %}
         {% else %}
             action="/worker-groups"

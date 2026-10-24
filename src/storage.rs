@@ -145,23 +145,43 @@ pub fn url_encode_component(s: &str) -> String {
     result
 }
 
-/// Derives the 4-tier AWS SigV4 HMAC-SHA256 signing key.
+/// Derives the 4-tier AWS SigV4 HMAC-SHA256 signing key with zero heap allocations.
 fn derive_signing_key(secret_key: &str, date_str: &str, region: &str) -> [u8; 32] {
-    let mut key_buf = [0u8; 64];
+    let mut k_secret_hasher_ipad = [0x36u8; 64];
+    let mut k_secret_hasher_opad = [0x5cu8; 64];
     let secret_bytes = secret_key.as_bytes();
-    let k_secret_bytes = if secret_bytes.len() <= 60 {
-        key_buf[..4].copy_from_slice(b"AWS4");
-        key_buf[4..4 + secret_bytes.len()].copy_from_slice(secret_bytes);
-        hmac_sha256(&key_buf[..4 + secret_bytes.len()], date_str.as_bytes())
+
+    if 4 + secret_bytes.len() > 64 {
+        let key_hash = {
+            let mut h = Sha256::new();
+            h.update(b"AWS4");
+            h.update(secret_bytes);
+            h.finalize()
+        };
+        for (i, &b) in key_hash.iter().enumerate() {
+            k_secret_hasher_ipad[i] ^= b;
+            k_secret_hasher_opad[i] ^= b;
+        }
     } else {
-        let mut vec = Vec::with_capacity(4 + secret_bytes.len());
-        vec.extend_from_slice(b"AWS4");
-        vec.extend_from_slice(secret_bytes);
-        hmac_sha256(&vec, date_str.as_bytes())
+        for (i, &b) in b"AWS4".iter().chain(secret_bytes.iter()).enumerate() {
+            k_secret_hasher_ipad[i] ^= b;
+            k_secret_hasher_opad[i] ^= b;
+        }
+    }
+
+    let k_secret = {
+        let mut inner = Sha256::new();
+        inner.update(k_secret_hasher_ipad);
+        inner.update(date_str.as_bytes());
+        let inner_hash = inner.finalize();
+
+        let mut outer = Sha256::new();
+        outer.update(k_secret_hasher_opad);
+        outer.update(inner_hash);
+        outer.finalize()
     };
 
-    let k_date = k_secret_bytes;
-    let k_region = hmac_sha256(&k_date, region.as_bytes());
+    let k_region = hmac_sha256(&k_secret, region.as_bytes());
     let k_service = hmac_sha256(&k_region, b"s3");
     hmac_sha256(&k_service, b"aws4_request")
 }
@@ -337,6 +357,12 @@ pub fn generate_presigned_url_with_query(
     let credential = format!("{}/{}", access_key, credential_scope);
 
     let clean_key = object_key.trim_start_matches('/');
+    let encoded_bucket = url_encode_component(bucket);
+    let encoded_key_path = clean_key
+        .split('/')
+        .map(url_encode_component)
+        .collect::<Vec<_>>()
+        .join("/");
 
     let (host, canonical_uri, base_url) = match endpoint_url {
         Some(endpoint) => {
@@ -350,11 +376,11 @@ pub fn generate_presigned_url_with_query(
                 None => host_str.to_string(),
             };
             let uri = if clean_key.is_empty() {
-                format!("/{}", bucket)
+                format!("/{}", encoded_bucket)
             } else {
-                format!("/{}/{}", bucket, clean_key)
+                format!("/{}/{}", encoded_bucket, encoded_key_path)
             };
-            let base = format!("{}/{}", clean_endpoint, bucket);
+            let base = format!("{}/{}", clean_endpoint, encoded_bucket);
             (full_host, uri, base)
         }
         None => {
@@ -362,7 +388,7 @@ pub fn generate_presigned_url_with_query(
             let uri = if clean_key.is_empty() {
                 "/".to_string()
             } else {
-                format!("/{}", clean_key)
+                format!("/{}", encoded_key_path)
             };
             let base = format!("https://{}", host);
             (host, uri, base)
@@ -435,7 +461,7 @@ pub fn generate_presigned_url_with_query(
     let signature_hex = encode_hex(&signature_bytes);
 
     let mut full_url =
-        String::with_capacity(base_url.len() + clean_key.len() + canonical_query_string.len() + 64);
+        String::with_capacity(base_url.len() + encoded_key_path.len() + canonical_query_string.len() + 64);
     if clean_key.is_empty() {
         let _ = write!(
             full_url,
@@ -446,7 +472,7 @@ pub fn generate_presigned_url_with_query(
         let _ = write!(
             full_url,
             "{}/{}?{}&X-Amz-Signature={}",
-            base_url, clean_key, canonical_query_string, signature_hex
+            base_url, encoded_key_path, canonical_query_string, signature_hex
         );
     }
 

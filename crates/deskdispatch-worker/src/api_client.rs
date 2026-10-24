@@ -330,22 +330,106 @@ impl WorkerApiClient {
         }
     }
 
-    pub async fn download_image_bytes(&self, url: &str) -> Result<Vec<u8>, String> {
+    pub async fn download_bitmap(&self, bitmap_id: i64) -> Result<Vec<u8>, String> {
+        let api_key = self
+            .api_key
+            .as_ref()
+            .ok_or_else(|| "API key required to download bitmap".to_string())?;
+
+        let url = format!(
+            "{}/api/v1/workers/bitmaps/{}",
+            self.server_url, bitmap_id
+        );
         let resp = self
             .client
-            .get(url)
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
             .send()
             .await
-            .map_err(|e| format!("Failed to download image from {}: {}", url, e))?;
+            .map_err(|e| format!("Failed to download bitmap {}: {}", bitmap_id, e))?;
 
         if !resp.status().is_success() {
-            return Err(format!("Download image HTTP status {}", resp.status()));
+            return Err(format!(
+                "Download bitmap {} HTTP status {}",
+                bitmap_id,
+                resp.status()
+            ));
         }
 
         resp.bytes()
             .await
             .map(|b| b.to_vec())
-            .map_err(|e| format!("Failed to read image bytes: {}", e))
+            .map_err(|e| format!("Failed to read bitmap bytes: {}", e))
+    }
+
+    pub async fn get_recording_screenshot_upload_url(
+        &self,
+        recording_session_id: i64,
+    ) -> Result<ScreenshotUploadUrlResponse, String> {
+        let api_key = self
+            .api_key
+            .as_ref()
+            .ok_or_else(|| "API key required for recording screenshot upload URL".to_string())?;
+
+        let url = format!(
+            "{}/api/v1/workers/recordings/{}/screenshot-upload-url",
+            self.server_url, recording_session_id
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .map_err(|e| format!("Get recording screenshot upload URL request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Get recording screenshot upload URL HTTP status {}",
+                resp.status()
+            ));
+        }
+
+        resp.json::<ScreenshotUploadUrlResponse>()
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to parse recording ScreenshotUploadUrlResponse JSON: {}",
+                    e
+                )
+            })
+    }
+
+    pub async fn post_worker_stop_recording(
+        &self,
+        recording_session_id: i64,
+    ) -> Result<WorkerStopRecordingResponse, String> {
+        let api_key = self
+            .api_key
+            .as_ref()
+            .ok_or_else(|| "API key required to stop recording".to_string())?;
+
+        let url = format!(
+            "{}/api/v1/workers/recordings/{}/stop",
+            self.server_url, recording_session_id
+        );
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .map_err(|e| format!("Stop recording HTTP request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("Stop recording HTTP status {}", resp.status()));
+        }
+
+        resp.json::<WorkerStopRecordingResponse>()
+            .await
+            .map_err(|e| format!("Failed to parse WorkerStopRecordingResponse JSON: {}", e))
     }
 
     pub async fn post_recording_events(

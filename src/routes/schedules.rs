@@ -695,31 +695,35 @@ pub async fn post_create_schedule_handler(
     }
 
     let now = Utc::now();
-    let next_run_at = if form.is_enabled {
-        match compute_next_run_at(cron_expression, timezone, &now) {
-            Ok(next_dt) => Some(next_dt),
-            Err(err_msg) => {
-                return HtmlTemplate(ScheduleFormTemplate {
-                    user,
-                    is_edit: false,
-                    schedule_id: None,
-                    automation_id: Some(form.automation_id),
-                    name: name.to_string(),
-                    cron_expression: cron_expression.to_string(),
-                    timezone: timezone.to_string(),
-                    worker_group_id: form.worker_group_id,
-                    overlap_policy: form.overlap_policy.clone(),
-                    max_queue_age_secs: form.max_queue_age_secs,
-                    wol_enabled: form.wol_enabled,
-                    wol_warmup_secs,
-                    is_enabled: form.is_enabled,
-                    automations,
-                    worker_groups,
-                    error: Some(err_msg),
-                })
-                .into_response();
-            }
+    // Validate the cron expression even when the schedule starts disabled: a
+    // stored-but-invalid pattern would otherwise be enabled later with no
+    // next run time and silently never fire.
+    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
+        Ok(next_dt) => next_dt,
+        Err(err_msg) => {
+            return HtmlTemplate(ScheduleFormTemplate {
+                user,
+                is_edit: false,
+                schedule_id: None,
+                automation_id: Some(form.automation_id),
+                name: name.to_string(),
+                cron_expression: cron_expression.to_string(),
+                timezone: timezone.to_string(),
+                worker_group_id: form.worker_group_id,
+                overlap_policy: form.overlap_policy.clone(),
+                max_queue_age_secs: form.max_queue_age_secs,
+                wol_enabled: form.wol_enabled,
+                wol_warmup_secs,
+                is_enabled: form.is_enabled,
+                automations,
+                worker_groups,
+                error: Some(err_msg),
+            })
+            .into_response();
         }
+    };
+    let next_run_at = if form.is_enabled {
+        Some(parsed_next_run_at)
     } else {
         None
     };
@@ -900,31 +904,33 @@ pub async fn post_edit_schedule_handler(
     }
 
     let now = Utc::now();
-    let next_run_at = if form.is_enabled {
-        match compute_next_run_at(cron_expression, timezone, &now) {
-            Ok(next_dt) => Some(next_dt),
-            Err(err_msg) => {
-                return HtmlTemplate(ScheduleFormTemplate {
-                    user,
-                    is_edit: true,
-                    schedule_id: Some(id),
-                    automation_id: Some(form.automation_id),
-                    name: name.to_string(),
-                    cron_expression: cron_expression.to_string(),
-                    timezone: timezone.to_string(),
-                    worker_group_id: form.worker_group_id,
-                    overlap_policy: form.overlap_policy.clone(),
-                    max_queue_age_secs: form.max_queue_age_secs,
-                    wol_enabled: form.wol_enabled,
-                    wol_warmup_secs,
-                    is_enabled: form.is_enabled,
-                    automations,
-                    worker_groups,
-                    error: Some(err_msg),
-                })
-                .into_response();
-            }
+    // Validate the pattern even for a disabled schedule (see create handler).
+    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
+        Ok(next_dt) => next_dt,
+        Err(err_msg) => {
+            return HtmlTemplate(ScheduleFormTemplate {
+                user,
+                is_edit: true,
+                schedule_id: Some(id),
+                automation_id: Some(form.automation_id),
+                name: name.to_string(),
+                cron_expression: cron_expression.to_string(),
+                timezone: timezone.to_string(),
+                worker_group_id: form.worker_group_id,
+                overlap_policy: form.overlap_policy.clone(),
+                max_queue_age_secs: form.max_queue_age_secs,
+                wol_enabled: form.wol_enabled,
+                wol_warmup_secs,
+                is_enabled: form.is_enabled,
+                automations,
+                worker_groups,
+                error: Some(err_msg),
+            })
+            .into_response();
         }
+    };
+    let next_run_at = if form.is_enabled {
+        Some(parsed_next_run_at)
     } else {
         None
     };
@@ -1032,7 +1038,24 @@ pub async fn post_toggle_schedule_handler(
 
     let now = Utc::now();
     let next_run_at = if new_enabled {
-        compute_next_run_at(&cron_expr, &timezone, &now).ok()
+        match compute_next_run_at(&cron_expr, &timezone, &now) {
+            Ok(next_dt) => Some(next_dt),
+            Err(err_msg) => {
+                tracing::warn!(schedule_id = id, error = %err_msg, "Refusing to enable schedule with invalid cron expression");
+                let flash = crate::auth::FlashMessage::error(format!(
+                    "Cannot enable schedule: {err_msg}"
+                ));
+                let (c1, c2) = crate::auth::build_flash_cookie(&flash);
+                return (
+                    [
+                        (axum::http::header::SET_COOKIE, c1),
+                        (axum::http::header::SET_COOKIE, c2),
+                    ],
+                    Redirect::to("/schedules"),
+                )
+                    .into_response();
+            }
+        }
     } else {
         None
     };
@@ -1619,5 +1642,61 @@ mod tests {
         assert!(CronPattern::parse("* * 32 * *").is_err());
         assert!(CronPattern::parse("* * * 13 *").is_err());
         assert!(CronPattern::parse("* * * * 8").is_err());
+    }
+
+    #[test]
+    fn test_cron_pattern_next_after_edge_cases() {
+        use chrono::TimeZone;
+
+        // 1. Sunday representation edge cases: 0, 7, and SUN
+        let p_sun0 = CronPattern::parse("0 12 * * 0").unwrap();
+        let p_sun7 = CronPattern::parse("0 12 * * 7").unwrap();
+        let p_sun_name = CronPattern::parse("0 12 * * SUN").unwrap();
+
+        assert_eq!(p_sun0.weekdays, p_sun7.weekdays);
+        assert_eq!(p_sun0.weekdays, p_sun_name.weekdays);
+        assert!(p_sun0.contains_weekday(0));
+
+        // 2. Day-of-month (DOM) AND Day-of-week (DOW) OR-logic handling
+        // Standard cron behavior: when BOTH DOM and DOW are specified (not wildcard '*'),
+        // an occurrence matches if DOM matches OR DOW matches.
+        // E.g., "0 9 15 * MON" -> 9:00 AM on the 15th OR any Monday.
+        let cron_or = CronPattern::parse("0 9 15 * MON").unwrap();
+
+        // Base date: Wednesday Jan 15, 2025 at 08:00 UTC (DOM matches 15)
+        let base_dom_match = Utc.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap();
+        let next_dom = cron_or.next_after(&base_dom_match).unwrap();
+        assert_eq!(
+            next_dom,
+            Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap()
+        );
+
+        // Base date: Monday Jan 20, 2025 at 08:00 UTC (DOW matches MON, even though DOM is 20)
+        let base_dow_match = Utc.with_ymd_and_hms(2025, 1, 20, 8, 0, 0).unwrap();
+        let next_dow = cron_or.next_after(&base_dow_match).unwrap();
+        assert_eq!(
+            next_dow,
+            Utc.with_ymd_and_hms(2025, 1, 20, 9, 0, 0).unwrap()
+        );
+
+        // 3. Step range expressions (e.g. 1-10/2 -> 1, 3, 5, 7, 9)
+        let p_step_range = CronPattern::parse("1-10/2 10 * * *").unwrap();
+        assert!(p_step_range.contains_minute(1));
+        assert!(p_step_range.contains_minute(3));
+        assert!(p_step_range.contains_minute(5));
+        assert!(p_step_range.contains_minute(7));
+        assert!(p_step_range.contains_minute(9));
+        assert!(!p_step_range.contains_minute(2));
+        assert!(!p_step_range.contains_minute(10));
+
+        // 4. Year/month boundary rollover (Dec 31 to Jan 1)
+        // Expression: "0 0 1 1 *" (Midnight on Jan 1st)
+        let cron_year_end = CronPattern::parse("0 0 1 1 *").unwrap();
+        let dec_31 = Utc.with_ymd_and_hms(2025, 12, 31, 23, 30, 0).unwrap();
+        let next_year_jan1 = cron_year_end.next_after(&dec_31).unwrap();
+        assert_eq!(
+            next_year_jan1,
+            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+        );
     }
 }

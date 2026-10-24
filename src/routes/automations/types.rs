@@ -379,8 +379,23 @@ pub struct EditAutomationForm {
 pub struct RunNowForm {
     #[serde(default, deserialize_with = "deserialize_option_number")]
     pub worker_group_id: Option<i64>,
+    // Form bodies are flat key/value pairs, so parameter overrides are sent as
+    // two parallel lists (one hidden name input and one value input per
+    // parameter). The document order of the inputs pairs them up again.
     #[serde(default)]
-    pub parameters: std::collections::HashMap<String, String>,
+    pub parameter_name: Vec<String>,
+    #[serde(default)]
+    pub parameter_value: Vec<String>,
+}
+
+impl RunNowForm {
+    pub fn parameter_overrides(&self) -> std::collections::HashMap<String, String> {
+        self.parameter_name
+            .iter()
+            .zip(self.parameter_value.iter())
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    }
 }
 
 #[derive(Template)]
@@ -530,11 +545,7 @@ impl StepOption {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewMouseClickQuery {
-    pub x: Option<i32>,
-    pub y: Option<i32>,
-}
+pub type NewMouseClickQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_mouse_click.html")]
@@ -659,11 +670,7 @@ pub struct KeyPressStepForm {
     pub key_combo: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewFindPixelRgbQuery {
-    pub x: Option<i32>,
-    pub y: Option<i32>,
-}
+pub type NewFindPixelRgbQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_find_pixel_rgb.html")]
@@ -682,14 +689,7 @@ pub struct StepFindPixelRgbTemplate {
     pub is_edit: bool,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewFindBitmapQuery {
-    pub reference_bitmap_id: Option<i64>,
-    pub search_x: Option<i32>,
-    pub search_y: Option<i32>,
-    pub search_width: Option<i32>,
-    pub search_height: Option<i32>,
-}
+pub type NewFindBitmapQuery = EditStepQuery;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct EditStepQuery {
@@ -703,17 +703,7 @@ pub struct EditStepQuery {
     pub y: Option<i32>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewBranchQuery {
-    pub condition_type: Option<String>,
-    pub x: Option<i32>,
-    pub y: Option<i32>,
-    pub reference_bitmap_id: Option<i64>,
-    pub search_x: Option<i32>,
-    pub search_y: Option<i32>,
-    pub search_width: Option<i32>,
-    pub search_height: Option<i32>,
-}
+pub type NewBranchQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_branch.html")]
@@ -773,13 +763,7 @@ pub struct StepFindBitmapTemplate {
     pub is_edit: bool,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewOcrExtractQuery {
-    pub search_x: Option<i32>,
-    pub search_y: Option<i32>,
-    pub search_width: Option<i32>,
-    pub search_height: Option<i32>,
-}
+pub type NewOcrExtractQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_ocr_extract.html")]

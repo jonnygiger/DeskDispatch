@@ -74,7 +74,10 @@ impl CapturedImage {
 
     pub fn decode_png(png_bytes: &[u8]) -> Result<Self, String> {
         let cursor = Cursor::new(png_bytes);
-        let decoder = png::Decoder::new(cursor);
+        let mut decoder = png::Decoder::new(cursor);
+        // Expand palette and low-bit-depth images to 8-bit RGB(A) and strip
+        // 16-bit samples so every PNG flavour can be matched against the screen.
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
         let mut reader = decoder
             .read_info()
             .map_err(|e| format!("Failed to read PNG header: {}", e))?;
@@ -91,20 +94,40 @@ impl CapturedImage {
             .next_frame(&mut buf)
             .map_err(|e| format!("Failed to decode PNG frame: {}", e))?;
 
+        let bytes = &buf[..output_info.buffer_size()];
+        let pixel_count = (width * height) as usize;
         let data = match output_info.color_type {
             png::ColorType::Rgb => {
-                let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-                for chunk in buf[..output_info.buffer_size()].chunks(3) {
-                    if chunk.len() == 3 {
-                        rgba.push(chunk[0]);
-                        rgba.push(chunk[1]);
-                        rgba.push(chunk[2]);
-                        rgba.push(255);
-                    }
+                let mut rgba = Vec::with_capacity(pixel_count * 4);
+                for chunk in bytes.chunks_exact(3) {
+                    rgba.push(chunk[0]);
+                    rgba.push(chunk[1]);
+                    rgba.push(chunk[2]);
+                    rgba.push(255);
                 }
                 rgba
             }
-            png::ColorType::Rgba => buf[..output_info.buffer_size()].to_vec(),
+            png::ColorType::Rgba => bytes.to_vec(),
+            png::ColorType::Grayscale => {
+                let mut rgba = Vec::with_capacity(pixel_count * 4);
+                for &g in bytes {
+                    rgba.push(g);
+                    rgba.push(g);
+                    rgba.push(g);
+                    rgba.push(255);
+                }
+                rgba
+            }
+            png::ColorType::GrayscaleAlpha => {
+                let mut rgba = Vec::with_capacity(pixel_count * 4);
+                for chunk in bytes.chunks_exact(2) {
+                    rgba.push(chunk[0]);
+                    rgba.push(chunk[0]);
+                    rgba.push(chunk[0]);
+                    rgba.push(chunk[1]);
+                }
+                rgba
+            }
             other => return Err(format!("Unsupported PNG color type {:?}", other)),
         };
 
