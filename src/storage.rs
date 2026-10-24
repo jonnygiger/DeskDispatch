@@ -357,6 +357,12 @@ pub fn generate_presigned_url_with_query(
     let credential = format!("{}/{}", access_key, credential_scope);
 
     let clean_key = object_key.trim_start_matches('/');
+    let encoded_bucket = url_encode_component(bucket);
+    let encoded_key_path = clean_key
+        .split('/')
+        .map(url_encode_component)
+        .collect::<Vec<_>>()
+        .join("/");
 
     let (host, canonical_uri, base_url) = match endpoint_url {
         Some(endpoint) => {
@@ -370,11 +376,11 @@ pub fn generate_presigned_url_with_query(
                 None => host_str.to_string(),
             };
             let uri = if clean_key.is_empty() {
-                format!("/{}", bucket)
+                format!("/{}", encoded_bucket)
             } else {
-                format!("/{}/{}", bucket, clean_key)
+                format!("/{}/{}", encoded_bucket, encoded_key_path)
             };
-            let base = format!("{}/{}", clean_endpoint, bucket);
+            let base = format!("{}/{}", clean_endpoint, encoded_bucket);
             (full_host, uri, base)
         }
         None => {
@@ -382,7 +388,7 @@ pub fn generate_presigned_url_with_query(
             let uri = if clean_key.is_empty() {
                 "/".to_string()
             } else {
-                format!("/{}", clean_key)
+                format!("/{}", encoded_key_path)
             };
             let base = format!("https://{}", host);
             (host, uri, base)
@@ -455,7 +461,7 @@ pub fn generate_presigned_url_with_query(
     let signature_hex = encode_hex(&signature_bytes);
 
     let mut full_url =
-        String::with_capacity(base_url.len() + clean_key.len() + canonical_query_string.len() + 64);
+        String::with_capacity(base_url.len() + encoded_key_path.len() + canonical_query_string.len() + 64);
     if clean_key.is_empty() {
         let _ = write!(
             full_url,
@@ -466,7 +472,7 @@ pub fn generate_presigned_url_with_query(
         let _ = write!(
             full_url,
             "{}/{}?{}&X-Amz-Signature={}",
-            base_url, clean_key, canonical_query_string, signature_hex
+            base_url, encoded_key_path, canonical_query_string, signature_hex
         );
     }
 

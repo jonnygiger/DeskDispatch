@@ -277,6 +277,8 @@ pub async fn post_worker_record_start_handler(
     )
     .await;
 
+    let _ = state.task_queue_notifier.send(());
+
     Redirect::to(&format!("/recordings/{}", session_id)).into_response()
 }
 
