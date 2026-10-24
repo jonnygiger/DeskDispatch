@@ -530,11 +530,7 @@ impl StepOption {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewMouseClickQuery {
-    pub x: Option<i32>,
-    pub y: Option<i32>,
-}
+pub type NewMouseClickQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_mouse_click.html")]
@@ -659,11 +655,7 @@ pub struct KeyPressStepForm {
     pub key_combo: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewFindPixelRgbQuery {
-    pub x: Option<i32>,
-    pub y: Option<i32>,
-}
+pub type NewFindPixelRgbQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_find_pixel_rgb.html")]
@@ -682,14 +674,7 @@ pub struct StepFindPixelRgbTemplate {
     pub is_edit: bool,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewFindBitmapQuery {
-    pub reference_bitmap_id: Option<i64>,
-    pub search_x: Option<i32>,
-    pub search_y: Option<i32>,
-    pub search_width: Option<i32>,
-    pub search_height: Option<i32>,
-}
+pub type NewFindBitmapQuery = EditStepQuery;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct EditStepQuery {
@@ -703,17 +688,7 @@ pub struct EditStepQuery {
     pub y: Option<i32>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewBranchQuery {
-    pub condition_type: Option<String>,
-    pub x: Option<i32>,
-    pub y: Option<i32>,
-    pub reference_bitmap_id: Option<i64>,
-    pub search_x: Option<i32>,
-    pub search_y: Option<i32>,
-    pub search_width: Option<i32>,
-    pub search_height: Option<i32>,
-}
+pub type NewBranchQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_branch.html")]
@@ -773,13 +748,7 @@ pub struct StepFindBitmapTemplate {
     pub is_edit: bool,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NewOcrExtractQuery {
-    pub search_x: Option<i32>,
-    pub search_y: Option<i32>,
-    pub search_width: Option<i32>,
-    pub search_height: Option<i32>,
-}
+pub type NewOcrExtractQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_ocr_extract.html")]
