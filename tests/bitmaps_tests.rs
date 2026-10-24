@@ -8,6 +8,109 @@ use deskdispatch::{AppState, config::Config, routes::*};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
+#[derive(sqlx::FromRow)]
+struct BitmapTestRow {
+    id: i64,
+    name: String,
+    #[allow(dead_code)]
+    object_storage_key: String,
+    width: i32,
+    height: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct ScopedBitmapTestRow {
+    id: i64,
+    automation_id: Option<i64>,
+    width: i32,
+    height: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct BitmapCropRow {
+    id: i64,
+    width: i32,
+    height: i32,
+    created_by: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct AuditLogRow {
+    action: String,
+}
+
+struct BitmapsCleanupGuard {
+    pool: PgPool,
+    user_ids: Vec<i64>,
+    automation_ids: Vec<i64>,
+    bitmap_ids: Vec<i64>,
+}
+
+impl Drop for BitmapsCleanupGuard {
+    fn drop(&mut self) {
+        let pool = self.pool.clone();
+        let user_ids = self.user_ids.clone();
+        let automation_ids = self.automation_ids.clone();
+        let bitmap_ids = self.bitmap_ids.clone();
+
+        let cleanup = async move {
+            if !bitmap_ids.is_empty() {
+                let _ =
+                    sqlx::query("DELETE FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = ANY($1)")
+                        .bind(&bitmap_ids)
+                        .execute(&pool)
+                        .await;
+                let _ = sqlx::query("DELETE FROM bitmaps WHERE id = ANY($1)")
+                    .bind(&bitmap_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !automation_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM bitmaps WHERE automation_id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM automations WHERE id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !user_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM audit_log WHERE user_id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM bitmaps WHERE created_by = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM automations WHERE created_by = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM sessions WHERE user_id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+            }
+        };
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(cleanup);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
 async fn get_test_pool() -> Option<PgPool> {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
@@ -20,7 +123,7 @@ async fn get_test_pool() -> Option<PgPool> {
 }
 
 async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, String) {
-    let row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role) VALUES ($1, 'hash', $2, $3) RETURNING id",
     )
     .bind(username)
@@ -30,9 +133,7 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
     .await
     .unwrap();
 
-    let user_id: i64 = sqlx::Row::get(&row, "id");
-
-    let session_row = sqlx::query(
+    let session_id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO sessions (user_id, expires_at) VALUES ($1, now() + interval '1 hour') RETURNING id",
     )
     .bind(user_id)
@@ -40,7 +141,6 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
     .await
     .unwrap();
 
-    let session_id: uuid::Uuid = sqlx::Row::get(&session_row, "id");
     (user_id, session_id.to_string())
 }
 
@@ -49,6 +149,13 @@ async fn test_bitmaps_list_routes() {
     let Some(pool) = get_test_pool().await else {
         println!("Database not available, skipping test_bitmaps_list_routes");
         return;
+    };
+
+    let mut cleanup_guard = BitmapsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: Vec::new(),
+        automation_ids: Vec::new(),
+        bitmap_ids: Vec::new(),
     };
 
     let config = Config::from_env().unwrap();
@@ -104,6 +211,7 @@ async fn test_bitmaps_list_routes() {
         "viewer",
     )
     .await;
+    cleanup_guard.user_ids.push(user_id);
 
     let req_auth = Request::builder()
         .method("GET")
@@ -122,17 +230,17 @@ async fn test_bitmaps_list_routes() {
     assert!(body_str.contains("Reference Bitmap Library"));
 
     // 3. Insert test automation and bitmap records
-    let auto_row = sqlx::query(
+    let auto_id: i64 = sqlx::query_scalar(
         "INSERT INTO automations (name, description, status, created_by) VALUES ('Bitmap Test Auto', 'Desc', 'draft', $1) RETURNING id",
     )
     .bind(user_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let auto_id: i64 = sqlx::Row::get(&auto_row, "id");
+    cleanup_guard.automation_ids.push(auto_id);
 
     let bitmap_key = format!("bitmaps/test_{}.png", uuid::Uuid::new_v4().simple());
-    let bitmap_row = sqlx::query(
+    let bitmap_id: i64 = sqlx::query_scalar(
         "INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by) VALUES ($1, 'OK Button Bitmap', $2, 200, 80, $3) RETURNING id",
     )
     .bind(auto_id)
@@ -141,7 +249,7 @@ async fn test_bitmaps_list_routes() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let bitmap_id: i64 = sqlx::Row::get(&bitmap_row, "id");
+    cleanup_guard.bitmap_ids.push(bitmap_id);
 
     // 4. GET /bitmaps with bitmap present
     let req_with_item = Request::builder()
@@ -191,6 +299,13 @@ async fn test_bitmap_upload_flow() {
         return;
     };
 
+    let mut cleanup_guard = BitmapsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: Vec::new(),
+        automation_ids: Vec::new(),
+        bitmap_ids: Vec::new(),
+    };
+
     let config = Config::from_env().unwrap();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
@@ -228,18 +343,21 @@ async fn test_bitmap_upload_flow() {
         ))
         .with_state(state.clone());
 
-    let (_viewer_id, viewer_session) = create_test_user(
+    let (viewer_id, viewer_session) = create_test_user(
         &pool,
         &format!("viewer_upload_{}", uuid::Uuid::new_v4().simple()),
         "viewer",
     )
     .await;
+    cleanup_guard.user_ids.push(viewer_id);
+
     let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("admin_upload_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+    cleanup_guard.user_ids.push(admin_id);
 
     // Extract CSRF token for admin session
     let session_uuid = uuid::Uuid::parse_str(&admin_session).unwrap();
@@ -354,19 +472,20 @@ async fn test_bitmap_upload_flow() {
     assert_eq!(location, "/bitmaps");
 
     // Verify row inserted in database with correct dimensions (10x10)
-    let inserted_row = sqlx::query("SELECT id, name, object_storage_key, width, height FROM bitmaps WHERE object_storage_key = $1")
-        .bind(&test_key)
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
+    let inserted_row = sqlx::query_as::<_, BitmapTestRow>(
+        "SELECT id, name, object_storage_key, width, height FROM bitmaps WHERE object_storage_key = $1",
+    )
+    .bind(&test_key)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
     assert!(inserted_row.is_some());
     let row = inserted_row.unwrap();
-    let db_name: String = sqlx::Row::get(&row, "name");
-    let db_width: i32 = sqlx::Row::get(&row, "width");
-    let db_height: i32 = sqlx::Row::get(&row, "height");
-    assert_eq!(db_name, "Committed Bitmap");
-    assert_eq!(db_width, 10);
-    assert_eq!(db_height, 10);
+    cleanup_guard.bitmap_ids.push(row.id);
+
+    assert_eq!(row.name, "Committed Bitmap");
+    assert_eq!(row.width, 10);
+    assert_eq!(row.height, 10);
 
     // 5. Idempotency test: Re-submitting POST /bitmaps/commit returns redirect without inserting duplicate
     let req_commit_post_dup = Request::builder()
@@ -389,6 +508,13 @@ async fn test_bitmap_deletion_flow() {
     let Some(pool) = get_test_pool().await else {
         println!("Database not available, skipping test_bitmap_deletion_flow");
         return;
+    };
+
+    let mut cleanup_guard = BitmapsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: Vec::new(),
+        automation_ids: Vec::new(),
+        bitmap_ids: Vec::new(),
     };
 
     let config = Config::from_env().unwrap();
@@ -423,24 +549,29 @@ async fn test_bitmap_deletion_flow() {
         ))
         .with_state(state);
 
-    let (_viewer_id, viewer_session) = create_test_user(
+    let (viewer_id, viewer_session) = create_test_user(
         &pool,
         &format!("viewer_del_{}", uuid::Uuid::new_v4().simple()),
         "viewer",
     )
     .await;
+    cleanup_guard.user_ids.push(viewer_id);
+
     let (editor_id, editor_session) = create_test_user(
         &pool,
         &format!("editor_del_{}", uuid::Uuid::new_v4().simple()),
         "editor",
     )
     .await;
+    cleanup_guard.user_ids.push(editor_id);
+
     let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("admin_del_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+    cleanup_guard.user_ids.push(admin_id);
 
     let viewer_csrf = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&viewer_session).unwrap(),
@@ -457,7 +588,7 @@ async fn test_bitmap_deletion_flow() {
 
     // Insert a test bitmap record
     let key1 = format!("bitmaps/del_test_1_{}.png", uuid::Uuid::new_v4().simple());
-    let row1 = sqlx::query(
+    let bm_id_1: i64 = sqlx::query_scalar(
         "INSERT INTO bitmaps (name, object_storage_key, width, height, created_by) VALUES ('Bitmap To Delete 1', $1, 100, 100, $2) RETURNING id",
     )
     .bind(&key1)
@@ -465,7 +596,7 @@ async fn test_bitmap_deletion_flow() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let bm_id_1: i64 = sqlx::Row::get(&row1, "id");
+    cleanup_guard.bitmap_ids.push(bm_id_1);
 
     // 1. Viewer attempt to delete -> 403 Forbidden
     let req_viewer = Request::builder()
@@ -511,7 +642,7 @@ async fn test_bitmap_deletion_flow() {
     assert_eq!(loc_editor, "/bitmaps");
 
     // Verify record deleted from database
-    let check_row1 = sqlx::query("SELECT id FROM bitmaps WHERE id = $1")
+    let check_row1: Option<i64> = sqlx::query_scalar("SELECT id FROM bitmaps WHERE id = $1")
         .bind(bm_id_1)
         .fetch_optional(&pool)
         .await
@@ -519,33 +650,37 @@ async fn test_bitmap_deletion_flow() {
     assert!(check_row1.is_none());
 
     // Verify audit log entry
-    let audit_row1 = sqlx::query("SELECT id, user_id, action, entity_type, entity_id FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = $1")
-        .bind(bm_id_1)
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
+    let audit_row1 = sqlx::query_as::<_, AuditLogRow>(
+        "SELECT action FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = $1",
+    )
+    .bind(bm_id_1)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
     assert!(audit_row1.is_some());
-    let audit_r = audit_row1.unwrap();
-    let audit_action: String = sqlx::Row::get(&audit_r, "action");
-    assert_eq!(audit_action, "delete_bitmap");
+    assert_eq!(audit_row1.unwrap().action, "delete_bitmap");
 
     // Insert an automation and scoped bitmap record
-    let auto_row = sqlx::query("INSERT INTO automations (name, description, status, created_by) VALUES ('Auto For Delete Test', '', 'draft', $1) RETURNING id")
-        .bind(admin_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let auto_id: i64 = sqlx::Row::get(&auto_row, "id");
+    let auto_id: i64 = sqlx::query_scalar(
+        "INSERT INTO automations (name, description, status, created_by) VALUES ('Auto For Delete Test', '', 'draft', $1) RETURNING id",
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    cleanup_guard.automation_ids.push(auto_id);
 
     let key2 = format!("bitmaps/del_test_2_{}.png", uuid::Uuid::new_v4().simple());
-    let row2 = sqlx::query("INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by) VALUES ($1, 'Scoped Bitmap To Delete', $2, 50, 50, $3) RETURNING id")
-        .bind(auto_id)
-        .bind(&key2)
-        .bind(admin_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let bm_id_2: i64 = sqlx::Row::get(&row2, "id");
+    let bm_id_2: i64 = sqlx::query_scalar(
+        "INSERT INTO bitmaps (automation_id, name, object_storage_key, width, height, created_by) VALUES ($1, 'Scoped Bitmap To Delete', $2, 50, 50, $3) RETURNING id",
+    )
+    .bind(auto_id)
+    .bind(&key2)
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    cleanup_guard.bitmap_ids.push(bm_id_2);
 
     // 4. Admin delete scoped bitmap via /automations/{id}/bitmaps/{bid}/delete
     let req_admin_scoped = Request::builder()
@@ -573,7 +708,7 @@ async fn test_bitmap_deletion_flow() {
     );
 
     // Verify scoped record deleted from database
-    let check_row2 = sqlx::query("SELECT id FROM bitmaps WHERE id = $1")
+    let check_row2: Option<i64> = sqlx::query_scalar("SELECT id FROM bitmaps WHERE id = $1")
         .bind(bm_id_2)
         .fetch_optional(&pool)
         .await
@@ -586,6 +721,13 @@ async fn test_region_picker_top_left_flow() {
     let Some(pool) = get_test_pool().await else {
         println!("Database not available, skipping test_region_picker_top_left_flow");
         return;
+    };
+
+    let mut cleanup_guard = BitmapsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: Vec::new(),
+        automation_ids: Vec::new(),
+        bitmap_ids: Vec::new(),
     };
 
     let config = Config::from_env().unwrap();
@@ -621,12 +763,14 @@ async fn test_region_picker_top_left_flow() {
         ))
         .with_state(state);
 
-    let (_user_id, session) = create_test_user(
+    let (user_id, session) = create_test_user(
         &pool,
         &format!("region_user_{}", uuid::Uuid::new_v4().simple()),
         "editor",
     )
     .await;
+    cleanup_guard.user_ids.push(user_id);
+
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&session).unwrap(),
         config.session_secret.expose_secret(),
@@ -681,6 +825,13 @@ async fn test_region_picker_confirm_crop_flow() {
         return;
     };
 
+    let mut cleanup_guard = BitmapsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: Vec::new(),
+        automation_ids: Vec::new(),
+        bitmap_ids: Vec::new(),
+    };
+
     let config = Config::from_env().unwrap();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
@@ -717,18 +868,21 @@ async fn test_region_picker_confirm_crop_flow() {
         ))
         .with_state(state);
 
-    let (_viewer_id, viewer_session) = create_test_user(
+    let (viewer_id, viewer_session) = create_test_user(
         &pool,
         &format!("viewer_confirm_{}", uuid::Uuid::new_v4().simple()),
         "viewer",
     )
     .await;
+    cleanup_guard.user_ids.push(viewer_id);
+
     let (editor_id, editor_session) = create_test_user(
         &pool,
         &format!("editor_confirm_{}", uuid::Uuid::new_v4().simple()),
         "editor",
     )
     .await;
+    cleanup_guard.user_ids.push(editor_id);
 
     let viewer_csrf = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&viewer_session).unwrap(),
@@ -806,40 +960,40 @@ async fn test_region_picker_confirm_crop_flow() {
     assert_eq!(location, "/bitmaps");
 
     // Verify row inserted in database: width = 100, height = 50
-    let crop_row = sqlx::query("SELECT id, name, width, height, created_by FROM bitmaps WHERE name = 'Crop Selection Bitmap'")
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
+    let crop_row = sqlx::query_as::<_, BitmapCropRow>(
+        "SELECT id, width, height, created_by FROM bitmaps WHERE name = 'Crop Selection Bitmap'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
     assert!(crop_row.is_some());
     let row = crop_row.unwrap();
-    let crop_bm_id: i64 = sqlx::Row::get(&row, "id");
-    let db_width: i32 = sqlx::Row::get(&row, "width");
-    let db_height: i32 = sqlx::Row::get(&row, "height");
-    let db_created_by: i64 = sqlx::Row::get(&row, "created_by");
+    cleanup_guard.bitmap_ids.push(row.id);
 
-    assert_eq!(db_width, 100);
-    assert_eq!(db_height, 50);
-    assert_eq!(db_created_by, editor_id);
+    assert_eq!(row.width, 100);
+    assert_eq!(row.height, 50);
+    assert_eq!(row.created_by, editor_id);
 
     // Verify audit log entry
-    let audit_row = sqlx::query(
-        "SELECT id, user_id, action FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = $1",
+    let audit_row = sqlx::query_as::<_, AuditLogRow>(
+        "SELECT action FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = $1",
     )
-    .bind(crop_bm_id)
+    .bind(row.id)
     .fetch_optional(&pool)
     .await
     .unwrap();
     assert!(audit_row.is_some());
-    let audit_action: String = sqlx::Row::get(&audit_row.unwrap(), "action");
-    assert_eq!(audit_action, "create_bitmap_crop");
+    assert_eq!(audit_row.unwrap().action, "create_bitmap_crop");
 
     // 4. Scoped confirmation: POST /automations/{id}/bitmaps/pick-region/confirm
-    let auto_row = sqlx::query("INSERT INTO automations (name, description, status, created_by) VALUES ('Scoped Confirm Auto', '', 'draft', $1) RETURNING id")
-        .bind(editor_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let auto_id: i64 = sqlx::Row::get(&auto_row, "id");
+    let auto_id: i64 = sqlx::query_scalar(
+        "INSERT INTO automations (name, description, status, created_by) VALUES ('Scoped Confirm Auto', '', 'draft', $1) RETURNING id",
+    )
+    .bind(editor_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    cleanup_guard.automation_ids.push(auto_id);
 
     let scoped_confirm_body = format!(
         "csrf_token={}&name=Scoped%20Crop%20Bitmap&image_url=/static/sample.png&width=1200&height=680&top_left_x=50&top_left_y=50&bottom_right_x=89&bottom_right_y=89",
@@ -867,7 +1021,7 @@ async fn test_region_picker_confirm_crop_flow() {
         .unwrap();
     assert_eq!(scoped_loc, format!("/automations/{}/bitmaps", auto_id));
 
-    let scoped_row = sqlx::query(
+    let scoped_row = sqlx::query_as::<_, ScopedBitmapTestRow>(
         "SELECT id, automation_id, width, height FROM bitmaps WHERE name = 'Scoped Crop Bitmap'",
     )
     .fetch_optional(&pool)
@@ -875,10 +1029,9 @@ async fn test_region_picker_confirm_crop_flow() {
     .unwrap();
     assert!(scoped_row.is_some());
     let s_row = scoped_row.unwrap();
-    let s_auto_id: Option<i64> = sqlx::Row::get(&s_row, "automation_id");
-    let s_w: i32 = sqlx::Row::get(&s_row, "width");
-    let s_h: i32 = sqlx::Row::get(&s_row, "height");
-    assert_eq!(s_auto_id, Some(auto_id));
-    assert_eq!(s_w, 40);
-    assert_eq!(s_h, 40);
+    cleanup_guard.bitmap_ids.push(s_row.id);
+
+    assert_eq!(s_row.automation_id, Some(auto_id));
+    assert_eq!(s_row.width, 40);
+    assert_eq!(s_row.height, 40);
 }
