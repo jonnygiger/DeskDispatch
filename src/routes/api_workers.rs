@@ -870,7 +870,11 @@ pub async fn post_step_result_handler(
     if let Some(ref updates) = payload.variable_updates
         && !updates.is_empty()
     {
-        let var_ids: Vec<i64> = updates.iter().map(|u| u.variable_id).collect();
+        let mut var_ids: Vec<i64> = updates.iter().map(|u| u.variable_id).collect();
+        var_ids.sort_unstable();
+        var_ids.dedup();
+        let unique_count = var_ids.len() as i64;
+
         let valid_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(DISTINCT id) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
         )
@@ -878,13 +882,6 @@ pub async fn post_step_result_handler(
         .bind(val.automation_id)
         .fetch_one(&mut *tx)
         .await?;
-
-        let unique_count = {
-            let mut ids = var_ids.clone();
-            ids.sort_unstable();
-            ids.dedup();
-            ids.len() as i64
-        };
 
         if valid_count < unique_count {
             let valid_ids: Vec<i64> = sqlx::query_scalar(

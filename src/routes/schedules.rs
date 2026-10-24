@@ -1643,12 +1643,18 @@ mod tests {
         // Base date: Wednesday Jan 15, 2025 at 08:00 UTC (DOM matches 15)
         let base_dom_match = Utc.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap();
         let next_dom = cron_or.next_after(&base_dom_match).unwrap();
-        assert_eq!(next_dom, Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap());
+        assert_eq!(
+            next_dom,
+            Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap()
+        );
 
         // Base date: Monday Jan 20, 2025 at 08:00 UTC (DOW matches MON, even though DOM is 20)
         let base_dow_match = Utc.with_ymd_and_hms(2025, 1, 20, 8, 0, 0).unwrap();
         let next_dow = cron_or.next_after(&base_dow_match).unwrap();
-        assert_eq!(next_dow, Utc.with_ymd_and_hms(2025, 1, 20, 9, 0, 0).unwrap());
+        assert_eq!(
+            next_dow,
+            Utc.with_ymd_and_hms(2025, 1, 20, 9, 0, 0).unwrap()
+        );
 
         // 3. Step range expressions (e.g. 1-10/2 -> 1, 3, 5, 7, 9)
         let p_step_range = CronPattern::parse("1-10/2 10 * * *").unwrap();

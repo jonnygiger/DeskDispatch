@@ -145,23 +145,43 @@ pub fn url_encode_component(s: &str) -> String {
     result
 }
 
-/// Derives the 4-tier AWS SigV4 HMAC-SHA256 signing key.
+/// Derives the 4-tier AWS SigV4 HMAC-SHA256 signing key with zero heap allocations.
 fn derive_signing_key(secret_key: &str, date_str: &str, region: &str) -> [u8; 32] {
-    let mut key_buf = [0u8; 64];
+    let mut k_secret_hasher_ipad = [0x36u8; 64];
+    let mut k_secret_hasher_opad = [0x5cu8; 64];
     let secret_bytes = secret_key.as_bytes();
-    let k_secret_bytes = if secret_bytes.len() <= 60 {
-        key_buf[..4].copy_from_slice(b"AWS4");
-        key_buf[4..4 + secret_bytes.len()].copy_from_slice(secret_bytes);
-        hmac_sha256(&key_buf[..4 + secret_bytes.len()], date_str.as_bytes())
+
+    if 4 + secret_bytes.len() > 64 {
+        let key_hash = {
+            let mut h = Sha256::new();
+            h.update(b"AWS4");
+            h.update(secret_bytes);
+            h.finalize()
+        };
+        for (i, &b) in key_hash.iter().enumerate() {
+            k_secret_hasher_ipad[i] ^= b;
+            k_secret_hasher_opad[i] ^= b;
+        }
     } else {
-        let mut vec = Vec::with_capacity(4 + secret_bytes.len());
-        vec.extend_from_slice(b"AWS4");
-        vec.extend_from_slice(secret_bytes);
-        hmac_sha256(&vec, date_str.as_bytes())
+        for (i, &b) in b"AWS4".iter().chain(secret_bytes.iter()).enumerate() {
+            k_secret_hasher_ipad[i] ^= b;
+            k_secret_hasher_opad[i] ^= b;
+        }
+    }
+
+    let k_secret = {
+        let mut inner = Sha256::new();
+        inner.update(k_secret_hasher_ipad);
+        inner.update(date_str.as_bytes());
+        let inner_hash = inner.finalize();
+
+        let mut outer = Sha256::new();
+        outer.update(k_secret_hasher_opad);
+        outer.update(inner_hash);
+        outer.finalize()
     };
 
-    let k_date = k_secret_bytes;
-    let k_region = hmac_sha256(&k_date, region.as_bytes());
+    let k_region = hmac_sha256(&k_secret, region.as_bytes());
     let k_service = hmac_sha256(&k_region, b"s3");
     hmac_sha256(&k_service, b"aws4_request")
 }

@@ -29,9 +29,7 @@ pub fn generate_registration_token() -> String {
 }
 
 pub fn hash_token(token: &str) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    hasher.finalize().to_vec()
+    Sha256::digest(token.as_bytes()).to_vec()
 }
 
 #[derive(Debug, Clone, FromRow, Serialize)]
