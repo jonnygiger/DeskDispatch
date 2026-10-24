@@ -903,7 +903,8 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
         "psk": "deskdispatch_psk_prod_secret_1234",
         "hostname": "e2e-rec-worker",
         "display_name": "E2E Recording Worker"
-    }).to_string();
+    })
+    .to_string();
 
     let reg_resp = client
         .post(&reg_url)
@@ -914,12 +915,22 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
         .expect("Failed to register worker via PSK");
 
     let reg_body = reg_resp.text().await.expect("Failed to read reg response");
-    let reg_json: serde_json::Value = serde_json::from_str(&reg_body).expect("Failed to parse reg response JSON");
-    let rec_worker_id = reg_json.get("worker_id").and_then(|v| v.as_i64()).expect("Missing worker_id");
-    let rec_api_key = reg_json.get("api_key").and_then(|v| v.as_str()).expect("Missing api_key");
+    let reg_json: serde_json::Value =
+        serde_json::from_str(&reg_body).expect("Failed to parse reg response JSON");
+    let rec_worker_id = reg_json
+        .get("worker_id")
+        .and_then(|v| v.as_i64())
+        .expect("Missing worker_id");
+    let rec_api_key = reg_json
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .expect("Missing api_key");
     let auth_header_val = format!("Bearer {}", rec_api_key);
 
-    println!("[E2E Recording Test] Registered recording worker ID: {}", rec_worker_id);
+    println!(
+        "[E2E Recording Test] Registered recording worker ID: {}",
+        rec_worker_id
+    );
 
     // 3. Start recording session on the active worker
     println!("[E2E Recording Test] Step 6: Starting worker recording session...");
@@ -978,8 +989,14 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
 
     // 4. Submit recorded events via worker API (simulating worker recording actions)
     println!("[E2E Recording Test] Step 7: Submitting simulated worker recording events...");
-    let worker_events_url = format!("{}/api/v1/workers/recordings/{}/events", base_url, session_id);
-    let upload_url_endpoint = format!("{}/api/v1/workers/recordings/{}/screenshot-upload-url", base_url, session_id);
+    let worker_events_url = format!(
+        "{}/api/v1/workers/recordings/{}/events",
+        base_url, session_id
+    );
+    let upload_url_endpoint = format!(
+        "{}/api/v1/workers/recordings/{}/screenshot-upload-url",
+        base_url, session_id
+    );
 
     let upload_info_resp = client
         .get(&upload_url_endpoint)
@@ -989,11 +1006,21 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
         .expect("Failed to GET recording screenshot upload URL");
 
     assert_eq!(upload_info_resp.status(), reqwest::StatusCode::OK);
-    let upload_info_body = upload_info_resp.text().await.expect("Failed to read upload info body");
-    let info: serde_json::Value = serde_json::from_str(&upload_info_body).expect("Failed to parse upload info JSON");
+    let upload_info_body = upload_info_resp
+        .text()
+        .await
+        .expect("Failed to read upload info body");
+    let info: serde_json::Value =
+        serde_json::from_str(&upload_info_body).expect("Failed to parse upload info JSON");
 
-    let upload_url = info.get("upload_url").and_then(|v| v.as_str()).expect("Missing upload_url");
-    let obj_key = info.get("object_key").and_then(|v| v.as_str()).expect("Missing object_key");
+    let upload_url = info
+        .get("upload_url")
+        .and_then(|v| v.as_str())
+        .expect("Missing upload_url");
+    let obj_key = info
+        .get("object_key")
+        .and_then(|v| v.as_str())
+        .expect("Missing object_key");
 
     let mut put_target = upload_url.to_string();
     if put_target.contains("http://rustfs:9000") {
@@ -1032,7 +1059,8 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
                 "screenshot_object_key": null
             }
         ]
-    }).to_string();
+    })
+    .to_string();
 
     let events_post_resp = client
         .post(&worker_events_url)
@@ -1084,11 +1112,17 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
     // 6. Convert recording into draft automation via POST /recordings/{session_id}/convert
     println!("[E2E Recording Test] Step 10: Converting recording to draft automation...");
     let convert_url = format!("{}/recordings/{}/convert", base_url, session_id);
-    let auto_title = format!("E2E Draft Recording Automation {}", uuid::Uuid::new_v4().simple());
+    let auto_title = format!(
+        "E2E Draft Recording Automation {}",
+        uuid::Uuid::new_v4().simple()
+    );
     let mut convert_form = HashMap::new();
     convert_form.insert("csrf_token", review_csrf_token.as_str());
     convert_form.insert("automation_name", auto_title.as_str());
-    convert_form.insert("automation_description", "Converted from E2E recording session");
+    convert_form.insert(
+        "automation_description",
+        "Converted from E2E recording session",
+    );
 
     let convert_resp = client
         .post(&convert_url)
@@ -1124,7 +1158,9 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
     );
 
     // 7. Fetch converted draft automation detail page and verify screenshot thumbnails
-    println!("[E2E Recording Test] Step 11: Fetching draft automation page and testing screenshot thumbnails...");
+    println!(
+        "[E2E Recording Test] Step 11: Fetching draft automation page and testing screenshot thumbnails..."
+    );
     let auto_page_url = format!("{}/automations/{}", base_url, converted_auto_id);
     let auto_page_resp = client
         .get(&auto_page_url)
@@ -1165,7 +1201,9 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
         found
     };
 
-    let step_id = step_id_opt.expect("No step screenshot thumbnail (/media/screenshots/{id}) found on draft automation page");
+    let step_id = step_id_opt.expect(
+        "No step screenshot thumbnail (/media/screenshots/{id}) found on draft automation page",
+    );
 
     println!(
         "[E2E Recording Test] Found screenshot step ID {} on converted draft automation page!",
@@ -1173,7 +1211,10 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
     );
 
     // 8. Fetch /media/screenshots/{step_id} and follow redirect to verify image loads cleanly (200 OK)
-    println!("[E2E Recording Test] Step 12: Requesting /media/screenshots/{} and verifying image loads...", step_id);
+    println!(
+        "[E2E Recording Test] Step 12: Requesting /media/screenshots/{} and verifying image loads...",
+        step_id
+    );
     let media_url = format!("{}/media/screenshots/{}", base_url, step_id);
     let media_resp = client
         .get(&media_url)
@@ -1183,7 +1224,8 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
         .expect("Failed to GET /media/screenshots/{step_id}");
 
     assert!(
-        media_resp.status() == reqwest::StatusCode::FOUND || media_resp.status() == reqwest::StatusCode::SEE_OTHER,
+        media_resp.status() == reqwest::StatusCode::FOUND
+            || media_resp.status() == reqwest::StatusCode::SEE_OTHER,
         "Expected redirect for media screenshot, got {}",
         media_resp.status()
     );
@@ -1235,5 +1277,7 @@ async fn test_docker_e2e_worker_recording_and_draft_automation_screenshots() {
         "Screenshot image header signature is not a valid PNG image!"
     );
 
-    println!("[E2E Recording Test] Worker recording and draft automation screenshot E2E test completed successfully!");
+    println!(
+        "[E2E Recording Test] Worker recording and draft automation screenshot E2E test completed successfully!"
+    );
 }

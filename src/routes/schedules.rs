@@ -1042,9 +1042,8 @@ pub async fn post_toggle_schedule_handler(
             Ok(next_dt) => Some(next_dt),
             Err(err_msg) => {
                 tracing::warn!(schedule_id = id, error = %err_msg, "Refusing to enable schedule with invalid cron expression");
-                let flash = crate::auth::FlashMessage::error(format!(
-                    "Cannot enable schedule: {err_msg}"
-                ));
+                let flash =
+                    crate::auth::FlashMessage::error(format!("Cannot enable schedule: {err_msg}"));
                 let (c1, c2) = crate::auth::build_flash_cookie(&flash);
                 return (
                     [

@@ -407,7 +407,10 @@ impl StepRunner {
                 ..
             } => {
                 let template_img = match self
-                    .get_or_download_bitmap(Some(*reference_bitmap_id), reference_bitmap_key.as_deref())
+                    .get_or_download_bitmap(
+                        Some(*reference_bitmap_id),
+                        reference_bitmap_key.as_deref(),
+                    )
                     .await
                 {
                     Ok(img) => img,
@@ -536,7 +539,10 @@ impl StepRunner {
                         ..
                     } => {
                         if let Ok(template_img) = self
-                            .get_or_download_bitmap(*reference_bitmap_id, reference_bitmap_key.as_deref())
+                            .get_or_download_bitmap(
+                                *reference_bitmap_id,
+                                reference_bitmap_key.as_deref(),
+                            )
                             .await
                         {
                             let screen = capture_screen(
@@ -767,8 +773,7 @@ impl StepRunner {
         bitmap_id: Option<i64>,
         key: Option<&str>,
     ) -> Result<CapturedImage, String> {
-        let bitmap_id =
-            bitmap_id.ok_or_else(|| "Missing reference bitmap id".to_string())?;
+        let bitmap_id = bitmap_id.ok_or_else(|| "Missing reference bitmap id".to_string())?;
         let cache_key = key
             .map(str::to_string)
             .unwrap_or_else(|| format!("bitmap:{bitmap_id}"));
