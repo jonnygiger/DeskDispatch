@@ -59,3 +59,7 @@ Action: Unit test label sanitization edge cases, delay float-to-int conversion c
 ## 2025-03-24 UserRole Permissions, Conversions & Parsing Edge Cases Coverage
 Learning: `UserRole` parses string inputs using `s.to_lowercase().as_str()` without `.trim()`, meaning `FromStr` supports case-insensitivity (e.g. `"ADMIN"` -> `UserRole::Admin`) but rejects untrimmed whitespace surrounding role strings (e.g. `"  ADMIN  "` -> `Err("Unknown user role:   ADMIN  ")`).
 Action: In unit tests for `UserRole`, test `as_str()`, `can_edit()`, `is_admin()`, case-insensitive `FromStr` without leading/trailing spaces, invalid role error handling, and Serde JSON serialization/deserialization.
+
+## 2025-03-25 Cron Pattern Next After & Sunday Representation Edge Cases Coverage
+Learning: `CronPattern` in `src/routes/schedules.rs` normalizes Sunday as `0`, `7`, or `"SUN"`, supports step-range syntax (e.g., `1-10/2`), handles year-end boundary transitions (Dec 31 to Jan 1), and applies OR-logic when both day-of-month and day-of-week fields are restricted (non-wildcards).
+Action: Write pure unit tests asserting exact `CronPattern::next_after` outputs and bitmask matching across Sunday representations, step ranges, year rollover, and DOM/DOW OR-logic without requiring database or time-delay fixtures.
