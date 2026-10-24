@@ -64,7 +64,7 @@ pub fn router() -> Router<AppState> {
 #[inline]
 pub fn bitmap_redirect_path(automation_id: Option<i64>) -> Cow<'static, str> {
     match automation_id {
-        Some(aid) => Cow::Owned(format!("/automations/{}/bitmaps", aid)),
+        Some(aid) => Cow::Owned(format!("/automations/{aid}/bitmaps")),
         None => Cow::Borrowed("/bitmaps"),
     }
 }
@@ -474,11 +474,13 @@ async fn render_bitmaps_list(
     }
 }
 
+/// GET /bitmaps
 #[tracing::instrument(skip(state, user))]
 pub async fn get_bitmaps_handler(State(state): State<AppState>, user: AuthUser) -> Response {
     render_bitmaps_list(&state.db, user, None).await
 }
 
+/// GET /automations/{id}/bitmaps
 #[tracing::instrument(skip(state, user))]
 pub async fn get_automation_bitmaps_handler(
     State(state): State<AppState>,
@@ -872,14 +874,14 @@ pub async fn get_pick_region_handler(
     user: AuthUser,
     Query(query): Query<PickRegionQuery>,
 ) -> impl IntoResponse {
-    let image_url = sanitize_image_url(query.image_url.as_deref()).to_string();
+    let image_url = sanitize_image_url(query.image_url.as_deref());
     let width = query.width.unwrap_or(1920);
     let height = query.height.unwrap_or(1080);
 
     HtmlTemplate(RegionPickerTopLeftTemplate::build(
         user,
         query.automation_id,
-        image_url,
+        image_url.to_string(),
         width,
         height,
         RegionPickerParams {
@@ -912,7 +914,7 @@ pub async fn post_pick_region_top_left_handler(
     user: AuthUser,
     CsrfForm(form): CsrfForm<PickRegionTopLeftForm>,
 ) -> Response {
-    let image_url = sanitize_image_url(Some(&form.image_url)).to_string();
+    let image_url = sanitize_image_url(Some(&form.image_url));
 
     let (click_x, click_y, has_click) = match (form.x, form.y) {
         (Some(cx), Some(cy)) => (cx, cy, true),
@@ -956,7 +958,7 @@ pub async fn post_pick_region_top_left_handler(
     HtmlTemplate(RegionPickerTopLeftTemplate::build(
         user,
         form.automation_id,
-        image_url,
+        image_url.to_string(),
         form.width,
         form.height,
         RegionPickerParams {
@@ -997,7 +999,7 @@ pub async fn post_pick_region_bottom_right_handler(
     user: AuthUser,
     CsrfForm(form): CsrfForm<PickRegionBottomRightForm>,
 ) -> Response {
-    let image_url = sanitize_image_url(Some(&form.image_url)).to_string();
+    let image_url = sanitize_image_url(Some(&form.image_url));
 
     let (raw_br_x, raw_br_y, is_valid) = match (form.manual_x, form.manual_y) {
         (Some(mx), Some(my)) => (
@@ -1071,7 +1073,7 @@ pub async fn post_pick_region_bottom_right_handler(
     HtmlTemplate(RegionPickerTopLeftTemplate::build(
         user,
         form.automation_id,
-        image_url,
+        image_url.to_string(),
         form.width,
         form.height,
         RegionPickerParams {
@@ -1158,8 +1160,10 @@ async fn fetch_source_image_bytes(state: &AppState, image_url: &str) -> Option<V
     }
 
     let s3_key = if let Some(rest) = path.strip_prefix('/') {
-        let bucket_prefix = format!("{}/", state.config.s3_bucket);
-        if let Some(key) = rest.strip_prefix(&bucket_prefix) {
+        if let Some(key) = rest
+            .strip_prefix(state.config.s3_bucket.as_str())
+            .and_then(|r| r.strip_prefix('/'))
+        {
             Some(key)
         } else if !rest.starts_with("static/") && !rest.starts_with("media/") {
             Some(rest)
@@ -1206,18 +1210,17 @@ async fn crop_image_region(
 ) -> Vec<u8> {
     let crop_w = crop_w.max(1);
     let crop_h = crop_h.max(1);
+    let target_cap = (crop_w as usize) * (crop_h as usize) * 3;
 
     if let Some(bytes) = fetch_source_image_bytes(state, image_url).await {
         let mut decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
         decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
 
         if let Ok(mut reader) = decoder.read_info() {
-            let mut buf = vec![
-                0;
-                reader
-                    .output_buffer_size()
-                    .unwrap_or_else(|| reader.info().raw_bytes())
-            ];
+            let buf_size = reader
+                .output_buffer_size()
+                .unwrap_or_else(|| reader.info().raw_bytes());
+            let mut buf = vec![0u8; buf_size];
             if let Ok(info) = reader.next_frame(&mut buf) {
                 let src_w = info.width;
                 let src_h = info.height;
@@ -1229,7 +1232,7 @@ async fn crop_image_region(
                     _ => 3,
                 };
 
-                let mut cropped = Vec::with_capacity((crop_w * crop_h * 3) as usize);
+                let mut cropped = Vec::with_capacity(target_cap);
                 for y in 0..crop_h {
                     let sy = tl_y.saturating_add(y).min(src_h.saturating_sub(1));
                     for x in 0..crop_w {
@@ -1240,11 +1243,7 @@ async fn crop_image_region(
                             match bytes_per_pixel {
                                 3 => cropped.extend_from_slice(px),
                                 4 => cropped.extend_from_slice(&px[..3]),
-                                1 | 2 => {
-                                    cropped.push(px[0]);
-                                    cropped.push(px[0]);
-                                    cropped.push(px[0]);
-                                }
+                                1 | 2 => cropped.extend_from_slice(&[px[0], px[0], px[0]]),
                                 _ => cropped.extend_from_slice(&[0, 0, 0]),
                             }
                         } else {
@@ -1258,14 +1257,12 @@ async fn crop_image_region(
         }
     }
 
-    let mut fallback_pixels = Vec::with_capacity((crop_w * crop_h * 3) as usize);
+    let mut fallback_pixels = Vec::with_capacity(target_cap);
     for y in 0..crop_h {
         let g = ((y * 255) / crop_h) as u8;
         for x in 0..crop_w {
             let r = ((x * 255) / crop_w) as u8;
-            fallback_pixels.push(r);
-            fallback_pixels.push(g);
-            fallback_pixels.push(180);
+            fallback_pixels.extend_from_slice(&[r, g, 180]);
         }
     }
     encode_png(crop_w, crop_h, &fallback_pixels)
@@ -1293,18 +1290,16 @@ pub async fn confirm_region_crop_logic(
     if form.mode.as_deref() == Some("search_region") {
         let ref_param = form
             .reference_bitmap_id
-            .map(|id| format!("&reference_bitmap_id={}", id))
+            .map(|id| format!("&reference_bitmap_id={id}"))
             .unwrap_or_default();
 
         let redirect_url = if let (Some(aid), Some(sid)) = (form.automation_id, form.step_id) {
             format!(
-                "/automations/{}/steps/{}/edit?search_x={}&search_y={}&search_width={}&search_height={}{}",
-                aid, sid, norm_tl_x, norm_tl_y, crop_w, crop_h, ref_param
+                "/automations/{aid}/steps/{sid}/edit?search_x={norm_tl_x}&search_y={norm_tl_y}&search_width={crop_w}&search_height={crop_h}{ref_param}"
             )
         } else if let Some(aid) = form.automation_id {
             format!(
-                "/automations/{}/steps/new/find_bitmap?search_x={}&search_y={}&search_width={}&search_height={}{}",
-                aid, norm_tl_x, norm_tl_y, crop_w, crop_h, ref_param
+                "/automations/{aid}/steps/new/find_bitmap?search_x={norm_tl_x}&search_y={norm_tl_y}&search_width={crop_w}&search_height={crop_h}{ref_param}"
             )
         } else {
             "/automations".to_string()
@@ -1384,15 +1379,9 @@ pub async fn confirm_region_crop_logic(
         || form.return_to.as_deref() == Some("edit_find_bitmap")
     {
         let redirect_url = if let (Some(aid), Some(sid)) = (form.automation_id, form.step_id) {
-            format!(
-                "/automations/{}/steps/{}/edit?reference_bitmap_id={}",
-                aid, sid, bitmap_id
-            )
+            format!("/automations/{aid}/steps/{sid}/edit?reference_bitmap_id={bitmap_id}")
         } else if let Some(aid) = form.automation_id {
-            format!(
-                "/automations/{}/steps/new/find_bitmap?reference_bitmap_id={}",
-                aid, bitmap_id
-            )
+            format!("/automations/{aid}/steps/new/find_bitmap?reference_bitmap_id={bitmap_id}")
         } else {
             "/bitmaps".to_string()
         };
