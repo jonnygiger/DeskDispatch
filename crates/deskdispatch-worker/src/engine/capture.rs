@@ -28,11 +28,14 @@ impl CapturedImage {
         let w = x2.saturating_sub(x1).max(1);
         let h = y2.saturating_sub(y1).max(1);
 
+        let stride = (self.width * 4) as usize;
+        let row_bytes = ((x2 - x1) * 4) as usize;
         let mut data = Vec::with_capacity((w * h * 4) as usize);
+
         for y in y1..y2 {
-            let start = ((y * self.width + x1) * 4) as usize;
-            let end = ((y * self.width + x2) * 4) as usize;
-            if start < self.data.len() && end <= self.data.len() {
+            let start = (y as usize) * stride + (x1 as usize) * 4;
+            let end = start + row_bytes;
+            if end <= self.data.len() {
                 data.extend_from_slice(&self.data[start..end]);
             }
         }
@@ -96,35 +99,47 @@ impl CapturedImage {
 
         let bytes = &buf[..output_info.buffer_size()];
         let pixel_count = (width * height) as usize;
+
         let data = match output_info.color_type {
             png::ColorType::Rgb => {
-                let mut rgba = Vec::with_capacity(pixel_count * 4);
-                for chunk in bytes.chunks_exact(3) {
-                    rgba.push(chunk[0]);
-                    rgba.push(chunk[1]);
-                    rgba.push(chunk[2]);
-                    rgba.push(255);
+                let (chunks, _) = bytes.as_chunks::<3>();
+                let mut rgba = vec![255u8; pixel_count * 4];
+                let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
+                for (chunk, dst) in chunks.iter().zip(dst_chunks.iter_mut()) {
+                    dst[0..3].copy_from_slice(chunk);
                 }
                 rgba
             }
-            png::ColorType::Rgba => bytes.to_vec(),
+            png::ColorType::Rgba => {
+                if bytes.len() == pixel_count * 4 {
+                    bytes.to_vec()
+                } else {
+                    let mut rgba = vec![255u8; pixel_count * 4];
+                    let copy_len = bytes.len().min(rgba.len());
+                    rgba[..copy_len].copy_from_slice(&bytes[..copy_len]);
+                    rgba
+                }
+            }
             png::ColorType::Grayscale => {
-                let mut rgba = Vec::with_capacity(pixel_count * 4);
-                for &g in bytes {
-                    rgba.push(g);
-                    rgba.push(g);
-                    rgba.push(g);
-                    rgba.push(255);
+                let mut rgba = vec![255u8; pixel_count * 4];
+                let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
+                for (&g, dst) in bytes.iter().zip(dst_chunks.iter_mut()) {
+                    dst[0] = g;
+                    dst[1] = g;
+                    dst[2] = g;
                 }
                 rgba
             }
             png::ColorType::GrayscaleAlpha => {
-                let mut rgba = Vec::with_capacity(pixel_count * 4);
-                for chunk in bytes.chunks_exact(2) {
-                    rgba.push(chunk[0]);
-                    rgba.push(chunk[0]);
-                    rgba.push(chunk[0]);
-                    rgba.push(chunk[1]);
+                let (chunks, _) = bytes.as_chunks::<2>();
+                let mut rgba = vec![255u8; pixel_count * 4];
+                let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
+                for (chunk, dst) in chunks.iter().zip(dst_chunks.iter_mut()) {
+                    let g = chunk[0];
+                    dst[0] = g;
+                    dst[1] = g;
+                    dst[2] = g;
+                    dst[3] = chunk[1];
                 }
                 rgba
             }
@@ -187,15 +202,126 @@ fn capture_x11_screen(
 }
 
 pub fn generate_synthetic_display(width: u32, height: u32) -> CapturedImage {
-    let mut data = vec![0u8; (width * height * 4) as usize];
-    for y in 0..height {
-        for x in 0..width {
-            let idx = ((y * width + x) * 4) as usize;
-            data[idx] = (x % 256) as u8;
-            data[idx + 1] = (y % 256) as u8;
-            data[idx + 2] = ((x + y) % 256) as u8;
-            data[idx + 3] = 255;
+    let mut data = vec![255u8; (width * height * 4) as usize];
+    let row_len = (width * 4) as usize;
+    for (y, row) in data.chunks_exact_mut(row_len).enumerate() {
+        let y_mod = (y % 256) as u8;
+        let (pixels, _) = row.as_chunks_mut::<4>();
+        for (x, px) in pixels.iter_mut().enumerate() {
+            let x_mod = (x % 256) as u8;
+            px[0] = x_mod;
+            px[1] = y_mod;
+            px[2] = ((x + y) % 256) as u8;
+            // px[3] is pre-initialized to 255
         }
     }
     CapturedImage::new(width, height, data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encode_custom_png(
+        width: u32,
+        height: u32,
+        color_type: png::ColorType,
+        raw_data: &[u8],
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(color_type);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().expect("Header write succeeds");
+        writer
+            .write_image_data(raw_data)
+            .expect("Image data write succeeds");
+        drop(writer);
+        out
+    }
+
+    #[test]
+    fn test_captured_image_crop() {
+        let mut data = vec![0u8; 10 * 10 * 4];
+        // Set red pixel at (2, 3)
+        let idx = (3 * 10 + 2) * 4;
+        data[idx] = 255;
+        data[idx + 3] = 255;
+
+        let img = CapturedImage::new(10, 10, data);
+        let cropped = img.crop(1, 2, 4, 4);
+
+        assert_eq!(cropped.width, 4);
+        assert_eq!(cropped.height, 4);
+        // Pixel (2, 3) relative to crop (1, 2) is (1, 1)
+        assert_eq!(cropped.get_pixel_rgb(1, 1), Some((255, 0, 0)));
+    }
+
+    #[test]
+    fn test_captured_image_crop_out_of_bounds() {
+        let img = generate_synthetic_display(5, 5);
+        let cropped = img.crop(10, 10, 5, 5);
+        assert_eq!(cropped.width, 1);
+        assert_eq!(cropped.height, 1);
+        assert_eq!(cropped.data.len(), 4);
+    }
+
+    #[test]
+    fn test_encode_decode_png_roundtrip() {
+        let synth = generate_synthetic_display(8, 8);
+        let encoded = synth.encode_png().expect("Encoding PNG succeeds");
+        let decoded = CapturedImage::decode_png(&encoded).expect("Decoding PNG succeeds");
+
+        assert_eq!(decoded.width, 8);
+        assert_eq!(decoded.height, 8);
+        assert_eq!(synth.get_pixel_rgb(3, 4), decoded.get_pixel_rgb(3, 4));
+    }
+
+    #[test]
+    fn test_decode_png_rgb() {
+        let raw_rgb = vec![100u8, 150u8, 200u8, 50u8, 75u8, 125u8];
+        let png_bytes = encode_custom_png(2, 1, png::ColorType::Rgb, &raw_rgb);
+        let decoded = CapturedImage::decode_png(&png_bytes).expect("RGB decode succeeds");
+
+        assert_eq!(decoded.width, 2);
+        assert_eq!(decoded.height, 1);
+        assert_eq!(decoded.get_pixel_rgb(0, 0), Some((100, 150, 200)));
+        assert_eq!(decoded.get_pixel_rgb(1, 0), Some((50, 75, 125)));
+        assert_eq!(decoded.data[3], 255); // Alpha channel
+    }
+
+    #[test]
+    fn test_decode_png_grayscale() {
+        let raw_gray = vec![128u8, 200u8];
+        let png_bytes = encode_custom_png(2, 1, png::ColorType::Grayscale, &raw_gray);
+        let decoded = CapturedImage::decode_png(&png_bytes).expect("Grayscale decode succeeds");
+
+        assert_eq!(decoded.width, 2);
+        assert_eq!(decoded.height, 1);
+        assert_eq!(decoded.get_pixel_rgb(0, 0), Some((128, 128, 128)));
+        assert_eq!(decoded.get_pixel_rgb(1, 0), Some((200, 200, 200)));
+    }
+
+    #[test]
+    fn test_decode_png_grayscale_alpha() {
+        let raw_ga = vec![100u8, 255u8, 200u8, 128u8];
+        let png_bytes = encode_custom_png(2, 1, png::ColorType::GrayscaleAlpha, &raw_ga);
+        let decoded =
+            CapturedImage::decode_png(&png_bytes).expect("GrayscaleAlpha decode succeeds");
+
+        assert_eq!(decoded.width, 2);
+        assert_eq!(decoded.height, 1);
+        assert_eq!(decoded.get_pixel_rgb(0, 0), Some((100, 100, 100)));
+        assert_eq!(decoded.get_pixel_rgb(1, 0), Some((200, 200, 200)));
+        assert_eq!(decoded.data[7], 128); // Alpha
+    }
+
+    #[test]
+    fn test_get_pixel_rgb_bounds() {
+        let img = generate_synthetic_display(4, 4);
+        assert!(img.get_pixel_rgb(0, 0).is_some());
+        assert!(img.get_pixel_rgb(3, 3).is_some());
+        assert!(img.get_pixel_rgb(4, 0).is_none());
+        assert!(img.get_pixel_rgb(0, 4).is_none());
+    }
 }
