@@ -7,6 +7,7 @@ use axum::{
 use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
 use serde::Deserialize;
 use sqlx::FromRow;
+use std::borrow::Cow;
 
 use super::auth::HtmlTemplate;
 use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
@@ -91,23 +92,23 @@ pub struct DueScheduleRow {
 }
 
 impl ScheduleItem {
-    pub fn formatted_next_run(&self) -> String {
+    pub fn formatted_next_run(&self) -> Cow<'static, str> {
         match self.next_run_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            Some(dt) => Cow::Owned(dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
             None => {
                 if self.is_enabled {
-                    "Pending".to_string()
+                    Cow::Borrowed("Pending")
                 } else {
-                    "Disabled".to_string()
+                    Cow::Borrowed("Disabled")
                 }
             }
         }
     }
 
-    pub fn formatted_last_run(&self) -> String {
+    pub fn formatted_last_run(&self) -> Cow<'static, str> {
         match self.last_run_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => "Never".to_string(),
+            Some(dt) => Cow::Owned(dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+            None => Cow::Borrowed("Never"),
         }
     }
 
@@ -211,33 +212,52 @@ pub struct CronPattern {
 }
 
 fn month_name_lookup(s: &str) -> Option<u32> {
-    match s.to_ascii_uppercase().as_str() {
-        "JAN" => Some(1),
-        "FEB" => Some(2),
-        "MAR" => Some(3),
-        "APR" => Some(4),
-        "MAY" => Some(5),
-        "JUN" => Some(6),
-        "JUL" => Some(7),
-        "AUG" => Some(8),
-        "SEP" => Some(9),
-        "OCT" => Some(10),
-        "NOV" => Some(11),
-        "DEC" => Some(12),
-        _ => None,
+    if s.eq_ignore_ascii_case("JAN") {
+        Some(1)
+    } else if s.eq_ignore_ascii_case("FEB") {
+        Some(2)
+    } else if s.eq_ignore_ascii_case("MAR") {
+        Some(3)
+    } else if s.eq_ignore_ascii_case("APR") {
+        Some(4)
+    } else if s.eq_ignore_ascii_case("MAY") {
+        Some(5)
+    } else if s.eq_ignore_ascii_case("JUN") {
+        Some(6)
+    } else if s.eq_ignore_ascii_case("JUL") {
+        Some(7)
+    } else if s.eq_ignore_ascii_case("AUG") {
+        Some(8)
+    } else if s.eq_ignore_ascii_case("SEP") {
+        Some(9)
+    } else if s.eq_ignore_ascii_case("OCT") {
+        Some(10)
+    } else if s.eq_ignore_ascii_case("NOV") {
+        Some(11)
+    } else if s.eq_ignore_ascii_case("DEC") {
+        Some(12)
+    } else {
+        None
     }
 }
 
 fn weekday_name_lookup(s: &str) -> Option<u32> {
-    match s.to_ascii_uppercase().as_str() {
-        "SUN" => Some(0),
-        "MON" => Some(1),
-        "TUE" => Some(2),
-        "WED" => Some(3),
-        "THU" => Some(4),
-        "FRI" => Some(5),
-        "SAT" => Some(6),
-        _ => None,
+    if s.eq_ignore_ascii_case("SUN") {
+        Some(0)
+    } else if s.eq_ignore_ascii_case("MON") {
+        Some(1)
+    } else if s.eq_ignore_ascii_case("TUE") {
+        Some(2)
+    } else if s.eq_ignore_ascii_case("WED") {
+        Some(3)
+    } else if s.eq_ignore_ascii_case("THU") {
+        Some(4)
+    } else if s.eq_ignore_ascii_case("FRI") {
+        Some(5)
+    } else if s.eq_ignore_ascii_case("SAT") {
+        Some(6)
+    } else {
+        None
     }
 }
 
@@ -385,6 +405,12 @@ impl CronPattern {
             }
         };
 
+        let resolve_local = |naive: &chrono::NaiveDateTime| -> Option<DateTime<Tz>> {
+            tz.from_local_datetime(naive)
+                .single()
+                .or_else(|| tz.from_local_datetime(naive).latest())
+        };
+
         let all_days_mask = 0xFFFFFFFE_u32; // bits 1..=31
         let all_weekdays_mask = 0x7F; // bits 0..=6
         let both_day_restrictions =
@@ -412,11 +438,7 @@ impl CronPattern {
                 if let Some(naive_next) = chrono::NaiveDate::from_ymd_opt(next_y, next_m, 1)
                     .and_then(|d| d.and_hms_opt(0, 0, 0))
                 {
-                    if let Some(next_dt) = tz
-                        .from_local_datetime(&naive_next)
-                        .single()
-                        .or_else(|| tz.from_local_datetime(&naive_next).latest())
-                    {
+                    if let Some(next_dt) = resolve_local(&naive_next) {
                         current = next_dt;
                         continue;
                     }
@@ -441,11 +463,7 @@ impl CronPattern {
                     .succ_opt()
                     .and_then(|d| d.and_hms_opt(0, 0, 0))
                 {
-                    if let Some(next_dt) = tz
-                        .from_local_datetime(&naive_next)
-                        .single()
-                        .or_else(|| tz.from_local_datetime(&naive_next).latest())
-                    {
+                    if let Some(next_dt) = resolve_local(&naive_next) {
                         current = next_dt;
                         continue;
                     }
@@ -467,29 +485,18 @@ impl CronPattern {
                     None
                 };
 
-                if let Some(next_h) = next_h_opt {
-                    if let Some(naive_next) = current.naive_local().date().and_hms_opt(next_h, 0, 0)
-                    {
-                        if let Some(next_dt) = tz
-                            .from_local_datetime(&naive_next)
-                            .single()
-                            .or_else(|| tz.from_local_datetime(&naive_next).latest())
-                        {
-                            current = next_dt;
-                            continue;
-                        }
-                    }
-                } else if let Some(naive_next) = current
-                    .naive_local()
-                    .date()
-                    .succ_opt()
-                    .and_then(|d| d.and_hms_opt(0, 0, 0))
-                {
-                    if let Some(next_dt) = tz
-                        .from_local_datetime(&naive_next)
-                        .single()
-                        .or_else(|| tz.from_local_datetime(&naive_next).latest())
-                    {
+                let naive_next = next_h_opt
+                    .and_then(|h| current.naive_local().date().and_hms_opt(h, 0, 0))
+                    .or_else(|| {
+                        current
+                            .naive_local()
+                            .date()
+                            .succ_opt()
+                            .and_then(|d| d.and_hms_opt(0, 0, 0))
+                    });
+
+                if let Some(naive_next) = naive_next {
+                    if let Some(next_dt) = resolve_local(&naive_next) {
                         current = next_dt;
                         continue;
                     }
@@ -511,29 +518,17 @@ impl CronPattern {
                     None
                 };
 
-                if let Some(next_m) = next_m_opt {
-                    if let Some(naive_next) =
-                        current.naive_local().date().and_hms_opt(hour, next_m, 0)
-                    {
-                        if let Some(next_dt) = tz
-                            .from_local_datetime(&naive_next)
-                            .single()
-                            .or_else(|| tz.from_local_datetime(&naive_next).latest())
-                        {
-                            current = next_dt;
-                            continue;
-                        }
-                    }
-                } else if let Some(next_hour_naive) = current
-                    .naive_local()
-                    .with_minute(0)
-                    .map(|dt| dt + Duration::hours(1))
-                {
-                    if let Some(next_dt) = tz
-                        .from_local_datetime(&next_hour_naive)
-                        .single()
-                        .or_else(|| tz.from_local_datetime(&next_hour_naive).latest())
-                    {
+                let naive_next = next_m_opt
+                    .and_then(|m| current.naive_local().date().and_hms_opt(hour, m, 0))
+                    .or_else(|| {
+                        current
+                            .naive_local()
+                            .with_minute(0)
+                            .map(|dt| dt + Duration::hours(1))
+                    });
+
+                if let Some(naive_next) = naive_next {
+                    if let Some(next_dt) = resolve_local(&naive_next) {
                         current = next_dt;
                         continue;
                     }
@@ -1227,24 +1222,15 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     let mut queued_count = 0u64;
 
     for sched in due_schedules {
-        let schedule_id = sched.id;
-        let automation_id = sched.automation_id;
-        let cron_expr = sched.cron_expression;
-        let timezone = sched.timezone;
-        let worker_group_id = sched.worker_group_id;
-        let overlap_policy = sched.overlap_policy;
-        let max_queue_age_secs = sched.max_queue_age_secs;
-        let scheduled_run_at = sched.next_run_at;
-
         let now = Utc::now();
         let mut should_queue = true;
 
         // 1. Check max_queue_age_secs expiry
-        if let Some(max_age) = max_queue_age_secs {
-            let age_secs = (now - scheduled_run_at).num_seconds();
+        if let Some(max_age) = sched.max_queue_age_secs {
+            let age_secs = (now - sched.next_run_at).num_seconds();
             if age_secs > max_age as i64 {
                 tracing::warn!(
-                    schedule_id = schedule_id,
+                    schedule_id = sched.id,
                     age_secs = age_secs,
                     max_queue_age_secs = max_age,
                     "Scheduled run expired because it exceeded max_queue_age_secs; skipping execution"
@@ -1254,7 +1240,7 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
         }
 
         // 2. Check overlap policy if 'skip'
-        if should_queue && overlap_policy == "skip" {
+        if should_queue && sched.overlap_policy == "skip" {
             let active_run_exists: bool = sqlx::query_scalar(
                 r#"
                 SELECT EXISTS(
@@ -1264,13 +1250,13 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
                 )
                 "#,
             )
-            .bind(schedule_id)
+            .bind(sched.id)
             .fetch_one(&mut *tx)
             .await?;
 
             if active_run_exists {
                 tracing::warn!(
-                    schedule_id = schedule_id,
+                    schedule_id = sched.id,
                     "Active task run exists for schedule with overlap_policy='skip'; skipping execution"
                 );
                 should_queue = false;
@@ -1284,9 +1270,9 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
                 VALUES ($1, $2, $3, 'queued', now())
                 "#,
             )
-            .bind(automation_id)
-            .bind(schedule_id)
-            .bind(worker_group_id)
+            .bind(sched.automation_id)
+            .bind(sched.id)
+            .bind(sched.worker_group_id)
             .execute(&mut *tx)
             .await?;
 
@@ -1294,13 +1280,13 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
         }
 
         // Recompute next run time loudly on failure
-        let next_run = match compute_next_run_at(&cron_expr, &timezone, &now) {
+        let next_run = match compute_next_run_at(&sched.cron_expression, &sched.timezone, &now) {
             Ok(next_dt) => Some(next_dt),
             Err(e) => {
                 tracing::error!(
-                    schedule_id = schedule_id,
-                    cron_expression = %cron_expr,
-                    timezone = %timezone,
+                    schedule_id = sched.id,
+                    cron_expression = %sched.cron_expression,
+                    timezone = %sched.timezone,
                     error = %e,
                     "FAILED to compute next_run_at for schedule! Schedule next_run_at will be set to NULL."
                 );
@@ -1318,7 +1304,7 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
                 "#,
             )
             .bind(next_run)
-            .bind(schedule_id)
+            .bind(sched.id)
             .execute(&mut *tx)
             .await?;
         } else {
@@ -1330,7 +1316,7 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
                 "#,
             )
             .bind(next_run)
-            .bind(schedule_id)
+            .bind(sched.id)
             .execute(&mut *tx)
             .await?;
         }
