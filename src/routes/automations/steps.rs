@@ -625,8 +625,13 @@ pub fn generate_clipboard_control_summary(
         if let Some(var_name) = input_var_name.map(str::trim).filter(|s| !s.is_empty()) {
             let _ = write!(buf, "«{}»", var_name);
         } else if let Some(txt) = text_to_set.map(str::trim).filter(|s| !s.is_empty()) {
-            if txt.chars().count() > 30 {
-                let _ = write!(buf, "\"{}\"...", txt.chars().take(27).collect::<String>());
+            if txt.char_indices().nth(30).is_some() {
+                let idx = txt
+                    .char_indices()
+                    .nth(27)
+                    .map(|(i, _)| i)
+                    .unwrap_or(txt.len());
+                let _ = write!(buf, "\"{}\"...", &txt[..idx]);
             } else {
                 let _ = write!(buf, "\"{}\"", txt);
             }
