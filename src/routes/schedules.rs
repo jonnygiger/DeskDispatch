@@ -660,44 +660,6 @@ pub async fn get_schedules_handler(
 
 /// Helper function to fetch schedule form dropdown options (automations and worker groups)
 /// concurrently using `tokio::join!`. This reduces HTTP response latency by avoiding sequential database round-trips.
-struct ScheduleFormErrorCtx<'a> {
-    user: AuthUser,
-    is_edit: bool,
-    schedule_id: Option<i64>,
-    form: &'a ScheduleForm,
-    name: &'a str,
-    cron_expression: &'a str,
-    timezone: &'a str,
-    wol_warmup_secs: i32,
-}
-
-fn render_schedule_form_error(
-    ctx: ScheduleFormErrorCtx<'_>,
-    automations: Vec<ScheduleAutomationOption>,
-    worker_groups: Vec<ScheduleWorkerGroupOption>,
-    error_msg: impl Into<String>,
-) -> axum::response::Response {
-    HtmlTemplate(ScheduleFormTemplate {
-        user: ctx.user,
-        is_edit: ctx.is_edit,
-        schedule_id: ctx.schedule_id,
-        automation_id: Some(ctx.form.automation_id),
-        name: ctx.name.to_string(),
-        cron_expression: ctx.cron_expression.to_string(),
-        timezone: ctx.timezone.to_string(),
-        worker_group_id: ctx.form.worker_group_id,
-        overlap_policy: ctx.form.overlap_policy.clone(),
-        max_queue_age_secs: ctx.form.max_queue_age_secs,
-        wol_enabled: ctx.form.wol_enabled,
-        wol_warmup_secs: ctx.wol_warmup_secs,
-        is_enabled: ctx.form.is_enabled,
-        automations,
-        worker_groups,
-        error: Some(error_msg.into()),
-    })
-    .into_response()
-}
-
 async fn fetch_schedule_options(
     db: &sqlx::PgPool,
 ) -> (
@@ -765,17 +727,6 @@ pub async fn post_create_schedule_handler(
     let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
 
     let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
-
-    let make_ctx = |u: AuthUser| ScheduleFormErrorCtx {
-        user: u,
-        is_edit: false,
-        schedule_id: None,
-        form: &form,
-        name,
-        cron_expression,
-        timezone,
-        wol_warmup_secs,
-    };
 
     if name.is_empty() || cron_expression.is_empty() {
         return HtmlTemplate(ScheduleFormTemplate::build_error(
@@ -964,17 +915,6 @@ pub async fn post_edit_schedule_handler(
     let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
 
     let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
-
-    let make_ctx = |u: AuthUser| ScheduleFormErrorCtx {
-        user: u,
-        is_edit: true,
-        schedule_id: Some(id),
-        form: &form,
-        name,
-        cron_expression,
-        timezone,
-        wol_warmup_secs,
-    };
 
     if name.is_empty() || cron_expression.is_empty() {
         return HtmlTemplate(ScheduleFormTemplate::build_error(

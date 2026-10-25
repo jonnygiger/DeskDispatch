@@ -63,3 +63,7 @@ Action: In unit tests for `UserRole`, test `as_str()`, `can_edit()`, `is_admin()
 ## 2025-03-25 Cron Pattern Next After & Sunday Representation Edge Cases Coverage
 Learning: `CronPattern` in `src/routes/schedules.rs` normalizes Sunday as `0`, `7`, or `"SUN"`, supports step-range syntax (e.g., `1-10/2`), handles year-end boundary transitions (Dec 31 to Jan 1), and applies OR-logic when both day-of-month and day-of-week fields are restricted (non-wildcards).
 Action: Write pure unit tests asserting exact `CronPattern::next_after` outputs and bitmask matching across Sunday representations, step ranges, year rollover, and DOM/DOW OR-logic without requiring database or time-delay fixtures.
+
+## 2025-03-26 CSS URL Escaping and Image Magnifier Style Generation Edge Cases Coverage
+Learning: `escape_css_url` in `src/magnifier.rs` returns `Cow::Borrowed` for URLs lacking CSS-unsafe characters to prevent heap allocations, while escaping backslashes, single/double quotes, parentheses, and angle brackets, and stripping line breaks (`\n`, `\r`) and form feeds (`\x0C`) to neutralize CSS injection vectors in `ImageMagnifier` style templates (`normal_style`, `zoom400_style`, `grid_style`).
+Action: Test `escape_css_url` zero-copy borrow returns, multi-character escaping/stripping, and CSS style generation formatting directly in unit tests in `src/magnifier.rs`.
