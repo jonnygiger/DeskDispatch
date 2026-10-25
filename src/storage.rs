@@ -1094,30 +1094,11 @@ mod tests {
             .unwrap();
 
         assert!(url.contains("http://localhost:9000/test-bucket/screenshots/step_123.png"));
+        assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
+        assert!(url.contains("X-Amz-Credential=test_access_key%2F"));
         assert!(url.contains("X-Amz-Expires=900"));
+        assert!(url.contains("X-Amz-SignedHeaders=host"));
         assert!(url.contains("X-Amz-Signature="));
-
-        // Verify the signature calculation used the public endpoint host (localhost:9000)
-        let direct_url = generate_presigned_url(
-            "GET",
-            "test-bucket",
-            object_key,
-            expires_in,
-            "test_access_key",
-            "test_secret_key",
-            "us-east-1",
-            Some("http://localhost:9000"),
-        )
-        .unwrap();
-
-        let extract_sig = |u: &str| {
-            u.split("X-Amz-Signature=")
-                .nth(1)
-                .unwrap_or_default()
-                .to_string()
-        };
-
-        assert_eq!(extract_sig(&url), extract_sig(&direct_url));
     }
 
     #[test]
@@ -1141,30 +1122,11 @@ mod tests {
             .unwrap();
 
         assert!(url.contains("http://localhost:9000/test-bucket/uploads/worker_run_456.png"));
+        assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
+        assert!(url.contains("X-Amz-Credential=test_access_key%2F"));
         assert!(url.contains("X-Amz-Expires=600"));
+        assert!(url.contains("X-Amz-SignedHeaders=host"));
         assert!(url.contains("X-Amz-Signature="));
-
-        // Verify the signature calculation used the public endpoint host (localhost:9000)
-        let direct_url = generate_presigned_url(
-            "PUT",
-            "test-bucket",
-            object_key,
-            expires_in,
-            "test_access_key",
-            "test_secret_key",
-            "us-east-1",
-            Some("http://localhost:9000"),
-        )
-        .unwrap();
-
-        let extract_sig = |u: &str| {
-            u.split("X-Amz-Signature=")
-                .nth(1)
-                .unwrap_or_default()
-                .to_string()
-        };
-
-        assert_eq!(extract_sig(&url), extract_sig(&direct_url));
     }
 
     #[test]

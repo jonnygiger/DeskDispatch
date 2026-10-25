@@ -18,69 +18,64 @@ struct SamplePixel {
     b: u8,
 }
 
-struct SampleStorage {
-    inline_buf: [SamplePixel; INLINE_SAMPLE_CAP],
-    heap_buf: Vec<SamplePixel>,
-    len: usize,
+// Allowed: SampleBuffer is allocated directly on the local stack frame of search_bitmap
+// to avoid heap allocations for templates <= 256 samples.
+#[allow(clippy::large_enum_variant)]
+enum SampleBuffer {
+    Stack {
+        buf: [SamplePixel; INLINE_SAMPLE_CAP],
+        len: usize,
+    },
+    Heap(Vec<SamplePixel>),
 }
 
-impl SampleStorage {
+impl SampleBuffer {
     #[inline]
     fn new(total_expected_samples: usize) -> Self {
-        let heap_buf = if total_expected_samples > INLINE_SAMPLE_CAP {
-            Vec::with_capacity(total_expected_samples)
+        if total_expected_samples <= INLINE_SAMPLE_CAP {
+            Self::Stack {
+                buf: [SamplePixel::default(); INLINE_SAMPLE_CAP],
+                len: 0,
+            }
         } else {
-            Vec::new()
-        };
-        Self {
-            inline_buf: [SamplePixel::default(); INLINE_SAMPLE_CAP],
-            heap_buf,
-            len: 0,
+            Self::Heap(Vec::with_capacity(total_expected_samples))
         }
     }
 
     #[inline]
     fn push(&mut self, sample: SamplePixel) {
-        if self.heap_buf.capacity() > 0 {
-            self.heap_buf.push(sample);
-        } else if self.len < INLINE_SAMPLE_CAP {
-            self.inline_buf[self.len] = sample;
-            self.len += 1;
-        } else {
-            // Promoted to heap if inline capacity exhausted unexpectedly
-            if self.heap_buf.is_empty() {
-                self.heap_buf.reserve(INLINE_SAMPLE_CAP * 2);
-                self.heap_buf
-                    .extend_from_slice(&self.inline_buf[..self.len]);
+        match self {
+            Self::Stack { buf, len } => {
+                if *len < INLINE_SAMPLE_CAP {
+                    buf[*len] = sample;
+                    *len += 1;
+                }
             }
-            self.heap_buf.push(sample);
+            Self::Heap(v) => v.push(sample),
         }
     }
 
     #[inline]
     fn as_slice(&self) -> &[SamplePixel] {
-        if !self.heap_buf.is_empty() {
-            self.heap_buf.as_slice()
-        } else {
-            &self.inline_buf[..self.len]
+        match self {
+            Self::Stack { buf, len } => &buf[..*len],
+            Self::Heap(v) => v.as_slice(),
         }
     }
 
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [SamplePixel] {
-        if !self.heap_buf.is_empty() {
-            self.heap_buf.as_mut_slice()
-        } else {
-            &mut self.inline_buf[..self.len]
+        match self {
+            Self::Stack { buf, len } => &mut buf[..*len],
+            Self::Heap(v) => v.as_mut_slice(),
         }
     }
 
     #[inline]
     fn len(&self) -> usize {
-        if !self.heap_buf.is_empty() {
-            self.heap_buf.len()
-        } else {
-            self.len
+        match self {
+            Self::Stack { len, .. } => *len,
+            Self::Heap(v) => v.len(),
         }
     }
 }
@@ -168,7 +163,7 @@ pub fn search_bitmap(
     let samples_h = template.height.div_ceil(sample_step) as usize;
     let total_expected_samples = samples_w * samples_h;
 
-    let mut storage = SampleStorage::new(total_expected_samples);
+    let mut storage = SampleBuffer::new(total_expected_samples);
 
     let mut sum_r = 0u64;
     let mut sum_g = 0u64;
