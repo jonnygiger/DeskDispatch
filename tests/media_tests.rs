@@ -17,9 +17,7 @@ struct MediaCleanupGuard {
 
 impl Drop for MediaCleanupGuard {
     fn drop(&mut self) {
-        if self.user_ids.is_empty()
-            && self.automation_ids.is_empty()
-            && self.bitmap_ids.is_empty()
+        if self.user_ids.is_empty() && self.automation_ids.is_empty() && self.bitmap_ids.is_empty()
         {
             return;
         }
