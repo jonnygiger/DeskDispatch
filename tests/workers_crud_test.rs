@@ -171,6 +171,88 @@ fn test_worker_templates_rendering() {
     assert!(group_form_html.contains("checked"));
 }
 
+struct WorkersCrudCleanupGuard {
+    pool: sqlx::PgPool,
+    user_ids: std::sync::Arc<std::sync::Mutex<Vec<i64>>>,
+    worker_ids: std::sync::Arc<std::sync::Mutex<Vec<i64>>>,
+    group_ids: std::sync::Arc<std::sync::Mutex<Vec<i64>>>,
+}
+
+impl WorkersCrudCleanupGuard {
+    fn new(pool: sqlx::PgPool) -> Self {
+        Self {
+            pool,
+            user_ids: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            worker_ids: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            group_ids: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    fn add_user(&self, id: i64) {
+        self.user_ids.lock().unwrap().push(id);
+    }
+
+    fn add_worker(&self, id: i64) {
+        self.worker_ids.lock().unwrap().push(id);
+    }
+
+    fn add_group(&self, id: i64) {
+        self.group_ids.lock().unwrap().push(id);
+    }
+}
+
+impl Drop for WorkersCrudCleanupGuard {
+    fn drop(&mut self) {
+        let pool = self.pool.clone();
+        let user_ids = self.user_ids.lock().unwrap().clone();
+        let worker_ids = self.worker_ids.lock().unwrap().clone();
+        let group_ids = self.group_ids.lock().unwrap().clone();
+
+        let cleanup = async move {
+            if !group_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM worker_group_members WHERE group_id = ANY($1)")
+                    .bind(&group_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM worker_groups WHERE id = ANY($1)")
+                    .bind(&group_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !worker_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM worker_group_members WHERE worker_id = ANY($1)")
+                    .bind(&worker_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = ANY($1)")
+                    .bind(&worker_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !user_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM sessions WHERE user_id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+            }
+        };
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(cleanup);
+        })
+        .join()
+        .unwrap();
+    }
+}
+
 async fn get_test_pool() -> Option<sqlx::PgPool> {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
@@ -189,6 +271,8 @@ async fn test_admin_workers_crud_and_rbac() {
         return;
     };
 
+    let cleanup_guard = WorkersCrudCleanupGuard::new(pool.clone());
+
     // 1. Seed Admin user and Non-Admin (Editor) user
     let admin_username = format!("admin_{}", Uuid::new_v4().simple());
     let editor_username = format!("editor_{}", Uuid::new_v4().simple());
@@ -204,6 +288,7 @@ async fn test_admin_workers_crud_and_rbac() {
     .fetch_one(&pool)
     .await
     .unwrap();
+    cleanup_guard.add_user(admin_id);
 
     let editor_id: i64 = sqlx::query_scalar(
         r#"
@@ -216,6 +301,7 @@ async fn test_admin_workers_crud_and_rbac() {
     .fetch_one(&pool)
     .await
     .unwrap();
+    cleanup_guard.add_user(editor_id);
 
     // Create active sessions in DB
     let admin_session_id = Uuid::new_v4();
@@ -255,6 +341,7 @@ async fn test_admin_workers_crud_and_rbac() {
     .fetch_one(&pool)
     .await
     .unwrap();
+    cleanup_guard.add_worker(worker_id);
 
     let config = Config::from_env().unwrap();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
@@ -334,6 +421,7 @@ async fn test_admin_workers_crud_and_rbac() {
         .fetch_one(&pool)
         .await
         .unwrap();
+    cleanup_guard.add_group(group_id);
 
     // Check group member assigned
     let member_count: i64 = sqlx::query_scalar(
@@ -415,11 +503,4 @@ async fn test_admin_workers_crud_and_rbac() {
             .await
             .unwrap();
     assert!(worker_exists.is_none());
-
-    // Cleanup users
-    let _ = sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
-        .bind(admin_id)
-        .bind(editor_id)
-        .execute(&pool)
-        .await;
 }
