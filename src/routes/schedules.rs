@@ -1,10 +1,10 @@
 use askama::Template;
 use axum::{
+    Router,
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Redirect},
     routing::{get, post},
-    Router,
 };
 use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
 use serde::Deserialize;
@@ -12,9 +12,9 @@ use sqlx::FromRow;
 use std::borrow::Cow;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{log_audit, AuthUser, CsrfForm, FlashMessage, RequireEditor};
-use crate::de::deserialize_option_number;
 use crate::AppState;
+use crate::auth::{AuthUser, CsrfForm, FlashMessage, RequireEditor, log_audit};
+use crate::de::deserialize_option_number;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -244,12 +244,20 @@ pub struct ValidatedScheduleInput<'a> {
     pub next_run_at: Option<DateTime<Utc>>,
 }
 
+pub struct ScheduleValidationError(pub Box<HtmlTemplate<ScheduleFormTemplate>>);
+
+impl IntoResponse for ScheduleValidationError {
+    fn into_response(self) -> axum::response::Response {
+        (StatusCode::UNPROCESSABLE_ENTITY, *self.0).into_response()
+    }
+}
+
 async fn validate_schedule_form<'a>(
     db: &sqlx::PgPool,
     user: AuthUser,
     form: &'a ScheduleForm,
     schedule_id: Option<i64>,
-) -> Result<ValidatedScheduleInput<'a>, Response> {
+) -> Result<ValidatedScheduleInput<'a>, ScheduleValidationError> {
     let (name, cron_expression, timezone, wol_warmup_secs) = form.normalized();
     let is_edit = schedule_id.is_some();
 
@@ -266,7 +274,9 @@ async fn validate_schedule_form<'a>(
             },
             "Schedule Name and Cron Expression are required.",
         );
-        return Err(HtmlTemplate(err_template).into_response());
+        return Err(ScheduleValidationError(Box::new(HtmlTemplate(
+            err_template,
+        ))));
     }
 
     let now = Utc::now();
@@ -285,7 +295,9 @@ async fn validate_schedule_form<'a>(
                 },
                 err_msg,
             );
-            return Err(HtmlTemplate(err_template).into_response());
+            return Err(ScheduleValidationError(Box::new(HtmlTemplate(
+                err_template,
+            ))));
         }
     };
 
@@ -396,9 +408,7 @@ fn parse_cron_field(
         }
 
         let (expr, step) = if let Some((e, s)) = item.split_once('/') {
-            let step_num: u32 = s
-                .parse()
-                .map_err(|_| format!("Invalid step value '{s}'"))?;
+            let step_num: u32 = s.parse().map_err(|_| format!("Invalid step value '{s}'"))?;
             if step_num == 0 {
                 return Err("Cron step cannot be 0".to_string());
             }
@@ -491,10 +501,7 @@ impl CronPattern {
         (self.weekdays & (1u8 << w)) != 0
     }
 
-    pub fn next_after<Tz: TimeZone>(
-        &self,
-        from_dt: &DateTime<Tz>,
-    ) -> Result<DateTime<Tz>, String> {
+    pub fn next_after<Tz: TimeZone>(&self, from_dt: &DateTime<Tz>) -> Result<DateTime<Tz>, String> {
         let start_naive = from_dt.naive_local();
         let start_sec_truncated = start_naive
             .with_second(0)
@@ -772,7 +779,7 @@ pub async fn post_create_schedule_handler(
 ) -> impl IntoResponse {
     let validated = match validate_schedule_form(&state.db, user.clone(), &form, None).await {
         Ok(v) => v,
-        Err(err_resp) => return err_resp,
+        Err(err_resp) => return err_resp.into_response(),
     };
 
     let row_res = sqlx::query_scalar::<_, i64>(
@@ -911,7 +918,7 @@ pub async fn post_edit_schedule_handler(
 ) -> impl IntoResponse {
     let validated = match validate_schedule_form(&state.db, user.clone(), &form, Some(id)).await {
         Ok(v) => v,
-        Err(err_resp) => return err_resp,
+        Err(err_resp) => return err_resp.into_response(),
     };
 
     let update_res = sqlx::query(
@@ -1319,8 +1326,7 @@ mod tests {
         // Test DST in America/New_York (EDT, UTC-4 in July)
         let base_july = Utc.with_ymd_and_hms(2025, 7, 15, 8, 0, 0).unwrap();
         // 9:00 AM EDT on July 15, 2025 is 13:00:00 UTC
-        let res_july_ny =
-            compute_next_run_at("0 9 * * *", "America/New_York", &base_july).unwrap();
+        let res_july_ny = compute_next_run_at("0 9 * * *", "America/New_York", &base_july).unwrap();
         assert_eq!(
             res_july_ny,
             Utc.with_ymd_and_hms(2025, 7, 15, 13, 0, 0).unwrap()
