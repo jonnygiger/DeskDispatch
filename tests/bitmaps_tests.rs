@@ -55,11 +55,12 @@ impl Drop for BitmapsCleanupGuard {
 
         let cleanup = async move {
             if !bitmap_ids.is_empty() {
-                let _ =
-                    sqlx::query("DELETE FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = ANY($1)")
-                        .bind(&bitmap_ids)
-                        .execute(&pool)
-                        .await;
+                let _ = sqlx::query(
+                    "DELETE FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = ANY($1)",
+                )
+                .bind(&bitmap_ids)
+                .execute(&pool)
+                .await;
                 let _ = sqlx::query("DELETE FROM bitmaps WHERE id = ANY($1)")
                     .bind(&bitmap_ids)
                     .execute(&pool)
