@@ -140,6 +140,16 @@ pub struct SchedulesIndexTemplate {
     pub schedules: Vec<ScheduleItem>,
 }
 
+pub struct ScheduleFormErrorCtx<'a> {
+    pub user: AuthUser,
+    pub is_edit: bool,
+    pub schedule_id: Option<i64>,
+    pub form: &'a ScheduleForm,
+    pub wol_warmup_secs: i32,
+    pub automations: Vec<ScheduleAutomationOption>,
+    pub worker_groups: Vec<ScheduleWorkerGroupOption>,
+}
+
 #[derive(Template)]
 #[template(path = "schedules/form.html")]
 pub struct ScheduleFormTemplate {
@@ -168,6 +178,31 @@ impl ScheduleFormTemplate {
 
     pub fn is_worker_group_selected(&self, id: &i64) -> bool {
         self.worker_group_id == Some(*id)
+    }
+
+    pub fn build_error(ctx: ScheduleFormErrorCtx<'_>, error: impl Into<String>) -> Self {
+        Self {
+            user: ctx.user,
+            is_edit: ctx.is_edit,
+            schedule_id: ctx.schedule_id,
+            automation_id: Some(ctx.form.automation_id),
+            name: ctx.form.name.trim().to_string(),
+            cron_expression: ctx.form.cron_expression.trim().to_string(),
+            timezone: if ctx.form.timezone.trim().is_empty() {
+                "UTC".to_string()
+            } else {
+                ctx.form.timezone.trim().to_string()
+            },
+            worker_group_id: ctx.form.worker_group_id,
+            overlap_policy: ctx.form.overlap_policy.clone(),
+            max_queue_age_secs: ctx.form.max_queue_age_secs,
+            wol_enabled: ctx.form.wol_enabled,
+            wol_warmup_secs: ctx.wol_warmup_secs,
+            is_enabled: ctx.form.is_enabled,
+            automations: ctx.automations,
+            worker_groups: ctx.worker_groups,
+            error: Some(error.into()),
+        }
     }
 }
 
@@ -340,19 +375,36 @@ fn parse_cron_field(
 
 impl CronPattern {
     pub fn parse(expr: &str) -> Result<Self, String> {
-        let parts: Vec<&str> = expr.split_whitespace().collect();
-        if parts.len() != 5 {
+        let mut parts = expr.split_whitespace();
+        let minute_str = parts
+            .next()
+            .ok_or_else(|| "Expected 5 cron expression fields, found 0".to_string())?;
+        let hour_str = parts
+            .next()
+            .ok_or_else(|| "Expected 5 cron expression fields, found 1".to_string())?;
+        let day_str = parts
+            .next()
+            .ok_or_else(|| "Expected 5 cron expression fields, found 2".to_string())?;
+        let month_str = parts
+            .next()
+            .ok_or_else(|| "Expected 5 cron expression fields, found 3".to_string())?;
+        let weekday_str = parts
+            .next()
+            .ok_or_else(|| "Expected 5 cron expression fields, found 4".to_string())?;
+
+        if parts.next().is_some() {
+            let count = 5 + 1 + parts.count();
             return Err(format!(
                 "Expected 5 cron expression fields, found {}",
-                parts.len()
+                count
             ));
         }
 
-        let minutes = parse_cron_field(parts[0], 0, 59, None)?;
-        let hours = parse_cron_field(parts[1], 0, 23, None)?;
-        let days = parse_cron_field(parts[2], 1, 31, None)?;
-        let months = parse_cron_field(parts[3], 1, 12, Some(month_name_lookup))?;
-        let weekdays = parse_cron_field(parts[4], 0, 7, Some(weekday_name_lookup))?;
+        let minutes = parse_cron_field(minute_str, 0, 59, None)?;
+        let hours = parse_cron_field(hour_str, 0, 23, None)?;
+        let days = parse_cron_field(day_str, 1, 31, None)?;
+        let months = parse_cron_field(month_str, 1, 12, Some(month_name_lookup))?;
+        let weekdays = parse_cron_field(weekday_str, 0, 7, Some(weekday_name_lookup))?;
 
         Ok(Self {
             minutes,
@@ -678,24 +730,18 @@ pub async fn post_create_schedule_handler(
     let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
 
     if name.is_empty() || cron_expression.is_empty() {
-        return HtmlTemplate(ScheduleFormTemplate {
-            user,
-            is_edit: false,
-            schedule_id: None,
-            automation_id: Some(form.automation_id),
-            name: name.to_string(),
-            cron_expression: cron_expression.to_string(),
-            timezone: timezone.to_string(),
-            worker_group_id: form.worker_group_id,
-            overlap_policy: form.overlap_policy.clone(),
-            max_queue_age_secs: form.max_queue_age_secs,
-            wol_enabled: form.wol_enabled,
-            wol_warmup_secs,
-            is_enabled: form.is_enabled,
-            automations,
-            worker_groups,
-            error: Some("Schedule Name and Cron Expression are required.".to_string()),
-        })
+        return HtmlTemplate(ScheduleFormTemplate::build_error(
+            ScheduleFormErrorCtx {
+                user,
+                is_edit: false,
+                schedule_id: None,
+                form: &form,
+                wol_warmup_secs,
+                automations,
+                worker_groups,
+            },
+            "Schedule Name and Cron Expression are required.",
+        ))
         .into_response();
     }
 
@@ -706,24 +752,18 @@ pub async fn post_create_schedule_handler(
     let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
         Ok(next_dt) => next_dt,
         Err(err_msg) => {
-            return HtmlTemplate(ScheduleFormTemplate {
-                user,
-                is_edit: false,
-                schedule_id: None,
-                automation_id: Some(form.automation_id),
-                name: name.to_string(),
-                cron_expression: cron_expression.to_string(),
-                timezone: timezone.to_string(),
-                worker_group_id: form.worker_group_id,
-                overlap_policy: form.overlap_policy.clone(),
-                max_queue_age_secs: form.max_queue_age_secs,
-                wol_enabled: form.wol_enabled,
-                wol_warmup_secs,
-                is_enabled: form.is_enabled,
-                automations,
-                worker_groups,
-                error: Some(err_msg),
-            })
+            return HtmlTemplate(ScheduleFormTemplate::build_error(
+                ScheduleFormErrorCtx {
+                    user,
+                    is_edit: false,
+                    schedule_id: None,
+                    form: &form,
+                    wol_warmup_secs,
+                    automations,
+                    worker_groups,
+                },
+                err_msg,
+            ))
             .into_response();
         }
     };
@@ -764,24 +804,18 @@ pub async fn post_create_schedule_handler(
         Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create schedule: {}", e);
-            return HtmlTemplate(ScheduleFormTemplate {
-                user,
-                is_edit: false,
-                schedule_id: None,
-                automation_id: Some(form.automation_id),
-                name: name.to_string(),
-                cron_expression: cron_expression.to_string(),
-                timezone: timezone.to_string(),
-                worker_group_id: form.worker_group_id,
-                overlap_policy: form.overlap_policy.clone(),
-                max_queue_age_secs: form.max_queue_age_secs,
-                wol_enabled: form.wol_enabled,
-                wol_warmup_secs,
-                is_enabled: form.is_enabled,
-                automations,
-                worker_groups,
-                error: Some("Database error creating schedule.".to_string()),
-            })
+            return HtmlTemplate(ScheduleFormTemplate::build_error(
+                ScheduleFormErrorCtx {
+                    user,
+                    is_edit: false,
+                    schedule_id: None,
+                    form: &form,
+                    wol_warmup_secs,
+                    automations,
+                    worker_groups,
+                },
+                "Database error creating schedule.",
+            ))
             .into_response();
         }
     };
@@ -887,24 +921,18 @@ pub async fn post_edit_schedule_handler(
     let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
 
     if name.is_empty() || cron_expression.is_empty() {
-        return HtmlTemplate(ScheduleFormTemplate {
-            user,
-            is_edit: true,
-            schedule_id: Some(id),
-            automation_id: Some(form.automation_id),
-            name: name.to_string(),
-            cron_expression: cron_expression.to_string(),
-            timezone: timezone.to_string(),
-            worker_group_id: form.worker_group_id,
-            overlap_policy: form.overlap_policy.clone(),
-            max_queue_age_secs: form.max_queue_age_secs,
-            wol_enabled: form.wol_enabled,
-            wol_warmup_secs,
-            is_enabled: form.is_enabled,
-            automations,
-            worker_groups,
-            error: Some("Schedule Name and Cron Expression are required.".to_string()),
-        })
+        return HtmlTemplate(ScheduleFormTemplate::build_error(
+            ScheduleFormErrorCtx {
+                user,
+                is_edit: true,
+                schedule_id: Some(id),
+                form: &form,
+                wol_warmup_secs,
+                automations,
+                worker_groups,
+            },
+            "Schedule Name and Cron Expression are required.",
+        ))
         .into_response();
     }
 
@@ -913,24 +941,18 @@ pub async fn post_edit_schedule_handler(
     let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
         Ok(next_dt) => next_dt,
         Err(err_msg) => {
-            return HtmlTemplate(ScheduleFormTemplate {
-                user,
-                is_edit: true,
-                schedule_id: Some(id),
-                automation_id: Some(form.automation_id),
-                name: name.to_string(),
-                cron_expression: cron_expression.to_string(),
-                timezone: timezone.to_string(),
-                worker_group_id: form.worker_group_id,
-                overlap_policy: form.overlap_policy.clone(),
-                max_queue_age_secs: form.max_queue_age_secs,
-                wol_enabled: form.wol_enabled,
-                wol_warmup_secs,
-                is_enabled: form.is_enabled,
-                automations,
-                worker_groups,
-                error: Some(err_msg),
-            })
+            return HtmlTemplate(ScheduleFormTemplate::build_error(
+                ScheduleFormErrorCtx {
+                    user,
+                    is_edit: true,
+                    schedule_id: Some(id),
+                    form: &form,
+                    wol_warmup_secs,
+                    automations,
+                    worker_groups,
+                },
+                err_msg,
+            ))
             .into_response();
         }
     };
@@ -974,24 +996,18 @@ pub async fn post_edit_schedule_handler(
 
     if let Err(e) = update_res {
         tracing::error!("Failed to update schedule: {}", e);
-        return HtmlTemplate(ScheduleFormTemplate {
-            user,
-            is_edit: true,
-            schedule_id: Some(id),
-            automation_id: Some(form.automation_id),
-            name: name.to_string(),
-            cron_expression: cron_expression.to_string(),
-            timezone: timezone.to_string(),
-            worker_group_id: form.worker_group_id,
-            overlap_policy: form.overlap_policy.clone(),
-            max_queue_age_secs: form.max_queue_age_secs,
-            wol_enabled: form.wol_enabled,
-            wol_warmup_secs,
-            is_enabled: form.is_enabled,
-            automations,
-            worker_groups,
-            error: Some("Database error updating schedule.".to_string()),
-        })
+        return HtmlTemplate(ScheduleFormTemplate::build_error(
+            ScheduleFormErrorCtx {
+                user,
+                is_edit: true,
+                schedule_id: Some(id),
+                form: &form,
+                wol_warmup_secs,
+                automations,
+                worker_groups,
+            },
+            "Database error updating schedule.",
+        ))
         .into_response();
     }
 
