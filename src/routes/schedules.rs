@@ -2,7 +2,9 @@ use askama::Template;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response},
+    routing::{get, post},
+    Router,
 };
 use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
 use serde::Deserialize;
@@ -10,11 +12,8 @@ use sqlx::FromRow;
 use std::borrow::Cow;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
+use crate::auth::{log_audit, AuthUser, CsrfForm, FlashMessage, RequireEditor};
 use crate::de::deserialize_option_number;
-use axum::Router;
-use axum::routing::{get, post};
-
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -95,13 +94,8 @@ impl ScheduleItem {
     pub fn formatted_next_run(&self) -> Cow<'static, str> {
         match self.next_run_at {
             Some(dt) => Cow::Owned(dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
-            None => {
-                if self.is_enabled {
-                    Cow::Borrowed("Pending")
-                } else {
-                    Cow::Borrowed("Disabled")
-                }
-            }
+            None if self.is_enabled => Cow::Borrowed("Pending"),
+            None => Cow::Borrowed("Disabled"),
         }
     }
 
@@ -140,15 +134,11 @@ pub struct SchedulesIndexTemplate {
     pub schedules: Vec<ScheduleItem>,
 }
 
-pub struct ScheduleFormErrorCtx<'a> {
+pub struct ScheduleFormContext<'a> {
     pub user: AuthUser,
     pub is_edit: bool,
     pub schedule_id: Option<i64>,
     pub form: &'a ScheduleForm,
-    pub name: &'a str,
-    pub cron_expression: &'a str,
-    pub timezone: &'a str,
-    pub wol_warmup_secs: i32,
     pub automations: Vec<ScheduleAutomationOption>,
     pub worker_groups: Vec<ScheduleWorkerGroupOption>,
 }
@@ -183,24 +173,21 @@ impl ScheduleFormTemplate {
         self.worker_group_id == Some(*id)
     }
 
-    pub fn build_error(ctx: ScheduleFormErrorCtx<'_>, error: impl Into<String>) -> Self {
+    pub fn build_error(ctx: ScheduleFormContext<'_>, error: impl Into<String>) -> Self {
+        let (name, cron, tz, wol_warmup) = ctx.form.normalized();
         Self {
             user: ctx.user,
             is_edit: ctx.is_edit,
             schedule_id: ctx.schedule_id,
             automation_id: Some(ctx.form.automation_id),
-            name: ctx.form.name.trim().to_string(),
-            cron_expression: ctx.form.cron_expression.trim().to_string(),
-            timezone: if ctx.form.timezone.trim().is_empty() {
-                "UTC".to_string()
-            } else {
-                ctx.form.timezone.trim().to_string()
-            },
+            name: name.to_string(),
+            cron_expression: cron.to_string(),
+            timezone: tz.to_string(),
             worker_group_id: ctx.form.worker_group_id,
             overlap_policy: ctx.form.overlap_policy.clone(),
             max_queue_age_secs: ctx.form.max_queue_age_secs,
             wol_enabled: ctx.form.wol_enabled,
-            wol_warmup_secs: ctx.wol_warmup_secs,
+            wol_warmup_secs: wol_warmup,
             is_enabled: ctx.form.is_enabled,
             automations: ctx.automations,
             worker_groups: ctx.worker_groups,
@@ -230,12 +217,91 @@ pub struct ScheduleForm {
     pub is_enabled: bool,
 }
 
+impl ScheduleForm {
+    pub fn normalized(&self) -> (&str, &str, &str, i32) {
+        let name = self.name.trim();
+        let cron = self.cron_expression.trim();
+        let tz = self.timezone.trim();
+        let tz = if tz.is_empty() { "UTC" } else { tz };
+        let wol_warmup = self.wol_warmup_secs.unwrap_or(0).max(0);
+        (name, cron, tz, wol_warmup)
+    }
+}
+
 fn default_overlap_policy() -> String {
     "allow".to_string()
 }
 
 fn default_timezone() -> String {
     "UTC".to_string()
+}
+
+pub struct ValidatedScheduleInput<'a> {
+    pub name: &'a str,
+    pub cron_expression: &'a str,
+    pub timezone: &'a str,
+    pub wol_warmup_secs: i32,
+    pub next_run_at: Option<DateTime<Utc>>,
+}
+
+async fn validate_schedule_form<'a>(
+    db: &sqlx::PgPool,
+    user: AuthUser,
+    form: &'a ScheduleForm,
+    schedule_id: Option<i64>,
+) -> Result<ValidatedScheduleInput<'a>, Response> {
+    let (name, cron_expression, timezone, wol_warmup_secs) = form.normalized();
+    let is_edit = schedule_id.is_some();
+
+    if name.is_empty() || cron_expression.is_empty() {
+        let (automations, worker_groups) = fetch_schedule_options(db).await;
+        let err_template = ScheduleFormTemplate::build_error(
+            ScheduleFormContext {
+                user,
+                is_edit,
+                schedule_id,
+                form,
+                automations,
+                worker_groups,
+            },
+            "Schedule Name and Cron Expression are required.",
+        );
+        return Err(HtmlTemplate(err_template).into_response());
+    }
+
+    let now = Utc::now();
+    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
+        Ok(next_dt) => next_dt,
+        Err(err_msg) => {
+            let (automations, worker_groups) = fetch_schedule_options(db).await;
+            let err_template = ScheduleFormTemplate::build_error(
+                ScheduleFormContext {
+                    user,
+                    is_edit,
+                    schedule_id,
+                    form,
+                    automations,
+                    worker_groups,
+                },
+                err_msg,
+            );
+            return Err(HtmlTemplate(err_template).into_response());
+        }
+    };
+
+    let next_run_at = if form.is_enabled {
+        Some(parsed_next_run_at)
+    } else {
+        None
+    };
+
+    Ok(ValidatedScheduleInput {
+        name,
+        cron_expression,
+        timezone,
+        wol_warmup_secs,
+        next_run_at,
+    })
 }
 
 /// Represents a zero-dependency 5-field cron pattern (`<minute> <hour> <day> <month> <day-of-week>`).
@@ -254,12 +320,11 @@ fn month_name_lookup(s: &str) -> Option<u32> {
         return None;
     }
     let b = s.as_bytes();
-    let upper = [
+    match &[
         b[0].to_ascii_uppercase(),
         b[1].to_ascii_uppercase(),
         b[2].to_ascii_uppercase(),
-    ];
-    match &upper {
+    ] {
         b"JAN" => Some(1),
         b"FEB" => Some(2),
         b"MAR" => Some(3),
@@ -281,12 +346,11 @@ fn weekday_name_lookup(s: &str) -> Option<u32> {
         return None;
     }
     let b = s.as_bytes();
-    let upper = [
+    match &[
         b[0].to_ascii_uppercase(),
         b[1].to_ascii_uppercase(),
         b[2].to_ascii_uppercase(),
-    ];
-    match &upper {
+    ] {
         b"SUN" => Some(0),
         b"MON" => Some(1),
         b"TUE" => Some(2),
@@ -315,7 +379,7 @@ fn parse_cron_value(
             return Ok(num);
         }
     }
-    Err(format!("Invalid cron value '{}'", s))
+    Err(format!("Invalid cron value '{s}'"))
 }
 
 fn parse_cron_field(
@@ -334,7 +398,7 @@ fn parse_cron_field(
         let (expr, step) = if let Some((e, s)) = item.split_once('/') {
             let step_num: u32 = s
                 .parse()
-                .map_err(|_| format!("Invalid step value '{}'", s))?;
+                .map_err(|_| format!("Invalid step value '{s}'"))?;
             if step_num == 0 {
                 return Err("Cron step cannot be 0".to_string());
             }
@@ -355,7 +419,7 @@ fn parse_cron_field(
         };
 
         if start > end {
-            return Err(format!("Invalid range {}-{}", start, end));
+            return Err(format!("Invalid range {start}-{end}"));
         }
 
         let mut v = start;
@@ -369,7 +433,7 @@ fn parse_cron_field(
     }
 
     if mask == 0 {
-        return Err(format!("Field '{}' produced no valid values", field_str));
+        return Err(format!("Field '{field_str}' produced no valid values"));
     }
 
     Ok(mask)
@@ -377,43 +441,28 @@ fn parse_cron_field(
 
 impl CronPattern {
     pub fn parse(expr: &str) -> Result<Self, String> {
-        let mut parts = expr.split_whitespace();
-        let minute_str = parts
-            .next()
-            .ok_or_else(|| "Expected 5 cron expression fields, found 0".to_string())?;
-        let hour_str = parts
-            .next()
-            .ok_or_else(|| "Expected 5 cron expression fields, found 1".to_string())?;
-        let day_str = parts
-            .next()
-            .ok_or_else(|| "Expected 5 cron expression fields, found 2".to_string())?;
-        let month_str = parts
-            .next()
-            .ok_or_else(|| "Expected 5 cron expression fields, found 3".to_string())?;
-        let weekday_str = parts
-            .next()
-            .ok_or_else(|| "Expected 5 cron expression fields, found 4".to_string())?;
-
-        if parts.next().is_some() {
-            let count = 5 + 1 + parts.count();
-            return Err(format!(
-                "Expected 5 cron expression fields, found {}",
-                count
-            ));
-        }
-
-        let minutes = parse_cron_field(minute_str, 0, 59, None)?;
-        let hours = parse_cron_field(hour_str, 0, 23, None)?;
-        let days = parse_cron_field(day_str, 1, 31, None)?;
-        let months = parse_cron_field(month_str, 1, 12, Some(month_name_lookup))?;
-        let weekdays = parse_cron_field(weekday_str, 0, 7, Some(weekday_name_lookup))?;
+        let mut fields = expr.split_whitespace();
+        let (min, hour, day, month, wday) = match (
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+        ) {
+            (Some(f1), Some(f2), Some(f3), Some(f4), Some(f5), None) => (f1, f2, f3, f4, f5),
+            _ => {
+                let count = expr.split_whitespace().count();
+                return Err(format!("Expected 5 cron expression fields, found {count}"));
+            }
+        };
 
         Ok(Self {
-            minutes,
-            hours: hours as u32,
-            days: days as u32,
-            months: months as u16,
-            weekdays: weekdays as u8,
+            minutes: parse_cron_field(min, 0, 59, None)?,
+            hours: parse_cron_field(hour, 0, 23, None)? as u32,
+            days: parse_cron_field(day, 1, 31, None)? as u32,
+            months: parse_cron_field(month, 1, 12, Some(month_name_lookup))? as u16,
+            weekdays: parse_cron_field(wday, 0, 7, Some(weekday_name_lookup))? as u8,
         })
     }
 
@@ -442,7 +491,10 @@ impl CronPattern {
         (self.weekdays & (1u8 << w)) != 0
     }
 
-    pub fn next_after<Tz: TimeZone>(&self, from_dt: &DateTime<Tz>) -> Result<DateTime<Tz>, String> {
+    pub fn next_after<Tz: TimeZone>(
+        &self,
+        from_dt: &DateTime<Tz>,
+    ) -> Result<DateTime<Tz>, String> {
         let start_naive = from_dt.naive_local();
         let start_sec_truncated = start_naive
             .with_second(0)
@@ -611,15 +663,15 @@ pub fn compute_next_run_at(
 
     let tz: chrono_tz::Tz = tz_name
         .parse()
-        .map_err(|_| format!("Invalid timezone: '{}'", tz_name))?;
+        .map_err(|_| format!("Invalid timezone: '{tz_name}'"))?;
 
     let cron =
-        CronPattern::parse(cron_expr).map_err(|e| format!("Invalid cron expression: {}", e))?;
+        CronPattern::parse(cron_expr).map_err(|e| format!("Invalid cron expression: {e}"))?;
 
     let local_from = from_dt.with_timezone(&tz);
 
     cron.next_after(&local_from)
-        .map_err(|e| format!("Failed to compute next run time: {}", e))
+        .map_err(|e| format!("Failed to compute next run time: {e}"))
         .map(|dt| dt.with_timezone(&Utc))
 }
 
@@ -649,7 +701,7 @@ pub async fn get_schedules_handler(
     {
         Ok(schedules) => schedules,
         Err(e) => {
-            tracing::error!("Failed to fetch schedules: {}", e);
+            tracing::error!("Failed to fetch schedules: {e}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to load schedules",
@@ -659,35 +711,6 @@ pub async fn get_schedules_handler(
     };
 
     HtmlTemplate(SchedulesIndexTemplate { user, schedules }).into_response()
-}
-
-/// Helper function to fetch schedule form dropdown options (automations and worker groups)
-/// concurrently using `tokio::join!`. This reduces HTTP response latency by avoiding sequential database round-trips.
-fn render_schedule_form_error(
-    ctx: ScheduleFormErrorCtx<'_>,
-    automations: Vec<ScheduleAutomationOption>,
-    worker_groups: Vec<ScheduleWorkerGroupOption>,
-    error_msg: impl Into<String>,
-) -> axum::response::Response {
-    HtmlTemplate(ScheduleFormTemplate {
-        user: ctx.user,
-        is_edit: ctx.is_edit,
-        schedule_id: ctx.schedule_id,
-        automation_id: Some(ctx.form.automation_id),
-        name: ctx.name.to_string(),
-        cron_expression: ctx.cron_expression.to_string(),
-        timezone: ctx.timezone.to_string(),
-        worker_group_id: ctx.form.worker_group_id,
-        overlap_policy: ctx.form.overlap_policy.clone(),
-        max_queue_age_secs: ctx.form.max_queue_age_secs,
-        wol_enabled: ctx.form.wol_enabled,
-        wol_warmup_secs: ctx.wol_warmup_secs,
-        is_enabled: ctx.form.is_enabled,
-        automations,
-        worker_groups,
-        error: Some(error_msg.into()),
-    })
-    .into_response()
 }
 
 async fn fetch_schedule_options(
@@ -747,75 +770,9 @@ pub async fn post_create_schedule_handler(
     RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<ScheduleForm>,
 ) -> impl IntoResponse {
-    let name = form.name.trim();
-    let cron_expression = form.cron_expression.trim();
-    let timezone = if form.timezone.trim().is_empty() {
-        "UTC"
-    } else {
-        form.timezone.trim()
-    };
-    let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
-
-    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
-
-    let _make_ctx = |u: AuthUser| ScheduleFormErrorCtx {
-        user: u,
-        is_edit: false,
-        schedule_id: None,
-        form: &form,
-        name,
-        cron_expression,
-        timezone,
-        wol_warmup_secs,
-        automations: automations.clone(),
-        worker_groups: worker_groups.clone(),
-    };
-
-    if name.is_empty() || cron_expression.is_empty() {
-        return HtmlTemplate(ScheduleFormTemplate::build_error(
-            ScheduleFormErrorCtx {
-                user,
-                is_edit: false,
-                schedule_id: None,
-                form: &form,
-                name,
-                cron_expression,
-                timezone,
-                wol_warmup_secs,
-                automations,
-                worker_groups,
-            },
-            "Schedule Name and Cron Expression are required.",
-        ))
-        .into_response();
-    }
-
-    let now = Utc::now();
-    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
-        Ok(next_dt) => next_dt,
-        Err(err_msg) => {
-            return HtmlTemplate(ScheduleFormTemplate::build_error(
-                ScheduleFormErrorCtx {
-                    user,
-                    is_edit: false,
-                    schedule_id: None,
-                    form: &form,
-                    name,
-                    cron_expression,
-                    timezone,
-                    wol_warmup_secs,
-                    automations,
-                    worker_groups,
-                },
-                err_msg,
-            ))
-            .into_response();
-        }
-    };
-    let next_run_at = if form.is_enabled {
-        Some(parsed_next_run_at)
-    } else {
-        None
+    let validated = match validate_schedule_form(&state.db, user.clone(), &form, None).await {
+        Ok(v) => v,
+        Err(err_resp) => return err_resp,
     };
 
     let row_res = sqlx::query_scalar::<_, i64>(
@@ -831,16 +788,16 @@ pub async fn post_create_schedule_handler(
         "#,
     )
     .bind(form.automation_id)
-    .bind(name)
-    .bind(cron_expression)
-    .bind(timezone)
+    .bind(validated.name)
+    .bind(validated.cron_expression)
+    .bind(validated.timezone)
     .bind(form.worker_group_id)
     .bind(&form.overlap_policy)
     .bind(form.max_queue_age_secs)
     .bind(form.wol_enabled)
-    .bind(wol_warmup_secs)
+    .bind(validated.wol_warmup_secs)
     .bind(form.is_enabled)
-    .bind(next_run_at)
+    .bind(validated.next_run_at)
     .bind(user.id)
     .fetch_one(&state.db)
     .await;
@@ -848,17 +805,14 @@ pub async fn post_create_schedule_handler(
     let schedule_id: i64 = match row_res {
         Ok(id) => id,
         Err(e) => {
-            tracing::error!("Failed to create schedule: {}", e);
+            tracing::error!("Failed to create schedule: {e}");
+            let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
             return HtmlTemplate(ScheduleFormTemplate::build_error(
-                ScheduleFormErrorCtx {
+                ScheduleFormContext {
                     user,
                     is_edit: false,
                     schedule_id: None,
                     form: &form,
-                    name,
-                    cron_expression,
-                    timezone,
-                    wol_warmup_secs,
                     automations,
                     worker_groups,
                 },
@@ -876,9 +830,9 @@ pub async fn post_create_schedule_handler(
         Some(schedule_id),
         Some(serde_json::json!({
             "automation_id": form.automation_id,
-            "name": name,
-            "cron_expression": cron_expression,
-            "timezone": timezone,
+            "name": validated.name,
+            "cron_expression": validated.cron_expression,
+            "timezone": validated.timezone,
             "worker_group_id": form.worker_group_id,
             "is_enabled": form.is_enabled,
         })),
@@ -894,8 +848,6 @@ pub async fn get_edit_schedule_handler(
     Path(id): Path<i64>,
     RequireEditor(user): RequireEditor,
 ) -> impl IntoResponse {
-    // Bolt Optimization: Run schedule row query and schedule option queries (automations and worker groups)
-    // concurrently using `tokio::join!`. This reduces DB round-trips from 2 to 1 (~50% latency reduction).
     let (schedule_res, automations_res, worker_groups_res) = tokio::join!(
         sqlx::query_as::<_, EditScheduleRow>(
             r#"
@@ -921,7 +873,7 @@ pub async fn get_edit_schedule_handler(
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "Schedule not found").into_response(),
         Err(e) => {
-            tracing::error!("Failed to fetch schedule: {}", e);
+            tracing::error!("Failed to fetch schedule: {e}");
             return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
         }
     };
@@ -957,75 +909,9 @@ pub async fn post_edit_schedule_handler(
     RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<ScheduleForm>,
 ) -> impl IntoResponse {
-    let name = form.name.trim();
-    let cron_expression = form.cron_expression.trim();
-    let timezone = if form.timezone.trim().is_empty() {
-        "UTC"
-    } else {
-        form.timezone.trim()
-    };
-    let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
-
-    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
-
-    let _make_ctx = |u: AuthUser| ScheduleFormErrorCtx {
-        user: u,
-        is_edit: true,
-        schedule_id: Some(id),
-        form: &form,
-        name,
-        cron_expression,
-        timezone,
-        wol_warmup_secs,
-        automations: automations.clone(),
-        worker_groups: worker_groups.clone(),
-    };
-
-    if name.is_empty() || cron_expression.is_empty() {
-        return HtmlTemplate(ScheduleFormTemplate::build_error(
-            ScheduleFormErrorCtx {
-                user,
-                is_edit: true,
-                schedule_id: Some(id),
-                form: &form,
-                name,
-                cron_expression,
-                timezone,
-                wol_warmup_secs,
-                automations,
-                worker_groups,
-            },
-            "Schedule Name and Cron Expression are required.",
-        ))
-        .into_response();
-    }
-
-    let now = Utc::now();
-    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
-        Ok(next_dt) => next_dt,
-        Err(err_msg) => {
-            return HtmlTemplate(ScheduleFormTemplate::build_error(
-                ScheduleFormErrorCtx {
-                    user,
-                    is_edit: true,
-                    schedule_id: Some(id),
-                    form: &form,
-                    name,
-                    cron_expression,
-                    timezone,
-                    wol_warmup_secs,
-                    automations,
-                    worker_groups,
-                },
-                err_msg,
-            ))
-            .into_response();
-        }
-    };
-    let next_run_at = if form.is_enabled {
-        Some(parsed_next_run_at)
-    } else {
-        None
+    let validated = match validate_schedule_form(&state.db, user.clone(), &form, Some(id)).await {
+        Ok(v) => v,
+        Err(err_resp) => return err_resp,
     };
 
     let update_res = sqlx::query(
@@ -1046,32 +932,29 @@ pub async fn post_edit_schedule_handler(
         "#,
     )
     .bind(form.automation_id)
-    .bind(name)
-    .bind(cron_expression)
-    .bind(timezone)
+    .bind(validated.name)
+    .bind(validated.cron_expression)
+    .bind(validated.timezone)
     .bind(form.worker_group_id)
     .bind(&form.overlap_policy)
     .bind(form.max_queue_age_secs)
     .bind(form.wol_enabled)
-    .bind(wol_warmup_secs)
+    .bind(validated.wol_warmup_secs)
     .bind(form.is_enabled)
-    .bind(next_run_at)
+    .bind(validated.next_run_at)
     .bind(id)
     .execute(&state.db)
     .await;
 
     if let Err(e) = update_res {
-        tracing::error!("Failed to update schedule: {}", e);
+        tracing::error!("Failed to update schedule: {e}");
+        let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
         return HtmlTemplate(ScheduleFormTemplate::build_error(
-            ScheduleFormErrorCtx {
+            ScheduleFormContext {
                 user,
                 is_edit: true,
                 schedule_id: Some(id),
                 form: &form,
-                name,
-                cron_expression,
-                timezone,
-                wol_warmup_secs,
                 automations,
                 worker_groups,
             },
@@ -1088,9 +971,9 @@ pub async fn post_edit_schedule_handler(
         Some(id),
         Some(serde_json::json!({
             "automation_id": form.automation_id,
-            "name": name,
-            "cron_expression": cron_expression,
-            "timezone": timezone,
+            "name": validated.name,
+            "cron_expression": validated.cron_expression,
+            "timezone": validated.timezone,
             "worker_group_id": form.worker_group_id,
             "is_enabled": form.is_enabled,
         })),
@@ -1116,7 +999,7 @@ pub async fn post_toggle_schedule_handler(
         Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "Schedule not found").into_response(),
         Err(e) => {
-            tracing::error!("Failed to fetch schedule for toggle: {}", e);
+            tracing::error!("Failed to fetch schedule for toggle: {e}");
             return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
         }
     };
@@ -1132,8 +1015,7 @@ pub async fn post_toggle_schedule_handler(
             Ok(next_dt) => Some(next_dt),
             Err(err_msg) => {
                 tracing::warn!(schedule_id = id, error = %err_msg, "Refusing to enable schedule with invalid cron expression");
-                let flash =
-                    crate::auth::FlashMessage::error(format!("Cannot enable schedule: {err_msg}"));
+                let flash = FlashMessage::error(format!("Cannot enable schedule: {err_msg}"));
                 let (c1, c2) = crate::auth::build_flash_cookie(&flash);
                 return (
                     [
@@ -1158,7 +1040,7 @@ pub async fn post_toggle_schedule_handler(
             .await;
 
     if let Err(e) = update_res {
-        tracing::error!("Failed to toggle schedule: {}", e);
+        tracing::error!("Failed to toggle schedule: {e}");
         return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
     }
 
@@ -1202,7 +1084,7 @@ pub async fn post_delete_schedule_handler(
             Redirect::to("/schedules").into_response()
         }
         Err(e) => {
-            tracing::error!("Failed to delete schedule: {}", e);
+            tracing::error!("Failed to delete schedule: {e}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to delete schedule",
@@ -1379,32 +1261,17 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
             }
         };
 
-        if should_queue {
-            sqlx::query(
-                r#"
-                UPDATE schedules
-                SET last_run_at = now(),
-                    next_run_at = $1
-                WHERE id = $2
-                "#,
-            )
-            .bind(next_run)
-            .bind(sched.id)
-            .execute(&mut *tx)
-            .await?;
+        let update_sql = if should_queue {
+            "UPDATE schedules SET last_run_at = now(), next_run_at = $1 WHERE id = $2"
         } else {
-            sqlx::query(
-                r#"
-                UPDATE schedules
-                SET next_run_at = $1
-                WHERE id = $2
-                "#,
-            )
+            "UPDATE schedules SET next_run_at = $1 WHERE id = $2"
+        };
+
+        sqlx::query(update_sql)
             .bind(next_run)
             .bind(sched.id)
             .execute(&mut *tx)
             .await?;
-        }
     }
 
     tx.commit().await?;
@@ -1452,7 +1319,8 @@ mod tests {
         // Test DST in America/New_York (EDT, UTC-4 in July)
         let base_july = Utc.with_ymd_and_hms(2025, 7, 15, 8, 0, 0).unwrap();
         // 9:00 AM EDT on July 15, 2025 is 13:00:00 UTC
-        let res_july_ny = compute_next_run_at("0 9 * * *", "America/New_York", &base_july).unwrap();
+        let res_july_ny =
+            compute_next_run_at("0 9 * * *", "America/New_York", &base_july).unwrap();
         assert_eq!(
             res_july_ny,
             Utc.with_ymd_and_hms(2025, 7, 15, 13, 0, 0).unwrap()
@@ -1558,7 +1426,6 @@ mod tests {
             error: None,
         };
 
-        // Assert automation selection helper returns true for matching id and false for non-matching id
         assert!(
             template_with_selections.is_automation_selected(&10),
             "Expected automation_id 10 to be selected"
@@ -1568,7 +1435,6 @@ mod tests {
             "Expected automation_id 99 not to be selected"
         );
 
-        // Assert worker group selection helper returns true for matching id and false for non-matching id
         assert!(
             template_with_selections.is_worker_group_selected(&5),
             "Expected worker_group_id 5 to be selected"
@@ -1597,7 +1463,6 @@ mod tests {
             error: None,
         };
 
-        // Assert selection helpers return false when template selection fields are None
         assert!(
             !template_without_selections.is_automation_selected(&10),
             "Expected false when automation_id is None"
@@ -1643,7 +1508,6 @@ mod tests {
             .render()
             .expect("ScheduleFormTemplate should render successfully");
 
-        // Verify aria-describedby attributes and corresponding helper id elements
         assert!(
             rendered.contains("aria-describedby=\"cron-expression-help\""),
             "Expected cron_expression input to have aria-describedby='cron-expression-help'"
@@ -1685,36 +1549,30 @@ mod tests {
     fn test_cron_pattern_parsing_and_syntax() {
         let pattern = CronPattern::parse("*/15 9-17 1,15 JAN-JUN MON-FRI").unwrap();
 
-        // Minutes: */15 -> 0, 15, 30, 45
         assert!(pattern.contains_minute(0));
         assert!(pattern.contains_minute(15));
         assert!(pattern.contains_minute(30));
         assert!(pattern.contains_minute(45));
         assert!(!pattern.contains_minute(10));
 
-        // Hours: 9-17
         assert!(pattern.contains_hour(9));
         assert!(pattern.contains_hour(17));
         assert!(!pattern.contains_hour(8));
         assert!(!pattern.contains_hour(18));
 
-        // Days: 1, 15
         assert!(pattern.contains_day(1));
         assert!(pattern.contains_day(15));
         assert!(!pattern.contains_day(2));
 
-        // Months: JAN-JUN (1..=6)
         assert!(pattern.contains_month(1));
         assert!(pattern.contains_month(6));
         assert!(!pattern.contains_month(7));
 
-        // Weekdays: MON-FRI (1..=5)
         assert!(pattern.contains_weekday(1));
         assert!(pattern.contains_weekday(5));
         assert!(!pattern.contains_weekday(0));
         assert!(!pattern.contains_weekday(6));
 
-        // Invalid fields
         assert!(CronPattern::parse("invalid cron").is_err());
         assert!(CronPattern::parse("0 0 0 0 0 0").is_err());
         assert!(CronPattern::parse("60 * * * *").is_err());
@@ -1728,7 +1586,6 @@ mod tests {
     fn test_cron_pattern_next_after_edge_cases() {
         use chrono::TimeZone;
 
-        // 1. Sunday representation edge cases: 0, 7, and SUN
         let p_sun0 = CronPattern::parse("0 12 * * 0").unwrap();
         let p_sun7 = CronPattern::parse("0 12 * * 7").unwrap();
         let p_sun_name = CronPattern::parse("0 12 * * SUN").unwrap();
@@ -1737,13 +1594,8 @@ mod tests {
         assert_eq!(p_sun0.weekdays, p_sun_name.weekdays);
         assert!(p_sun0.contains_weekday(0));
 
-        // 2. Day-of-month (DOM) AND Day-of-week (DOW) OR-logic handling
-        // Standard cron behavior: when BOTH DOM and DOW are specified (not wildcard '*'),
-        // an occurrence matches if DOM matches OR DOW matches.
-        // E.g., "0 9 15 * MON" -> 9:00 AM on the 15th OR any Monday.
         let cron_or = CronPattern::parse("0 9 15 * MON").unwrap();
 
-        // Base date: Wednesday Jan 15, 2025 at 08:00 UTC (DOM matches 15)
         let base_dom_match = Utc.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap();
         let next_dom = cron_or.next_after(&base_dom_match).unwrap();
         assert_eq!(
@@ -1751,7 +1603,6 @@ mod tests {
             Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap()
         );
 
-        // Base date: Monday Jan 20, 2025 at 08:00 UTC (DOW matches MON, even though DOM is 20)
         let base_dow_match = Utc.with_ymd_and_hms(2025, 1, 20, 8, 0, 0).unwrap();
         let next_dow = cron_or.next_after(&base_dow_match).unwrap();
         assert_eq!(
@@ -1759,7 +1610,6 @@ mod tests {
             Utc.with_ymd_and_hms(2025, 1, 20, 9, 0, 0).unwrap()
         );
 
-        // 3. Step range expressions (e.g. 1-10/2 -> 1, 3, 5, 7, 9)
         let p_step_range = CronPattern::parse("1-10/2 10 * * *").unwrap();
         assert!(p_step_range.contains_minute(1));
         assert!(p_step_range.contains_minute(3));
@@ -1769,8 +1619,6 @@ mod tests {
         assert!(!p_step_range.contains_minute(2));
         assert!(!p_step_range.contains_minute(10));
 
-        // 4. Year/month boundary rollover (Dec 31 to Jan 1)
-        // Expression: "0 0 1 1 *" (Midnight on Jan 1st)
         let cron_year_end = CronPattern::parse("0 0 1 1 *").unwrap();
         let dec_31 = Utc.with_ymd_and_hms(2025, 12, 31, 23, 30, 0).unwrap();
         let next_year_jan1 = cron_year_end.next_after(&dec_31).unwrap();
