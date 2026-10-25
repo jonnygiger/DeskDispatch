@@ -113,7 +113,7 @@ pub fn map_grid_click_to_native(
     (target_x, target_y)
 }
 
-/// Helper to escape characters in URLs used inside CSS `url('...')` values.
+/// Helper to escape characters in URLs used inside CSS `url('...')` values with UTF-8 character preservation.
 pub fn escape_css_url<'a>(url: &'a str) -> Cow<'a, str> {
     if !url.bytes().any(|b| {
         matches!(
@@ -197,16 +197,16 @@ impl ImageMagnifier {
         style
     }
 
-    /// Marker style for normal panel
-    pub fn normal_marker_style(&self) -> String {
+    /// Marker style for normal panel (returns static borrowed empty string when marker is disabled)
+    pub fn normal_marker_style(&self) -> Cow<'static, str> {
         if self.show_marker() {
             let (tx, ty) = self.target_or_center();
             match ViewportFit::compute(600.0, 340.0, self.native_w, self.native_h) {
-                Some(fit) => fit.marker_style(tx, ty),
-                None => String::new(),
+                Some(fit) => Cow::Owned(fit.marker_style(tx, ty)),
+                None => Cow::Borrowed(""),
             }
         } else {
-            String::new()
+            Cow::Borrowed("")
         }
     }
 
@@ -591,6 +591,11 @@ mod tests {
         let mag = ImageMagnifier::new(malicious, 800, 600, None, None);
         assert!(!mag.normal_style().contains("img.png');"));
         assert!(mag.normal_style().contains("img.png\\'"));
+
+        // Unicode non-ASCII test
+        let unicode_url = "http://example.com/image_图片.jpg";
+        let unicode_escaped = escape_css_url(unicode_url);
+        assert_eq!(unicode_escaped, unicode_url);
     }
 
     #[test]

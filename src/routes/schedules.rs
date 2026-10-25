@@ -398,11 +398,17 @@ impl CronPattern {
 
             let month = current.month();
             if !self.contains_month(month) {
-                let (next_y, next_m) = if month == 12 {
-                    (current.year() + 1, 1)
+                let mask_after = if month < 12 {
+                    self.months & (!0u16 << (month + 1))
                 } else {
-                    (current.year(), month + 1)
+                    0
                 };
+                let (next_y, next_m) = if mask_after != 0 {
+                    (current.year(), mask_after.trailing_zeros())
+                } else {
+                    (current.year() + 1, self.months.trailing_zeros())
+                };
+
                 if let Some(naive_next) = chrono::NaiveDate::from_ymd_opt(next_y, next_m, 1)
                     .and_then(|d| d.and_hms_opt(0, 0, 0))
                 {
@@ -450,14 +456,18 @@ impl CronPattern {
 
             let hour = current.hour();
             if !self.contains_hour(hour) {
-                let mut found_hour = None;
-                for h in (hour + 1)..24 {
-                    if self.contains_hour(h) {
-                        found_hour = Some(h);
-                        break;
-                    }
-                }
-                if let Some(next_h) = found_hour {
+                let mask_after = if hour < 23 {
+                    self.hours & (!0u32 << (hour + 1))
+                } else {
+                    0
+                };
+                let next_h_opt = if mask_after != 0 {
+                    Some(mask_after.trailing_zeros())
+                } else {
+                    None
+                };
+
+                if let Some(next_h) = next_h_opt {
                     if let Some(naive_next) = current.naive_local().date().and_hms_opt(next_h, 0, 0)
                     {
                         if let Some(next_dt) = tz
@@ -469,21 +479,19 @@ impl CronPattern {
                             continue;
                         }
                     }
-                } else {
-                    if let Some(naive_next) = current
-                        .naive_local()
-                        .date()
-                        .succ_opt()
-                        .and_then(|d| d.and_hms_opt(0, 0, 0))
+                } else if let Some(naive_next) = current
+                    .naive_local()
+                    .date()
+                    .succ_opt()
+                    .and_then(|d| d.and_hms_opt(0, 0, 0))
+                {
+                    if let Some(next_dt) = tz
+                        .from_local_datetime(&naive_next)
+                        .single()
+                        .or_else(|| tz.from_local_datetime(&naive_next).latest())
                     {
-                        if let Some(next_dt) = tz
-                            .from_local_datetime(&naive_next)
-                            .single()
-                            .or_else(|| tz.from_local_datetime(&naive_next).latest())
-                        {
-                            current = next_dt;
-                            continue;
-                        }
+                        current = next_dt;
+                        continue;
                     }
                 }
                 current += Duration::hours(1);
@@ -492,14 +500,18 @@ impl CronPattern {
 
             let minute = current.minute();
             if !self.contains_minute(minute) {
-                let mut found_min = None;
-                for m in (minute + 1)..60 {
-                    if self.contains_minute(m) {
-                        found_min = Some(m);
-                        break;
-                    }
-                }
-                if let Some(next_m) = found_min {
+                let mask_after = if minute < 59 {
+                    self.minutes & (!0u64 << (minute + 1))
+                } else {
+                    0
+                };
+                let next_m_opt = if mask_after != 0 {
+                    Some(mask_after.trailing_zeros())
+                } else {
+                    None
+                };
+
+                if let Some(next_m) = next_m_opt {
                     if let Some(naive_next) =
                         current.naive_local().date().and_hms_opt(hour, next_m, 0)
                     {
@@ -512,20 +524,18 @@ impl CronPattern {
                             continue;
                         }
                     }
-                } else {
-                    if let Some(next_hour_naive) = current
-                        .naive_local()
-                        .with_minute(0)
-                        .map(|dt| dt + Duration::hours(1))
+                } else if let Some(next_hour_naive) = current
+                    .naive_local()
+                    .with_minute(0)
+                    .map(|dt| dt + Duration::hours(1))
+                {
+                    if let Some(next_dt) = tz
+                        .from_local_datetime(&next_hour_naive)
+                        .single()
+                        .or_else(|| tz.from_local_datetime(&next_hour_naive).latest())
                     {
-                        if let Some(next_dt) = tz
-                            .from_local_datetime(&next_hour_naive)
-                            .single()
-                            .or_else(|| tz.from_local_datetime(&next_hour_naive).latest())
-                        {
-                            current = next_dt;
-                            continue;
-                        }
+                        current = next_dt;
+                        continue;
                     }
                 }
                 current += Duration::minutes(1);
