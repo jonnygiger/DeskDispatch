@@ -309,33 +309,3 @@ fn test_heartbeat_response_contract() {
     assert_eq!(json["heartbeat_interval_secs"], 15);
 }
 
-#[test]
-fn test_route_documentation_consistency() {
-    // List expected worker API endpoints defined in the documentation and router
-    let expected_worker_endpoints = vec![
-        "/api/v1/workers/register",
-        "/api/v1/workers/heartbeat",
-        "/api/v1/workers/next-assignment",
-        "/api/v1/workers/task-runs/{id}",
-        "/api/v1/workers/task-runs/{id}/step-result",
-        "/api/v1/workers/task-runs/{id}/complete",
-        "/api/v1/workers/task-runs/{id}/screenshot-url",
-        "/api/v1/workers/task-runs/{id}/screenshots/commit",
-        "/api/v1/workers/recordings/events",
-        "/api/v1/workers/recordings/stop",
-        "/api/v1/workers/recordings/screenshot-url",
-    ];
-
-    for endpoint in expected_worker_endpoints {
-        assert!(
-            !endpoint.is_empty(),
-            "Endpoint string should not be empty: {}",
-            endpoint
-        );
-        assert!(
-            endpoint.starts_with("/api/v1/workers/"),
-            "Worker route must be under /api/v1/workers/: {}",
-            endpoint
-        );
-    }
-}
