@@ -502,27 +502,24 @@ pub fn generate_type_text_summary(text_to_type: &str, delay_between_keys_ms: i32
     let mut buf = String::with_capacity(64);
     let trimmed = text_to_type.trim();
 
-    if delay_between_keys_ms > 0 {
-        if trimmed.len() > 30 {
-            let _ = write!(
-                buf,
-                "Type \"{}...\" ({}ms key delay)",
-                &trimmed[..30],
-                delay_between_keys_ms
-            );
-        } else {
-            let _ = write!(
-                buf,
-                "Type \"{}\" ({}ms key delay)",
-                trimmed, delay_between_keys_ms
-            );
-        }
+    let (display_text, suffix) = if trimmed.char_indices().nth(30).is_some() {
+        let idx = trimmed
+            .char_indices()
+            .nth(27)
+            .map(|(i, _)| i)
+            .unwrap_or(trimmed.len());
+        (&trimmed[..idx], "...")
     } else {
-        if trimmed.len() > 30 {
-            let _ = write!(buf, "Type \"{}...\"", &trimmed[..30]);
-        } else {
-            let _ = write!(buf, "Type \"{}\"", trimmed);
-        }
+        (trimmed, "")
+    };
+
+    if delay_between_keys_ms > 0 {
+        let _ = write!(
+            buf,
+            "Type \"{display_text}{suffix}\" ({delay_between_keys_ms}ms key delay)"
+        );
+    } else {
+        let _ = write!(buf, "Type \"{display_text}{suffix}\"");
     }
     buf
 }
@@ -3517,7 +3514,7 @@ mod tests {
                 "Type text with long content exceeding thirty chars limit",
                 0
             ),
-            "Type \"Type text with long content ex...\""
+            "Type \"Type text with long content...\""
         );
         assert_eq!(
             generate_type_text_summary("Hello", 50),
@@ -3526,6 +3523,10 @@ mod tests {
         assert_eq!(
             generate_type_text_summary("  Padded text  ", 10),
             "Type \"Padded text\" (10ms key delay)"
+        );
+        assert_eq!(
+            generate_type_text_summary("🚀 Alpha Beta Gamma Delta Epsilon Zeta Eta Theta", 25),
+            "Type \"🚀 Alpha Beta Gamma Delta Ep...\" (25ms key delay)"
         );
 
         // 4. Mouse button & click type sanitization
