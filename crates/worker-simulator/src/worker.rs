@@ -418,14 +418,10 @@ impl SimulatedWorker {
     async fn execute_automation(
         &self,
         task_run_id: i64,
-        automation: &serde_json::Value,
+        automation: &FullAutomationPayload,
         auth_header: &str,
     ) -> Result<(), String> {
-        let empty_steps = Vec::new();
-        let steps = automation
-            .get("steps")
-            .and_then(|s| s.as_array())
-            .unwrap_or(&empty_steps);
+        let steps = &automation.steps;
 
         let mut overall_success = true;
         let mut task_output_type: Option<String> = None;
@@ -452,20 +448,38 @@ impl SimulatedWorker {
                 return Err("Simulated power outage mid-step".to_string());
             }
 
-            let step_id = step
-                .get("id")
-                .and_then(|i| i.as_i64())
-                .ok_or_else(|| "Missing step id in automation step".to_string())?;
-
-            let step_type = step
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("unknown");
-
-            let post_delay_ms = step
-                .get("post_delay_ms")
-                .and_then(|d| d.as_u64())
-                .unwrap_or(100);
+            let (step_id, step_type, post_delay_ms) = match step {
+                StepPayload::MouseClick {
+                    id, post_delay_ms, ..
+                } => (*id, "mouse_click", *post_delay_ms as u64),
+                StepPayload::KeyPress {
+                    id, post_delay_ms, ..
+                } => (*id, "key_press", *post_delay_ms as u64),
+                StepPayload::TypeText {
+                    id, post_delay_ms, ..
+                } => (*id, "type_text", *post_delay_ms as u64),
+                StepPayload::FindPixelRgb {
+                    id, post_delay_ms, ..
+                } => (*id, "find_pixel_rgb", *post_delay_ms as u64),
+                StepPayload::FindBitmap {
+                    id, post_delay_ms, ..
+                } => (*id, "find_bitmap", *post_delay_ms as u64),
+                StepPayload::Branch {
+                    id, post_delay_ms, ..
+                } => (*id, "branch", *post_delay_ms as u64),
+                StepPayload::OcrExtract {
+                    id, post_delay_ms, ..
+                } => (*id, "ocr_extract", *post_delay_ms as u64),
+                StepPayload::WindowControl {
+                    id, post_delay_ms, ..
+                } => (*id, "window_control", *post_delay_ms as u64),
+                StepPayload::ClipboardControl {
+                    id, post_delay_ms, ..
+                } => (*id, "clipboard_control", *post_delay_ms as u64),
+                StepPayload::MouseScroll {
+                    id, post_delay_ms, ..
+                } => (*id, "mouse_scroll", *post_delay_ms as u64),
+            };
 
             info!(
                 worker_idx = self.config.worker_index,
@@ -477,17 +491,13 @@ impl SimulatedWorker {
             );
 
             let started_at = Utc::now();
-            let typing_delay = if step_type == "type_text" {
-                let key_delay = step
-                    .get("delay_between_keys_ms")
-                    .and_then(|d| d.as_u64())
-                    .unwrap_or(0);
-                let char_count = step
-                    .get("text_to_type")
-                    .and_then(|t| t.as_str())
-                    .map(|s| s.chars().count())
-                    .unwrap_or(0);
-                (key_delay * char_count as u64).min(500)
+            let typing_delay = if let StepPayload::TypeText {
+                text_to_type,
+                delay_between_keys_ms,
+                ..
+            } = step
+            {
+                ((*delay_between_keys_ms as u64) * text_to_type.chars().count() as u64).min(500)
             } else {
                 0
             };
@@ -570,7 +580,7 @@ impl SimulatedWorker {
 
             // Periodically upload a reference bitmap for bitmap steps if needed
             if (step_type == "find_bitmap" || step_type == "branch") && random_bool(0.2) {
-                let auto_id = automation.get("id").and_then(|i| i.as_i64());
+                let auto_id = Some(automation.id);
                 let bitmap_name = format!("sim_ref_{}_step_{}", self.config.worker_index, step_id);
                 let _ = self
                     .upload_reference_bitmap(auto_id, &bitmap_name, auth_header)
@@ -580,84 +590,90 @@ impl SimulatedWorker {
             // Rich variable updates covering region, color, coordinate, and status variable types
             let mut var_updates = Vec::new();
 
-            if let Some(var_id) = step.get("output_variable_id").and_then(|v| v.as_i64()) {
-                let var_val = match step_type {
-                    "find_pixel_rgb" => serde_json::json!([
-                        captured_r.unwrap_or(200),
-                        captured_g.unwrap_or(150),
-                        captured_b.unwrap_or(100)
-                    ]),
-                    "ocr_extract" => serde_json::json!("SIMULATED_OCR_TEXT"),
-                    "clipboard_control" => serde_json::json!("SIMULATED_CLIPBOARD_TEXT"),
-                    _ => serde_json::json!({
-                        "x": captured_x.unwrap_or(800),
-                        "y": captured_y.unwrap_or(600),
-                        "status": result_str
-                    }),
-                };
-                var_updates.push(VariableUpdateItem {
-                    variable_id: var_id,
-                    value: var_val,
-                });
-            }
-
-            if step_type == "ocr_extract"
-                && step
-                    .get("set_as_task_output")
-                    .and_then(|b| b.as_bool())
-                    .unwrap_or(true)
-            {
-                task_output_type = Some("ocr_text".to_string());
-                task_output_value = Some("SIMULATED_OCR_TEXT".to_string());
-            }
-
-            if step_type == "clipboard_control"
-                && step
-                    .get("set_as_task_output")
-                    .and_then(|b| b.as_bool())
-                    .unwrap_or(false)
-            {
-                task_output_type = Some("string".to_string());
-                task_output_value = Some("SIMULATED_CLIPBOARD_TEXT".to_string());
-            }
-
-            if let Some(var_id) = step
-                .get("output_found_variable_id")
-                .and_then(|v| v.as_i64())
-            {
-                var_updates.push(VariableUpdateItem {
-                    variable_id: var_id,
-                    value: serde_json::json!(found.unwrap_or(true)),
-                });
-            }
-
-            if let Some(var_id) = step.get("output_x_variable_id").and_then(|v| v.as_i64()) {
-                var_updates.push(VariableUpdateItem {
-                    variable_id: var_id,
-                    value: serde_json::json!(captured_x.unwrap_or(400)),
-                });
-            }
-
-            if let Some(var_id) = step.get("output_y_variable_id").and_then(|v| v.as_i64()) {
-                var_updates.push(VariableUpdateItem {
-                    variable_id: var_id,
-                    value: serde_json::json!(captured_y.unwrap_or(300)),
-                });
-            }
-
-            if let Some(var_id) = step
-                .get("output_region_variable_id")
-                .and_then(|v| v.as_i64())
-            {
-                let x = captured_x.unwrap_or(400);
-                let y = captured_y.unwrap_or(300);
-                var_updates.push(VariableUpdateItem {
-                    variable_id: var_id,
-                    value: serde_json::json!({
-                        "top_left": [x, y],
-                        "bottom_right": [x + 120, y + 80]
-                    }),
-                });
+            match step {
+                StepPayload::FindPixelRgb {
+                    output_variable_id: Some(vid),
+                    ..
+                } => {
+                    var_updates.push(VariableUpdateItem {
+                        variable_id: *vid,
+                        value: serde_json::json!([
+                            captured_r.unwrap_or(200),
+                            captured_g.unwrap_or(150),
+                            captured_b.unwrap_or(100)
+                        ]),
+                    });
+                }
+                StepPayload::OcrExtract {
+                    output_variable_id,
+                    set_as_task_output,
+                    ..
+                } => {
+                    if let Some(vid) = output_variable_id {
+                        var_updates.push(VariableUpdateItem {
+                            variable_id: *vid,
+                            value: serde_json::json!("SIMULATED_OCR_TEXT"),
+                        });
+                    }
+                    if *set_as_task_output {
+                        task_output_type = Some("ocr_text".to_string());
+                        task_output_value = Some("SIMULATED_OCR_TEXT".to_string());
+                    }
+                }
+                StepPayload::ClipboardControl {
+                    output_variable_id,
+                    set_as_task_output,
+                    ..
+                } => {
+                    if let Some(vid) = output_variable_id {
+                        var_updates.push(VariableUpdateItem {
+                            variable_id: *vid,
+                            value: serde_json::json!("SIMULATED_CLIPBOARD_TEXT"),
+                        });
+                    }
+                    if *set_as_task_output {
+                        task_output_type = Some("string".to_string());
+                        task_output_value = Some("SIMULATED_CLIPBOARD_TEXT".to_string());
+                    }
+                }
+                StepPayload::FindBitmap {
+                    output_found_variable_id,
+                    output_x_variable_id,
+                    output_y_variable_id,
+                    output_region_variable_id,
+                    ..
+                } => {
+                    if let Some(vid) = output_found_variable_id {
+                        var_updates.push(VariableUpdateItem {
+                            variable_id: *vid,
+                            value: serde_json::json!(found.unwrap_or(true)),
+                        });
+                    }
+                    if let Some(vid) = output_x_variable_id {
+                        var_updates.push(VariableUpdateItem {
+                            variable_id: *vid,
+                            value: serde_json::json!(captured_x.unwrap_or(400)),
+                        });
+                    }
+                    if let Some(vid) = output_y_variable_id {
+                        var_updates.push(VariableUpdateItem {
+                            variable_id: *vid,
+                            value: serde_json::json!(captured_y.unwrap_or(300)),
+                        });
+                    }
+                    if let Some(vid) = output_region_variable_id {
+                        let x = captured_x.unwrap_or(400);
+                        let y = captured_y.unwrap_or(300);
+                        var_updates.push(VariableUpdateItem {
+                            variable_id: *vid,
+                            value: serde_json::json!({
+                                "top_left": [x, y],
+                                "bottom_right": [x + 120, y + 80]
+                            }),
+                        });
+                    }
+                }
+                _ => {}
             }
 
             let variable_updates = if var_updates.is_empty() {

@@ -34,11 +34,8 @@ impl StepRunner {
     pub async fn execute_automation(
         &mut self,
         task_run_id: i64,
-        automation_val: &serde_json::Value,
+        payload: &FullAutomationPayload,
     ) -> Result<(), String> {
-        let payload: FullAutomationPayload = serde_json::from_value(automation_val.clone())
-            .map_err(|e| format!("Failed to parse FullAutomationPayload: {}", e))?;
-
         self.variables.clear();
         self.task_output_type = None;
         self.task_output_value = None;

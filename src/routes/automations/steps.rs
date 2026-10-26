@@ -362,22 +362,20 @@ pub async fn fetch_automation_step_options(
     .await
     .unwrap_or_default();
 
-    raw_steps
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, row)| {
-            if exclude_step_id == Some(row.id) {
-                return None;
-            }
-            Some(StepOption {
-                id: row.id,
-                step_type: row.step_type,
-                label: row.label,
-                position: row.position,
-                display_number: idx + 1,
-            })
-        })
-        .collect()
+    let mut options = Vec::with_capacity(raw_steps.len());
+    for (idx, row) in raw_steps.into_iter().enumerate() {
+        if exclude_step_id == Some(row.id) {
+            continue;
+        }
+        options.push(StepOption {
+            id: row.id,
+            step_type: row.step_type,
+            label: row.label,
+            position: row.position,
+            display_number: idx + 1,
+        });
+    }
+    options
 }
 
 pub async fn fetch_available_bitmaps(db: &PgPool, automation_id: i64) -> Vec<BitmapOption> {
@@ -411,6 +409,29 @@ pub async fn fetch_step_options_bundle(
         bitmaps,
         steps,
     }
+}
+
+/// Slices a string slice `s` up to `max_chars` UTF-8 characters without allocation.
+/// Returns `(prefix_slice, suffix_ellipsis)` where `suffix_ellipsis` is `"..."` if truncated or `""` if not.
+#[inline]
+pub fn truncate_str(s: &str, max_chars: usize) -> (&str, &'static str) {
+    let trimmed = s.trim();
+    if trimmed.char_indices().nth(max_chars).is_some() {
+        let idx = trimmed
+            .char_indices()
+            .nth(max_chars.saturating_sub(3))
+            .map(|(i, _)| i)
+            .unwrap_or(trimmed.len());
+        (&trimmed[..idx], "...")
+    } else {
+        (trimmed, "")
+    }
+}
+
+/// Evaluates whether a form flag value matches common truthy HTML form inputs (`"on"`, `"true"`, `"1"`).
+#[inline]
+pub fn is_form_flag_enabled(val: Option<&str>) -> bool {
+    matches!(val, Some("on" | "true" | "1"))
 }
 
 pub fn generate_mouse_scroll_summary(
@@ -500,29 +521,15 @@ pub fn generate_mouse_click_summary(
 pub fn generate_type_text_summary(text_to_type: &str, delay_between_keys_ms: i32) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
-    let trimmed = text_to_type.trim();
+    let (display_text, suffix) = truncate_str(text_to_type, 30);
 
     if delay_between_keys_ms > 0 {
-        if trimmed.len() > 30 {
-            let _ = write!(
-                buf,
-                "Type \"{}...\" ({}ms key delay)",
-                &trimmed[..30],
-                delay_between_keys_ms
-            );
-        } else {
-            let _ = write!(
-                buf,
-                "Type \"{}\" ({}ms key delay)",
-                trimmed, delay_between_keys_ms
-            );
-        }
+        let _ = write!(
+            buf,
+            "Type \"{display_text}{suffix}\" ({delay_between_keys_ms}ms key delay)"
+        );
     } else {
-        if trimmed.len() > 30 {
-            let _ = write!(buf, "Type \"{}...\"", &trimmed[..30]);
-        } else {
-            let _ = write!(buf, "Type \"{}\"", trimmed);
-        }
+        let _ = write!(buf, "Type \"{display_text}{suffix}\"");
     }
     buf
 }
@@ -583,17 +590,7 @@ pub fn generate_window_control_summary(
         "Control"
     };
 
-    let pattern_trimmed = match_pattern.trim();
-    let display_idx = pattern_trimmed
-        .char_indices()
-        .nth(27)
-        .map(|(i, _)| i)
-        .unwrap_or(pattern_trimmed.len());
-    let (display_pattern, suffix) = if display_idx < pattern_trimmed.len() {
-        (&pattern_trimmed[..display_idx], "...")
-    } else {
-        (pattern_trimmed, "")
-    };
+    let (display_pattern, suffix) = truncate_str(match_pattern, 30);
 
     if action.eq_ignore_ascii_case("wait") {
         let _ = write!(
@@ -625,16 +622,8 @@ pub fn generate_clipboard_control_summary(
         if let Some(var_name) = input_var_name.map(str::trim).filter(|s| !s.is_empty()) {
             let _ = write!(buf, "«{}»", var_name);
         } else if let Some(txt) = text_to_set.map(str::trim).filter(|s| !s.is_empty()) {
-            if txt.char_indices().nth(30).is_some() {
-                let idx = txt
-                    .char_indices()
-                    .nth(27)
-                    .map(|(i, _)| i)
-                    .unwrap_or(txt.len());
-                let _ = write!(buf, "\"{}\"...", &txt[..idx]);
-            } else {
-                let _ = write!(buf, "\"{}\"", txt);
-            }
+            let (display_txt, suffix) = truncate_str(txt, 30);
+            let _ = write!(buf, "\"{display_txt}{suffix}\"");
         } else {
             let _ = write!(buf, "text");
         }
@@ -1245,19 +1234,15 @@ pub async fn get_new_step_handler(
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
-    let form = StepForm {
-        reference_bitmap_id: query.reference_bitmap_id,
-        search_x: query.search_x,
-        search_y: query.search_y,
-        search_width: query.search_width,
-        search_height: query.search_height,
-        condition_type: query.condition_type,
-        x: query.x,
-        y: query.y,
-        ..Default::default()
-    };
     render_step_form(
-        &state.db, user, csrf_token, id, None, &step_type, form, None,
+        &state.db,
+        user,
+        csrf_token,
+        id,
+        None,
+        &step_type,
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1267,11 +1252,16 @@ pub async fn get_new_key_press_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "key_press".to_string())),
-        Query(EditStepQuery::default()),
+        csrf_token,
+        id,
+        None,
+        "key_press",
+        StepForm::default(),
+        None,
     )
     .await
 }
@@ -1282,11 +1272,16 @@ pub async fn get_new_ocr_extract_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "ocr_extract".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "ocr_extract",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1296,11 +1291,16 @@ pub async fn get_new_window_control_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "window_control".to_string())),
-        Query(EditStepQuery::default()),
+        csrf_token,
+        id,
+        None,
+        "window_control",
+        StepForm::default(),
+        None,
     )
     .await
 }
@@ -1310,11 +1310,16 @@ pub async fn get_new_type_text_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "type_text".to_string())),
-        Query(EditStepQuery::default()),
+        csrf_token,
+        id,
+        None,
+        "type_text",
+        StepForm::default(),
+        None,
     )
     .await
 }
@@ -1325,11 +1330,16 @@ pub async fn get_new_branch_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "branch".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "branch",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1340,11 +1350,16 @@ pub async fn get_new_find_bitmap_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "find_bitmap".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "find_bitmap",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1355,11 +1370,16 @@ pub async fn get_new_find_pixel_rgb_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "find_pixel_rgb".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "find_pixel_rgb",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1369,11 +1389,16 @@ pub async fn get_new_mouse_scroll_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "mouse_scroll".to_string())),
-        Query(EditStepQuery::default()),
+        csrf_token,
+        id,
+        None,
+        "mouse_scroll",
+        StepForm::default(),
+        None,
     )
     .await
 }
@@ -1384,11 +1409,16 @@ pub async fn get_new_mouse_click_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "mouse_click".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "mouse_click",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1768,10 +1798,7 @@ async fn save_step_details(
             .await?;
         }
         "ocr_extract" => {
-            let set_task_out = matches!(
-                form.set_as_task_output.as_deref(),
-                Some("on" | "true" | "1")
-            );
+            let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
 
             sqlx::query(
                 r#"
@@ -1800,10 +1827,7 @@ async fn save_step_details(
             .await?;
         }
         "clipboard_control" => {
-            let set_task_out = matches!(
-                form.set_as_task_output.as_deref(),
-                Some("on" | "true" | "1")
-            );
+            let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
             let action = match form.action.as_deref().unwrap_or("set_text") {
                 "get_text" => "get_text",
                 "clear" => "clear",
@@ -1928,9 +1952,7 @@ async fn render_step_form(
         .into_response(),
         "clipboard_control" => {
             let variables = fetch_automation_variables(db, automation_id).await;
-            let set_task_out = form.set_as_task_output.as_deref() == Some("on")
-                || form.set_as_task_output.as_deref() == Some("true")
-                || form.set_as_task_output.as_deref() == Some("1");
+            let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
 
             HtmlTemplate(StepClipboardControlTemplate {
                 user,
@@ -2077,7 +2099,7 @@ async fn render_step_form(
         "ocr_extract" => {
             let variables = fetch_automation_variables(db, automation_id).await;
             let set_task_out = match form.set_as_task_output.as_deref() {
-                Some(v) => v == "on" || v == "true" || v == "1",
+                Some(v) => is_form_flag_enabled(Some(v)),
                 None => true,
             };
 
@@ -3517,7 +3539,7 @@ mod tests {
                 "Type text with long content exceeding thirty chars limit",
                 0
             ),
-            "Type \"Type text with long content ex...\""
+            "Type \"Type text with long content...\""
         );
         assert_eq!(
             generate_type_text_summary("Hello", 50),
@@ -3526,6 +3548,10 @@ mod tests {
         assert_eq!(
             generate_type_text_summary("  Padded text  ", 10),
             "Type \"Padded text\" (10ms key delay)"
+        );
+        assert_eq!(
+            generate_type_text_summary("🚀 Alpha Beta Gamma Delta Epsilon Zeta Eta Theta", 25),
+            "Type \"🚀 Alpha Beta Gamma Delta Ep...\" (25ms key delay)"
         );
 
         // 4. Mouse button & click type sanitization
@@ -3633,6 +3659,123 @@ mod tests {
         // Valid bitmap branch form
         form.reference_bitmap_id = Some(10);
         assert_eq!(validate_branch_form(&form, "bitmap"), None);
+
+        // Window state branch condition - missing pattern
+        form.condition_type = Some("window_state".to_string());
+        form.window_match_pattern = None;
+        assert_eq!(
+            validate_branch_form(&form, "window_state"),
+            Some(
+                "Please provide a window title match pattern for window state condition."
+                    .to_string()
+            )
+        );
+
+        // Window state branch condition - whitespace-only pattern
+        form.window_match_pattern = Some("   ".to_string());
+        assert_eq!(
+            validate_branch_form(&form, "window_state"),
+            Some(
+                "Please provide a window title match pattern for window state condition."
+                    .to_string()
+            )
+        );
+
+        // Window state branch condition - valid pattern
+        form.window_match_pattern = Some("Calculator".to_string());
+        assert_eq!(validate_branch_form(&form, "window_state"), None);
+    }
+
+    #[test]
+    fn test_generate_window_control_summary() {
+        assert_eq!(
+            generate_window_control_summary("activate", "Notepad", "contains", 5000),
+            "Focus window matching \"Notepad\" (contains)"
+        );
+        assert_eq!(
+            generate_window_control_summary("close", "Calculator", "exact", 5000),
+            "Close window matching \"Calculator\" (exact)"
+        );
+        assert_eq!(
+            generate_window_control_summary("minimize", "Terminal", "starts_with", 5000),
+            "Minimize window matching \"Terminal\" (starts_with)"
+        );
+        assert_eq!(
+            generate_window_control_summary("maximize", "Browser", "contains", 5000),
+            "Maximize window matching \"Browser\" (contains)"
+        );
+        assert_eq!(
+            generate_window_control_summary("wait", "Setup Wizard", "contains", 5000),
+            "Wait for window matching \"Setup Wizard\" (contains) [timeout 5.0s]"
+        );
+        assert_eq!(
+            generate_window_control_summary("ACTIVATE", "Notepad", "contains", 5000),
+            "Focus window matching \"Notepad\" (contains)"
+        );
+        assert_eq!(
+            generate_window_control_summary("wait", "Dialog", "exact", 12500),
+            "Wait for window matching \"Dialog\" (exact) [timeout 12.5s]"
+        );
+        assert_eq!(
+            generate_window_control_summary(
+                "activate",
+                "Very Long Application Title That Exceeds Thirty Chars Limit",
+                "contains",
+                5000
+            ),
+            "Focus window matching \"Very Long Application Title...\" (contains)"
+        );
+        assert_eq!(
+            generate_window_control_summary("unknown_action", "App", "contains", 5000),
+            "Control window matching \"App\" (contains)"
+        );
+    }
+
+    #[test]
+    fn test_generate_mouse_scroll_summary() {
+        // 1. Region variable target
+        assert_eq!(
+            generate_mouse_scroll_summary("down", 5, None, None, None, None, Some("scroll_area")),
+            "Scroll down (5 ticks) at region «scroll_area» center"
+        );
+
+        // 2. Fixed coordinates
+        assert_eq!(
+            generate_mouse_scroll_summary("up", 3, Some(100), Some(200), None, None, None),
+            "Scroll up (3 ticks) at (100, 200)"
+        );
+
+        // 3. Variable coordinates
+        assert_eq!(
+            generate_mouse_scroll_summary(
+                "left",
+                2,
+                None,
+                None,
+                Some("pos_x"),
+                Some("pos_y"),
+                None
+            ),
+            "Scroll left (2 ticks) at («pos_x», «pos_y»)"
+        );
+
+        // 4. Mixed coordinates (fixed X, variable Y)
+        assert_eq!(
+            generate_mouse_scroll_summary("right", 1, Some(150), None, None, Some("pos_y"), None),
+            "Scroll right (1 ticks) at (150, «pos_y»)"
+        );
+
+        // 5. Partial missing coordinate (fixed X, missing Y)
+        assert_eq!(
+            generate_mouse_scroll_summary("down", 3, Some(100), None, None, None, None),
+            "Scroll down (3 ticks) at (100, 0)"
+        );
+
+        // 6. No coordinates or regions specified
+        assert_eq!(
+            generate_mouse_scroll_summary("down", 3, None, None, None, None, None),
+            "Scroll down (3 ticks)"
+        );
     }
 
     #[test]

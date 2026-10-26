@@ -408,7 +408,7 @@ pub async fn post_run_now_automation_handler(
     } else {
         Some(&clean_overrides)
     };
-    if let Ok(automation_json) =
+    if let Ok(automation_payload) =
         crate::routes::api_workers::fetch_full_automation_json_with_overrides(
             &state.db,
             id,
@@ -417,7 +417,7 @@ pub async fn post_run_now_automation_handler(
         .await
     {
         let _ = sqlx::query("UPDATE task_runs SET dispatched_automation_json = $1 WHERE id = $2")
-            .bind(&automation_json)
+            .bind(sqlx::types::Json(&automation_payload))
             .bind(task_run_id)
             .execute(&mut *tx)
             .await;

@@ -75,7 +75,7 @@ pub fn router() -> Router<AppState> {
 pub async fn fetch_full_automation_json(
     db: &PgPool,
     automation_id: i64,
-) -> Result<serde_json::Value, sqlx::Error> {
+) -> Result<FullAutomationPayload, sqlx::Error> {
     fetch_full_automation_json_with_overrides(db, automation_id, None).await
 }
 
@@ -233,7 +233,7 @@ struct AutomationMetaRow {
 struct AssignmentRow {
     task_run_id: i64,
     automation_id: i64,
-    dispatched_automation_json: Option<serde_json::Value>,
+    dispatched_automation_json: Option<sqlx::types::Json<FullAutomationPayload>>,
     parameter_overrides: Option<serde_json::Value>,
 }
 
@@ -242,7 +242,7 @@ struct TaskRunDetailApiRow {
     id: i64,
     automation_id: i64,
     status: String,
-    dispatched_automation_json: Option<serde_json::Value>,
+    dispatched_automation_json: Option<sqlx::types::Json<FullAutomationPayload>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -257,7 +257,7 @@ pub async fn fetch_full_automation_json_with_overrides(
     db: &PgPool,
     automation_id: i64,
     overrides: Option<&std::collections::HashMap<String, String>>,
-) -> Result<serde_json::Value, sqlx::Error> {
+) -> Result<FullAutomationPayload, sqlx::Error> {
     let auto_row = sqlx::query_as::<_, AutomationMetaRow>(
         "SELECT id, name, description, status FROM automations WHERE id = $1",
     )
@@ -268,9 +268,15 @@ pub async fn fetch_full_automation_json_with_overrides(
     let (id, name, description, status) = match auto_row {
         Some(auto) => (auto.id, auto.name, auto.description, auto.status),
         None => {
-            return Ok(serde_json::json!({
-                "id": automation_id,
-            }));
+            return Ok(FullAutomationPayload {
+                id: automation_id,
+                name: String::new(),
+                description: String::new(),
+                status: String::new(),
+                parameters: std::collections::HashMap::new(),
+                variables: Vec::new(),
+                steps: Vec::new(),
+            });
         }
     };
 
@@ -695,7 +701,7 @@ pub async fn fetch_full_automation_json_with_overrides(
         }
     }
 
-    let payload = FullAutomationPayload {
+    Ok(FullAutomationPayload {
         id,
         name,
         description,
@@ -703,10 +709,6 @@ pub async fn fetch_full_automation_json_with_overrides(
         parameters: parameters_map,
         variables: variables_list,
         steps: steps_list,
-    };
-
-    serde_json::to_value(payload).map_err(|e| {
-        sqlx::Error::Protocol(format!("Failed to serialize automation payload: {}", e))
     })
 }
 
@@ -783,8 +785,8 @@ pub async fn get_next_assignment_handler(
             let existing_dispatched = row.dispatched_automation_json;
             let parameter_overrides = row.parameter_overrides;
 
-            let automation_json = match existing_dispatched {
-                Some(json) => json,
+            let automation_payload = match existing_dispatched {
+                Some(sqlx::types::Json(payload)) => payload,
                 None => {
                     let mut overrides_map = std::collections::HashMap::new();
                     if let Some(ref po_json) = parameter_overrides {
@@ -827,7 +829,7 @@ pub async fn get_next_assignment_handler(
                 "#,
             )
             .bind(worker.id)
-            .bind(&automation_json)
+            .bind(sqlx::types::Json(&automation_payload))
             .bind(task_run_id)
             .execute(&mut *tx)
             .await?;
@@ -843,7 +845,7 @@ pub async fn get_next_assignment_handler(
 
             return Ok(Json(NextAssignmentResponse::ExecuteAutomation {
                 task_run_id,
-                automation: automation_json,
+                automation: automation_payload,
             }));
         } else {
             tx.commit().await?;
@@ -1664,7 +1666,7 @@ pub async fn get_task_run_handler(
     match row {
         Some(row) => {
             let automation_json = match row.dispatched_automation_json {
-                Some(json) => json,
+                Some(sqlx::types::Json(payload)) => payload,
                 None => fetch_full_automation_json(&state.db, row.automation_id).await?,
             };
 
@@ -2106,16 +2108,22 @@ mod tests {
 
         let exec_resp = NextAssignmentResponse::ExecuteAutomation {
             task_run_id: 4821,
-            automation: serde_json::json!({
-                "id": 12,
-                "parameters": { "click_tolerance": 8 }
-            }),
+            automation: FullAutomationPayload {
+                id: 12,
+                name: "Test".to_string(),
+                description: "Test".to_string(),
+                status: "active".to_string(),
+                parameters: HashMap::from([("click_tolerance".to_string(), serde_json::json!(8))]),
+                variables: Vec::new(),
+                steps: Vec::new(),
+            },
         };
         let exec_json =
             serde_json::to_string(&exec_resp).expect("Failed to serialize ExecuteAutomation");
         assert!(exec_json.contains(r#""type":"execute_automation""#));
         assert!(exec_json.contains(r#""task_run_id":4821"#));
-        assert!(exec_json.contains(r#""automation":{"id":12,"parameters":{"click_tolerance":8}}"#));
+        assert!(exec_json.contains(r#""name":"Test""#));
+        assert!(exec_json.contains(r#""click_tolerance":8"#));
 
         let exec_deserialized: NextAssignmentResponse =
             serde_json::from_str(&exec_json).expect("Failed to deserialize ExecuteAutomation");
@@ -2124,57 +2132,57 @@ mod tests {
 
     #[test]
     fn test_execute_automation_full_payload_serialization() {
-        let full_automation = serde_json::json!({
-            "id": 12,
-            "name": "Sample Automation",
-            "description": "Automation for testing dispatch",
-            "status": "active",
-            "parameters": {
-                "click_tolerance": 8,
-                "auto_retry": true,
-                "label_prefix": "Test"
-            },
-            "variables": [
-                {
-                    "id": 1,
-                    "name": "bg_color",
-                    "var_type": "color",
-                    "description": "Background color"
-                }
-            ],
-            "steps": [
-                {
-                    "id": 501,
-                    "type": "mouse_click",
-                    "label": "Click main button",
-                    "post_delay_ms": 500,
-                    "x": 824,
-                    "y": 391,
-                    "x_variable_id": null,
-                    "y_variable_id": null,
-                    "button": "left",
-                    "click_type": "single"
+        let full_automation = FullAutomationPayload {
+            id: 12,
+            name: "Sample Automation".to_string(),
+            description: "Automation for testing dispatch".to_string(),
+            status: "active".to_string(),
+            parameters: HashMap::from([
+                ("click_tolerance".to_string(), serde_json::json!(8)),
+                ("auto_retry".to_string(), serde_json::json!(true)),
+                ("label_prefix".to_string(), serde_json::json!("Test")),
+            ]),
+            variables: vec![AutomationVariablePayload {
+                id: 1,
+                name: "bg_color".to_string(),
+                var_type: "color".to_string(),
+                description: "Background color".to_string(),
+            }],
+            steps: vec![
+                StepPayload::MouseClick {
+                    id: 501,
+                    label: Some("Click main button".to_string()),
+                    post_delay_ms: 500,
+                    x: Some(824),
+                    y: Some(391),
+                    x_variable_id: None,
+                    y_variable_id: None,
+                    region_variable_id: None,
+                    button: "left".to_string(),
+                    click_type: "single".to_string(),
                 },
-                {
-                    "id": 502,
-                    "type": "branch",
-                    "label": null,
-                    "post_delay_ms": 0,
-                    "condition": {
-                        "type": "pixel_rgb",
-                        "x": 824,
-                        "y": 391,
-                        "expected_r": 40,
-                        "expected_g": 180,
-                        "expected_b": 60,
-                        "expected_rgb": [40, 180, 60],
-                        "tolerance": 10
+                StepPayload::Branch {
+                    id: 502,
+                    label: None,
+                    post_delay_ms: 0,
+                    condition: BranchConditionPayload::PixelRgb {
+                        x: Some(824),
+                        y: Some(391),
+                        expected_r: 40,
+                        expected_g: 180,
+                        expected_b: 60,
+                        expected_rgb: [40, 180, 60],
+                        tolerance: 10,
+                        timeout_ms: 5000,
+                        retry_interval_ms: 250,
                     },
-                    "on_match_step_id": 509,
-                    "on_no_match_step_id": 503
-                }
-            ]
-        });
+                    on_match_step_id: Some(509),
+                    on_no_match_step_id: Some(503),
+                    timeout_ms: 5000,
+                    retry_interval_ms: 250,
+                },
+            ],
+        };
 
         let resp = NextAssignmentResponse::ExecuteAutomation {
             task_run_id: 4821,
@@ -2198,11 +2206,15 @@ mod tests {
         let resp = TaskRunResponse {
             task_run_id: 4821,
             status: "running".to_string(),
-            automation: serde_json::json!({
-                "id": 12,
-                "name": "Sample Automation",
-                "steps": []
-            }),
+            automation: FullAutomationPayload {
+                id: 12,
+                name: "Sample Automation".to_string(),
+                description: String::new(),
+                status: "active".to_string(),
+                parameters: HashMap::new(),
+                variables: Vec::new(),
+                steps: Vec::new(),
+            },
         };
 
         let json_str = serde_json::to_string(&resp).expect("Serialization failed");
