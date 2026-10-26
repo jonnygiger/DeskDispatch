@@ -413,6 +413,29 @@ pub async fn fetch_step_options_bundle(
     }
 }
 
+/// Slices a string slice `s` up to `max_chars` UTF-8 characters without allocation.
+/// Returns `(prefix_slice, suffix_ellipsis)` where `suffix_ellipsis` is `"..."` if truncated or `""` if not.
+#[inline]
+pub fn truncate_str(s: &str, max_chars: usize) -> (&str, &'static str) {
+    let trimmed = s.trim();
+    if trimmed.char_indices().nth(max_chars).is_some() {
+        let idx = trimmed
+            .char_indices()
+            .nth(max_chars.saturating_sub(3))
+            .map(|(i, _)| i)
+            .unwrap_or(trimmed.len());
+        (&trimmed[..idx], "...")
+    } else {
+        (trimmed, "")
+    }
+}
+
+/// Evaluates whether a form flag value matches common truthy HTML form inputs (`"on"`, `"true"`, `"1"`).
+#[inline]
+pub fn is_form_flag_enabled(val: Option<&str>) -> bool {
+    matches!(val, Some("on" | "true" | "1"))
+}
+
 pub fn generate_mouse_scroll_summary(
     direction: &str,
     scroll_amount: i32,
@@ -500,18 +523,7 @@ pub fn generate_mouse_click_summary(
 pub fn generate_type_text_summary(text_to_type: &str, delay_between_keys_ms: i32) -> String {
     use std::fmt::Write;
     let mut buf = String::with_capacity(64);
-    let trimmed = text_to_type.trim();
-
-    let (display_text, suffix) = if trimmed.char_indices().nth(30).is_some() {
-        let idx = trimmed
-            .char_indices()
-            .nth(27)
-            .map(|(i, _)| i)
-            .unwrap_or(trimmed.len());
-        (&trimmed[..idx], "...")
-    } else {
-        (trimmed, "")
-    };
+    let (display_text, suffix) = truncate_str(text_to_type, 30);
 
     if delay_between_keys_ms > 0 {
         let _ = write!(
@@ -580,17 +592,7 @@ pub fn generate_window_control_summary(
         "Control"
     };
 
-    let pattern_trimmed = match_pattern.trim();
-    let display_idx = pattern_trimmed
-        .char_indices()
-        .nth(27)
-        .map(|(i, _)| i)
-        .unwrap_or(pattern_trimmed.len());
-    let (display_pattern, suffix) = if display_idx < pattern_trimmed.len() {
-        (&pattern_trimmed[..display_idx], "...")
-    } else {
-        (pattern_trimmed, "")
-    };
+    let (display_pattern, suffix) = truncate_str(match_pattern, 30);
 
     if action.eq_ignore_ascii_case("wait") {
         let _ = write!(
@@ -622,16 +624,8 @@ pub fn generate_clipboard_control_summary(
         if let Some(var_name) = input_var_name.map(str::trim).filter(|s| !s.is_empty()) {
             let _ = write!(buf, "«{}»", var_name);
         } else if let Some(txt) = text_to_set.map(str::trim).filter(|s| !s.is_empty()) {
-            if txt.char_indices().nth(30).is_some() {
-                let idx = txt
-                    .char_indices()
-                    .nth(27)
-                    .map(|(i, _)| i)
-                    .unwrap_or(txt.len());
-                let _ = write!(buf, "\"{}\"...", &txt[..idx]);
-            } else {
-                let _ = write!(buf, "\"{}\"", txt);
-            }
+            let (display_txt, suffix) = truncate_str(txt, 30);
+            let _ = write!(buf, "\"{display_txt}{suffix}\"");
         } else {
             let _ = write!(buf, "text");
         }
@@ -1264,11 +1258,16 @@ pub async fn get_new_key_press_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "key_press".to_string())),
-        Query(EditStepQuery::default()),
+        csrf_token,
+        id,
+        None,
+        "key_press",
+        StepForm::default(),
+        None,
     )
     .await
 }
@@ -1279,11 +1278,16 @@ pub async fn get_new_ocr_extract_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "ocr_extract".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "ocr_extract",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1293,11 +1297,16 @@ pub async fn get_new_window_control_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "window_control".to_string())),
-        Query(EditStepQuery::default()),
+        csrf_token,
+        id,
+        None,
+        "window_control",
+        StepForm::default(),
+        None,
     )
     .await
 }
@@ -1307,11 +1316,16 @@ pub async fn get_new_type_text_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "type_text".to_string())),
-        Query(EditStepQuery::default()),
+        csrf_token,
+        id,
+        None,
+        "type_text",
+        StepForm::default(),
+        None,
     )
     .await
 }
@@ -1322,11 +1336,16 @@ pub async fn get_new_branch_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "branch".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "branch",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1337,11 +1356,16 @@ pub async fn get_new_find_bitmap_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "find_bitmap".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "find_bitmap",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1352,11 +1376,16 @@ pub async fn get_new_find_pixel_rgb_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "find_pixel_rgb".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "find_pixel_rgb",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1366,11 +1395,16 @@ pub async fn get_new_mouse_scroll_step_handler(
     user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "mouse_scroll".to_string())),
-        Query(EditStepQuery::default()),
+        csrf_token,
+        id,
+        None,
+        "mouse_scroll",
+        StepForm::default(),
+        None,
     )
     .await
 }
@@ -1381,11 +1415,16 @@ pub async fn get_new_mouse_click_step_handler(
     Path(id): Path<i64>,
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
-    get_new_step_handler(
-        State(state),
+    let csrf_token = user.csrf_token.clone();
+    render_step_form(
+        &state.db,
         user,
-        Path((id, "mouse_click".to_string())),
-        Query(query),
+        csrf_token,
+        id,
+        None,
+        "mouse_click",
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
@@ -1765,10 +1804,7 @@ async fn save_step_details(
             .await?;
         }
         "ocr_extract" => {
-            let set_task_out = matches!(
-                form.set_as_task_output.as_deref(),
-                Some("on" | "true" | "1")
-            );
+            let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
 
             sqlx::query(
                 r#"
@@ -1797,10 +1833,7 @@ async fn save_step_details(
             .await?;
         }
         "clipboard_control" => {
-            let set_task_out = matches!(
-                form.set_as_task_output.as_deref(),
-                Some("on" | "true" | "1")
-            );
+            let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
             let action = match form.action.as_deref().unwrap_or("set_text") {
                 "get_text" => "get_text",
                 "clear" => "clear",
@@ -1925,9 +1958,7 @@ async fn render_step_form(
         .into_response(),
         "clipboard_control" => {
             let variables = fetch_automation_variables(db, automation_id).await;
-            let set_task_out = form.set_as_task_output.as_deref() == Some("on")
-                || form.set_as_task_output.as_deref() == Some("true")
-                || form.set_as_task_output.as_deref() == Some("1");
+            let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
 
             HtmlTemplate(StepClipboardControlTemplate {
                 user,
@@ -2074,7 +2105,7 @@ async fn render_step_form(
         "ocr_extract" => {
             let variables = fetch_automation_variables(db, automation_id).await;
             let set_task_out = match form.set_as_task_output.as_deref() {
-                Some(v) => v == "on" || v == "true" || v == "1",
+                Some(v) => is_form_flag_enabled(Some(v)),
                 None => true,
             };
 
