@@ -89,7 +89,8 @@ struct TaskRunDetailRow {
     output_type: Option<String>,
     output_value: Option<String>,
     parameter_overrides: Option<serde_json::Value>,
-    dispatched_automation_json: Option<serde_json::Value>,
+    dispatched_automation_json:
+        Option<sqlx::types::Json<deskdispatch_protocol::FullAutomationPayload>>,
 }
 
 impl TaskRunDetailRow {
@@ -640,7 +641,10 @@ pub async fn get_run_detail_handler(
     let worker_screen_height: u32 = run_row.worker_screen_height.unwrap_or(1080).max(1) as u32;
 
     let parameter_overrides_json = run_row.parameter_overrides.clone();
-    let dispatched_json = run_row.dispatched_automation_json.clone();
+    let dispatched_json = run_row
+        .dispatched_automation_json
+        .as_ref()
+        .map(|j| serde_json::to_value(&j.0).unwrap_or_default());
 
     let run_item = run_row.into_item();
 
