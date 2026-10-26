@@ -134,15 +134,6 @@ pub struct SchedulesIndexTemplate {
     pub schedules: Vec<ScheduleItem>,
 }
 
-pub struct ScheduleFormContext<'a> {
-    pub user: AuthUser,
-    pub is_edit: bool,
-    pub schedule_id: Option<i64>,
-    pub form: &'a ScheduleForm,
-    pub automations: Vec<ScheduleAutomationOption>,
-    pub worker_groups: Vec<ScheduleWorkerGroupOption>,
-}
-
 #[derive(Template)]
 #[template(path = "schedules/form.html")]
 pub struct ScheduleFormTemplate {
@@ -173,24 +164,31 @@ impl ScheduleFormTemplate {
         self.worker_group_id == Some(*id)
     }
 
-    pub fn build_error(ctx: ScheduleFormContext<'_>, error: impl Into<String>) -> Self {
-        let (name, cron, tz, wol_warmup) = ctx.form.normalized();
+    pub fn build_error(
+        user: AuthUser,
+        schedule_id: Option<i64>,
+        form: &ScheduleForm,
+        automations: Vec<ScheduleAutomationOption>,
+        worker_groups: Vec<ScheduleWorkerGroupOption>,
+        error: impl Into<String>,
+    ) -> Self {
+        let (name, cron, tz, wol_warmup) = form.normalized();
         Self {
-            user: ctx.user,
-            is_edit: ctx.is_edit,
-            schedule_id: ctx.schedule_id,
-            automation_id: Some(ctx.form.automation_id),
+            user,
+            is_edit: schedule_id.is_some(),
+            schedule_id,
+            automation_id: Some(form.automation_id),
             name: name.to_string(),
             cron_expression: cron.to_string(),
             timezone: tz.to_string(),
-            worker_group_id: ctx.form.worker_group_id,
-            overlap_policy: ctx.form.overlap_policy.clone(),
-            max_queue_age_secs: ctx.form.max_queue_age_secs,
-            wol_enabled: ctx.form.wol_enabled,
+            worker_group_id: form.worker_group_id,
+            overlap_policy: form.overlap_policy.clone(),
+            max_queue_age_secs: form.max_queue_age_secs,
+            wol_enabled: form.wol_enabled,
             wol_warmup_secs: wol_warmup,
-            is_enabled: ctx.form.is_enabled,
-            automations: ctx.automations,
-            worker_groups: ctx.worker_groups,
+            is_enabled: form.is_enabled,
+            automations,
+            worker_groups,
             error: Some(error.into()),
         }
     }
@@ -259,19 +257,15 @@ async fn validate_schedule_form<'a>(
     schedule_id: Option<i64>,
 ) -> Result<ValidatedScheduleInput<'a>, ScheduleValidationError> {
     let (name, cron_expression, timezone, wol_warmup_secs) = form.normalized();
-    let is_edit = schedule_id.is_some();
 
     if name.is_empty() || cron_expression.is_empty() {
         let (automations, worker_groups) = fetch_schedule_options(db).await;
         let err_template = ScheduleFormTemplate::build_error(
-            ScheduleFormContext {
-                user,
-                is_edit,
-                schedule_id,
-                form,
-                automations,
-                worker_groups,
-            },
+            user,
+            schedule_id,
+            form,
+            automations,
+            worker_groups,
             "Schedule Name and Cron Expression are required.",
         );
         return Err(ScheduleValidationError(Box::new(HtmlTemplate(
@@ -285,14 +279,11 @@ async fn validate_schedule_form<'a>(
         Err(err_msg) => {
             let (automations, worker_groups) = fetch_schedule_options(db).await;
             let err_template = ScheduleFormTemplate::build_error(
-                ScheduleFormContext {
-                    user,
-                    is_edit,
-                    schedule_id,
-                    form,
-                    automations,
-                    worker_groups,
-                },
+                user,
+                schedule_id,
+                form,
+                automations,
+                worker_groups,
                 err_msg,
             );
             return Err(ScheduleValidationError(Box::new(HtmlTemplate(
@@ -502,6 +493,10 @@ impl CronPattern {
     }
 
     pub fn next_after<Tz: TimeZone>(&self, from_dt: &DateTime<Tz>) -> Result<DateTime<Tz>, String> {
+        const ONE_MIN: Duration = Duration::minutes(1);
+        const ONE_HOUR: Duration = Duration::hours(1);
+        const ONE_DAY: Duration = Duration::days(1);
+
         let start_naive = from_dt.naive_local();
         let start_sec_truncated = start_naive
             .with_second(0)
@@ -510,19 +505,22 @@ impl CronPattern {
 
         let tz = from_dt.timezone();
         let mut current = match tz.from_local_datetime(&start_sec_truncated) {
-            chrono::LocalResult::Single(dt) => dt + Duration::minutes(1),
-            chrono::LocalResult::Ambiguous(dt1, _) => dt1 + Duration::minutes(1),
+            chrono::LocalResult::Single(dt) => dt + ONE_MIN,
+            chrono::LocalResult::Ambiguous(dt1, _) => dt1 + ONE_MIN,
             chrono::LocalResult::None => {
-                tz.from_utc_datetime(&(start_sec_truncated.and_utc().naive_utc()))
-                    + Duration::minutes(1)
+                tz.from_utc_datetime(&(start_sec_truncated.and_utc().naive_utc())) + ONE_MIN
             }
         };
 
-        let resolve_local = |naive: &chrono::NaiveDateTime| -> Option<DateTime<Tz>> {
+        #[inline]
+        fn resolve_local_dt<Tz: TimeZone>(
+            tz: &Tz,
+            naive: &chrono::NaiveDateTime,
+        ) -> Option<DateTime<Tz>> {
             tz.from_local_datetime(naive)
                 .single()
                 .or_else(|| tz.from_local_datetime(naive).latest())
-        };
+        }
 
         let all_days_mask = 0xFFFFFFFE_u32; // bits 1..=31
         let all_weekdays_mask = 0x7F; // bits 0..=6
@@ -551,12 +549,12 @@ impl CronPattern {
                 if let Some(naive_next) = chrono::NaiveDate::from_ymd_opt(next_y, next_m, 1)
                     .and_then(|d| d.and_hms_opt(0, 0, 0))
                 {
-                    if let Some(next_dt) = resolve_local(&naive_next) {
+                    if let Some(next_dt) = resolve_local_dt(&tz, &naive_next) {
                         current = next_dt;
                         continue;
                     }
                 }
-                current += Duration::days(1);
+                current += ONE_DAY;
                 continue;
             }
 
@@ -576,12 +574,12 @@ impl CronPattern {
                     .succ_opt()
                     .and_then(|d| d.and_hms_opt(0, 0, 0))
                 {
-                    if let Some(next_dt) = resolve_local(&naive_next) {
+                    if let Some(next_dt) = resolve_local_dt(&tz, &naive_next) {
                         current = next_dt;
                         continue;
                     }
                 }
-                current += Duration::days(1);
+                current += ONE_DAY;
                 continue;
             }
 
@@ -609,12 +607,12 @@ impl CronPattern {
                     });
 
                 if let Some(naive_next) = naive_next {
-                    if let Some(next_dt) = resolve_local(&naive_next) {
+                    if let Some(next_dt) = resolve_local_dt(&tz, &naive_next) {
                         current = next_dt;
                         continue;
                     }
                 }
-                current += Duration::hours(1);
+                current += ONE_HOUR;
                 continue;
             }
 
@@ -633,20 +631,15 @@ impl CronPattern {
 
                 let naive_next = next_m_opt
                     .and_then(|m| current.naive_local().date().and_hms_opt(hour, m, 0))
-                    .or_else(|| {
-                        current
-                            .naive_local()
-                            .with_minute(0)
-                            .map(|dt| dt + Duration::hours(1))
-                    });
+                    .or_else(|| current.naive_local().with_minute(0).map(|dt| dt + ONE_HOUR));
 
                 if let Some(naive_next) = naive_next {
-                    if let Some(next_dt) = resolve_local(&naive_next) {
+                    if let Some(next_dt) = resolve_local_dt(&tz, &naive_next) {
                         current = next_dt;
                         continue;
                     }
                 }
-                current += Duration::minutes(1);
+                current += ONE_MIN;
                 continue;
             }
 
@@ -815,14 +808,11 @@ pub async fn post_create_schedule_handler(
             tracing::error!("Failed to create schedule: {e}");
             let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
             return HtmlTemplate(ScheduleFormTemplate::build_error(
-                ScheduleFormContext {
-                    user,
-                    is_edit: false,
-                    schedule_id: None,
-                    form: &form,
-                    automations,
-                    worker_groups,
-                },
+                user,
+                None,
+                &form,
+                automations,
+                worker_groups,
                 "Database error creating schedule.",
             ))
             .into_response();
@@ -957,14 +947,11 @@ pub async fn post_edit_schedule_handler(
         tracing::error!("Failed to update schedule: {e}");
         let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
         return HtmlTemplate(ScheduleFormTemplate::build_error(
-            ScheduleFormContext {
-                user,
-                is_edit: true,
-                schedule_id: Some(id),
-                form: &form,
-                automations,
-                worker_groups,
-            },
+            user,
+            Some(id),
+            &form,
+            automations,
+            worker_groups,
             "Database error updating schedule.",
         ))
         .into_response();
@@ -1121,59 +1108,54 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     .fetch_all(&mut *tx)
     .await?;
 
-    for sched in wol_due_schedules {
-        let schedule_id = sched.id;
-        let worker_group_id = sched.worker_group_id;
+    if !wol_due_schedules.is_empty() {
+        let wol_schedule_ids: Vec<i64> = wol_due_schedules.iter().map(|s| s.id).collect();
 
-        let target_macs: Vec<String> = match worker_group_id {
-            Some(group_id) => {
-                sqlx::query_scalar(
-                    r#"
-                    SELECT w.mac_address
-                    FROM task_worker_pcs w
-                    JOIN worker_group_members m ON w.id = m.worker_id
-                    WHERE m.group_id = $1
-                      AND w.mac_address IS NOT NULL
-                      AND w.mac_address != ''
-                    "#,
-                )
-                .bind(group_id)
-                .fetch_all(&mut *tx)
-                .await?
-            }
-            None => {
-                sqlx::query_scalar(
-                    r#"
-                    SELECT mac_address
-                    FROM task_worker_pcs
-                    WHERE mac_address IS NOT NULL
-                      AND mac_address != ''
-                    "#,
-                )
-                .fetch_all(&mut *tx)
-                .await?
-            }
-        };
+        #[derive(Debug, sqlx::FromRow)]
+        struct WolTargetRow {
+            schedule_id: i64,
+            mac_address: String,
+        }
 
-        for mac in target_macs {
-            if let Err(e) = crate::wol::send_wol_packet(&mac).await {
+        // Single combined query fetching target MAC addresses for all due WOL schedules
+        let wol_targets = sqlx::query_as::<_, WolTargetRow>(
+            r#"
+            SELECT DISTINCT s.id AS schedule_id, w.mac_address
+            FROM schedules s
+            LEFT JOIN worker_group_members m ON s.worker_group_id = m.group_id
+            JOIN task_worker_pcs w ON (
+                (s.worker_group_id IS NOT NULL AND m.worker_id = w.id)
+                OR (s.worker_group_id IS NULL)
+            )
+            WHERE s.id = ANY($1)
+              AND w.mac_address IS NOT NULL
+              AND w.mac_address != ''
+            "#,
+        )
+        .bind(&wol_schedule_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        for target in wol_targets {
+            if let Err(e) = crate::wol::send_wol_packet(&target.mac_address).await {
                 tracing::warn!(
-                    schedule_id = schedule_id,
-                    mac = %mac,
+                    schedule_id = target.schedule_id,
+                    mac = %target.mac_address,
                     error = %e,
                     "Failed to send schedule WOL warm-up magic packet"
                 );
             } else {
                 tracing::info!(
-                    schedule_id = schedule_id,
-                    mac = %mac,
+                    schedule_id = target.schedule_id,
+                    mac = %target.mac_address,
                     "Dispatched schedule WOL warm-up magic packet"
                 );
             }
         }
 
-        sqlx::query("UPDATE schedules SET last_wol_sent_at = now() WHERE id = $1")
-            .bind(schedule_id)
+        // Batch update all processed WOL schedules in one statement
+        sqlx::query("UPDATE schedules SET last_wol_sent_at = now() WHERE id = ANY($1)")
+            .bind(&wol_schedule_ids)
             .execute(&mut *tx)
             .await?;
     }
@@ -1193,10 +1175,46 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     .fetch_all(&mut *tx)
     .await?;
 
+    if due_schedules.is_empty() {
+        tx.commit().await?;
+        return Ok(0);
+    }
+
+    // Batch query active task runs for all due schedules with overlap_policy='skip'
+    let skip_sched_ids: Vec<i64> = due_schedules
+        .iter()
+        .filter(|s| s.overlap_policy == "skip")
+        .map(|s| s.id)
+        .collect();
+
+    let active_sched_set: std::collections::HashSet<i64> = if !skip_sched_ids.is_empty() {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT DISTINCT schedule_id
+            FROM task_runs
+            WHERE schedule_id = ANY($1)
+              AND status IN ('queued', 'running', 'cancelling')
+            "#,
+        )
+        .bind(&skip_sched_ids)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    let now = Utc::now();
     let mut queued_count = 0u64;
 
+    let mut queued_sched_ids = Vec::new();
+    let mut queued_next_runs = Vec::new();
+
+    let mut skipped_sched_ids = Vec::new();
+    let mut skipped_next_runs = Vec::new();
+
     for sched in due_schedules {
-        let now = Utc::now();
         let mut should_queue = true;
 
         // 1. Check max_queue_age_secs expiry
@@ -1214,27 +1232,12 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
         }
 
         // 2. Check overlap policy if 'skip'
-        if should_queue && sched.overlap_policy == "skip" {
-            let active_run_exists: bool = sqlx::query_scalar(
-                r#"
-                SELECT EXISTS(
-                    SELECT 1 FROM task_runs
-                    WHERE schedule_id = $1
-                      AND status IN ('queued', 'running', 'cancelling')
-                )
-                "#,
-            )
-            .bind(sched.id)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            if active_run_exists {
-                tracing::warn!(
-                    schedule_id = sched.id,
-                    "Active task run exists for schedule with overlap_policy='skip'; skipping execution"
-                );
-                should_queue = false;
-            }
+        if should_queue && sched.overlap_policy == "skip" && active_sched_set.contains(&sched.id) {
+            tracing::warn!(
+                schedule_id = sched.id,
+                "Active task run exists for schedule with overlap_policy='skip'; skipping execution"
+            );
+            should_queue = false;
         }
 
         if should_queue {
@@ -1268,17 +1271,46 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
             }
         };
 
-        let update_sql = if should_queue {
-            "UPDATE schedules SET last_run_at = now(), next_run_at = $1 WHERE id = $2"
+        if should_queue {
+            queued_sched_ids.push(sched.id);
+            queued_next_runs.push(next_run);
         } else {
-            "UPDATE schedules SET next_run_at = $1 WHERE id = $2"
-        };
+            skipped_sched_ids.push(sched.id);
+            skipped_next_runs.push(next_run);
+        }
+    }
 
-        sqlx::query(update_sql)
-            .bind(next_run)
-            .bind(sched.id)
-            .execute(&mut *tx)
-            .await?;
+    // Batch update schedules with queued task runs
+    if !queued_sched_ids.is_empty() {
+        sqlx::query(
+            r#"
+            UPDATE schedules AS s
+            SET last_run_at = now(),
+                next_run_at = u.next_run
+            FROM UNNEST($1::BIGINT[], $2::TIMESTAMPTZ[]) AS u(id, next_run)
+            WHERE s.id = u.id
+            "#,
+        )
+        .bind(&queued_sched_ids)
+        .bind(&queued_next_runs)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // Batch update schedules with skipped task runs
+    if !skipped_sched_ids.is_empty() {
+        sqlx::query(
+            r#"
+            UPDATE schedules AS s
+            SET next_run_at = u.next_run
+            FROM UNNEST($1::BIGINT[], $2::TIMESTAMPTZ[]) AS u(id, next_run)
+            WHERE s.id = u.id
+            "#,
+        )
+        .bind(&skipped_sched_ids)
+        .bind(&skipped_next_runs)
+        .execute(&mut *tx)
+        .await?;
     }
 
     tx.commit().await?;
