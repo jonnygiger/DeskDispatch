@@ -74,40 +74,44 @@ fn test_schedule_wol_template_rendering() {
 
 struct WolCleanupGuard {
     pool: sqlx::PgPool,
-    admin_id: i64,
-    worker_id: i64,
+    user_ids: Vec<i64>,
+    worker_ids: Vec<i64>,
 }
 
 impl Drop for WolCleanupGuard {
     fn drop(&mut self) {
         let pool = self.pool.clone();
-        let admin_id = self.admin_id;
-        let worker_id = self.worker_id;
+        let user_ids = self.user_ids.clone();
+        let worker_ids = self.worker_ids.clone();
 
         let cleanup = async move {
-            let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1")
-                .bind(worker_id)
-                .execute(&pool)
-                .await;
-            let _ = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
-                .bind(admin_id)
-                .execute(&pool)
-                .await;
-            let _ = sqlx::query("DELETE FROM users WHERE id = $1")
-                .bind(admin_id)
-                .execute(&pool)
-                .await;
+            if !worker_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = ANY($1)")
+                    .bind(&worker_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !user_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM sessions WHERE user_id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+            }
         };
 
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
+        let _ = std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
-            rt.block_on(cleanup);
+            {
+                rt.block_on(cleanup);
+            }
         })
-        .join()
-        .unwrap();
+        .join();
     }
 }
 
@@ -168,10 +172,24 @@ async fn test_worker_mac_and_manual_wol_wake() {
     .await
     .unwrap();
 
+    // Create worker without MAC address
+    let no_mac_hostname = format!("no-mac-pc-{}", Uuid::new_v4().simple());
+    let no_mac_worker_id: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO task_worker_pcs (hostname, display_name, status)
+        VALUES ($1, 'No MAC Target PC', 'offline')
+        RETURNING id
+        "#,
+    )
+    .bind(&no_mac_hostname)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
     let _cleanup_guard = WolCleanupGuard {
         pool: pool.clone(),
-        admin_id,
-        worker_id,
+        user_ids: vec![admin_id],
+        worker_ids: vec![worker_id, no_mac_worker_id],
     };
 
     let config = Config::from_env().unwrap();
@@ -193,16 +211,16 @@ async fn test_worker_mac_and_manual_wol_wake() {
 
     let app = deskdispatch::build_router(state);
 
-    // POST /workers/{id}/wake
     let csrf_token = generate_csrf_token(admin_session_id, config.session_secret.expose_secret());
     let wake_form = format!("csrf_token={}", csrf_token);
 
+    // 1. POST /workers/{id}/wake for worker with valid MAC address
     let req = Request::builder()
         .method("POST")
         .uri(format!("/workers/{}/wake", worker_id))
         .header(header::COOKIE, &admin_cookie)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from(wake_form))
+        .body(Body::from(wake_form.clone()))
         .unwrap();
 
     let response = app.clone().oneshot(req).await.unwrap();
@@ -214,4 +232,23 @@ async fn test_worker_mac_and_manual_wol_wake() {
         .to_str()
         .unwrap();
     assert!(location.contains("wake_success=true"));
+
+    // 2. POST /workers/{id}/wake for worker without MAC address
+    let req_no_mac = Request::builder()
+        .method("POST")
+        .uri(format!("/workers/{}/wake", no_mac_worker_id))
+        .header(header::COOKIE, &admin_cookie)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(wake_form))
+        .unwrap();
+
+    let response_no_mac = app.oneshot(req_no_mac).await.unwrap();
+    assert_eq!(response_no_mac.status(), StatusCode::SEE_OTHER);
+    let location_no_mac = response_no_mac
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(location_no_mac.contains("wake_error=No+MAC+address+configured+for+this+worker"));
 }
