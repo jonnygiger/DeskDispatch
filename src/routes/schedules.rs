@@ -713,6 +713,8 @@ pub async fn get_schedules_handler(
     HtmlTemplate(SchedulesIndexTemplate { user, schedules }).into_response()
 }
 
+/// Helper function to fetch schedule form dropdown options (automations and worker groups)
+/// concurrently using `tokio::join!`. This reduces HTTP response latency by avoiding sequential database round-trips.
 async fn fetch_schedule_options(
     db: &sqlx::PgPool,
 ) -> (
@@ -770,9 +772,56 @@ pub async fn post_create_schedule_handler(
     RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<ScheduleForm>,
 ) -> impl IntoResponse {
-    let validated = match validate_schedule_form(&state.db, user.clone(), &form, None).await {
-        Ok(v) => v,
-        Err(err_resp) => return err_resp.into_response(),
+    let name = form.name.trim();
+    let cron_expression = form.cron_expression.trim();
+    let timezone = if form.timezone.trim().is_empty() {
+        "UTC"
+    } else {
+        form.timezone.trim()
+    };
+    let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
+
+    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
+
+    if name.is_empty() || cron_expression.is_empty() {
+        return HtmlTemplate(ScheduleFormTemplate::build_error(
+            ScheduleFormErrorCtx {
+                user,
+                is_edit: false,
+                schedule_id: None,
+                form: &form,
+                wol_warmup_secs,
+                automations,
+                worker_groups,
+            },
+            "Schedule Name and Cron Expression are required.",
+        ))
+        .into_response();
+    }
+
+    let now = Utc::now();
+    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
+        Ok(next_dt) => next_dt,
+        Err(err_msg) => {
+            return HtmlTemplate(ScheduleFormTemplate::build_error(
+                ScheduleFormErrorCtx {
+                    user,
+                    is_edit: false,
+                    schedule_id: None,
+                    form: &form,
+                    wol_warmup_secs,
+                    automations,
+                    worker_groups,
+                },
+                err_msg,
+            ))
+            .into_response();
+        }
+    };
+    let next_run_at = if form.is_enabled {
+        Some(parsed_next_run_at)
+    } else {
+        None
     };
 
     let row_res = sqlx::query_scalar::<_, i64>(
@@ -906,9 +955,56 @@ pub async fn post_edit_schedule_handler(
     RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<ScheduleForm>,
 ) -> impl IntoResponse {
-    let validated = match validate_schedule_form(&state.db, user.clone(), &form, Some(id)).await {
-        Ok(v) => v,
-        Err(err_resp) => return err_resp.into_response(),
+    let name = form.name.trim();
+    let cron_expression = form.cron_expression.trim();
+    let timezone = if form.timezone.trim().is_empty() {
+        "UTC"
+    } else {
+        form.timezone.trim()
+    };
+    let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
+
+    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
+
+    if name.is_empty() || cron_expression.is_empty() {
+        return HtmlTemplate(ScheduleFormTemplate::build_error(
+            ScheduleFormErrorCtx {
+                user,
+                is_edit: true,
+                schedule_id: Some(id),
+                form: &form,
+                wol_warmup_secs,
+                automations,
+                worker_groups,
+            },
+            "Schedule Name and Cron Expression are required.",
+        ))
+        .into_response();
+    }
+
+    let now = Utc::now();
+    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
+        Ok(next_dt) => next_dt,
+        Err(err_msg) => {
+            return HtmlTemplate(ScheduleFormTemplate::build_error(
+                ScheduleFormErrorCtx {
+                    user,
+                    is_edit: true,
+                    schedule_id: Some(id),
+                    form: &form,
+                    wol_warmup_secs,
+                    automations,
+                    worker_groups,
+                },
+                err_msg,
+            ))
+            .into_response();
+        }
+    };
+    let next_run_at = if form.is_enabled {
+        Some(parsed_next_run_at)
+    } else {
+        None
     };
 
     let update_res = sqlx::query(

@@ -595,6 +595,43 @@ mod tests {
     }
 
     #[test]
+    fn test_escape_css_url_and_style_generation_edge_cases() {
+        // 1. Safe URLs borrow original string slice without allocation
+        let safe_url = "http://example.com/media/screenshots/step_100.png?v=2&auth=abc_123";
+        let safe_escaped = escape_css_url(safe_url);
+        assert!(matches!(safe_escaped, Cow::Borrowed(_)));
+        assert_eq!(safe_escaped, safe_url);
+
+        // 2. Unsafe characters: backslash (\), double quotes ("), newlines (\n, \r), form feed (\x0C), parentheses ( ( ) ), angle brackets (< >)
+        let unsafe_url = "http://example.com/path\\file\"name.png?a=(1)\r\n&b=\x0C<script>alert(1)</script>";
+        let unsafe_escaped = escape_css_url(unsafe_url);
+        assert!(matches!(unsafe_escaped, Cow::Owned(_)));
+        assert_eq!(
+            unsafe_escaped,
+            "http://example.com/path\\\\file\\\"name.png?a=%281%29&b=%3Cscript%3Ealert%281%29%3C/script%3E"
+        );
+
+        // 3. Verify style generation methods with malicious / CSS-unsafe input
+        let malicious_url = "http://example.com/test\\path'\"_1\r\n\x0C.png?query=(val)&tag=<script>";
+        let mag = ImageMagnifier::new(malicious_url, 1000, 500, Some(100), Some(200));
+
+        let normal = mag.normal_style();
+        assert!(normal.contains("url('http://example.com/test\\\\path\\'\\\"_1.png?query=%28val%29&tag=%3Cscript%3E')"));
+        assert!(!normal.contains('\r'));
+        assert!(!normal.contains('\n'));
+
+        let zoom = mag.zoom400_style();
+        assert!(zoom.contains("url('http://example.com/test\\\\path\\'\\\"_1.png?query=%28val%29&tag=%3Cscript%3E')"));
+        assert!(!zoom.contains('\r'));
+        assert!(!zoom.contains('\n'));
+
+        let grid = mag.grid_style();
+        assert!(grid.contains("--grid-bg-url: url('http://example.com/test\\\\path\\'\\\"_1.png?query=%28val%29&tag=%3Cscript%3E');"));
+        assert!(!grid.contains('\r'));
+        assert!(!grid.contains('\n'));
+    }
+
+    #[test]
     fn test_template_rendering() {
         let mag = ImageMagnifier::new("http://example.com/test.jpg", 800, 600, Some(50), Some(50));
 
