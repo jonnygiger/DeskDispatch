@@ -43,24 +43,24 @@ pub struct HeartbeatResponse {
     pub heartbeat_interval_secs: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NextAssignmentResponse {
     None,
     ExecuteAutomation {
         task_run_id: i64,
-        automation: serde_json::Value,
+        automation: FullAutomationPayload,
     },
     StartRecording {
         recording_session_id: i64,
     },
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct TaskRunResponse {
     pub task_run_id: i64,
     pub status: String,
-    pub automation: serde_json::Value,
+    pub automation: FullAutomationPayload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

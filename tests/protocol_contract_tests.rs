@@ -223,11 +223,15 @@ fn test_next_assignment_response_contract() {
     // 2. ExecuteAutomation assignment
     let resp_exec = NextAssignmentResponse::ExecuteAutomation {
         task_run_id: 101,
-        automation: serde_json::json!({
-            "id": 1,
-            "name": "Test Automation",
-            "steps": []
-        }),
+        automation: FullAutomationPayload {
+            id: 1,
+            name: "Test Automation".to_string(),
+            description: String::new(),
+            status: "active".to_string(),
+            parameters: std::collections::HashMap::new(),
+            variables: Vec::new(),
+            steps: Vec::new(),
+        },
     };
     let json_exec = serde_json::to_value(&resp_exec).unwrap();
     assert_eq!(json_exec["type"], "execute_automation");
