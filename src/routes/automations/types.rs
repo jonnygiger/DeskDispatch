@@ -864,6 +864,22 @@ pub struct StepForm {
     pub window_check_type: Option<String>,
 }
 
+impl StepForm {
+    pub fn from_query(query: EditStepQuery) -> Self {
+        Self {
+            reference_bitmap_id: query.reference_bitmap_id,
+            search_x: query.search_x,
+            search_y: query.search_y,
+            search_width: query.search_width,
+            search_height: query.search_height,
+            condition_type: query.condition_type,
+            x: query.x,
+            y: query.y,
+            ..Default::default()
+        }
+    }
+}
+
 pub type MouseClickStepForm = StepForm;
 
 #[cfg(test)]
