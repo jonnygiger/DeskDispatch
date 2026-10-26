@@ -362,22 +362,20 @@ pub async fn fetch_automation_step_options(
     .await
     .unwrap_or_default();
 
-    raw_steps
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, row)| {
-            if exclude_step_id == Some(row.id) {
-                return None;
-            }
-            Some(StepOption {
-                id: row.id,
-                step_type: row.step_type,
-                label: row.label,
-                position: row.position,
-                display_number: idx + 1,
-            })
-        })
-        .collect()
+    let mut options = Vec::with_capacity(raw_steps.len());
+    for (idx, row) in raw_steps.into_iter().enumerate() {
+        if exclude_step_id == Some(row.id) {
+            continue;
+        }
+        options.push(StepOption {
+            id: row.id,
+            step_type: row.step_type,
+            label: row.label,
+            position: row.position,
+            display_number: idx + 1,
+        });
+    }
+    options
 }
 
 pub async fn fetch_available_bitmaps(db: &PgPool, automation_id: i64) -> Vec<BitmapOption> {
@@ -1236,19 +1234,15 @@ pub async fn get_new_step_handler(
     Query(query): Query<EditStepQuery>,
 ) -> impl IntoResponse {
     let csrf_token = user.csrf_token.clone();
-    let form = StepForm {
-        reference_bitmap_id: query.reference_bitmap_id,
-        search_x: query.search_x,
-        search_y: query.search_y,
-        search_width: query.search_width,
-        search_height: query.search_height,
-        condition_type: query.condition_type,
-        x: query.x,
-        y: query.y,
-        ..Default::default()
-    };
     render_step_form(
-        &state.db, user, csrf_token, id, None, &step_type, form, None,
+        &state.db,
+        user,
+        csrf_token,
+        id,
+        None,
+        &step_type,
+        StepForm::from_query(query),
+        None,
     )
     .await
 }
