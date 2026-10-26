@@ -3659,6 +3659,109 @@ mod tests {
         // Valid bitmap branch form
         form.reference_bitmap_id = Some(10);
         assert_eq!(validate_branch_form(&form, "bitmap"), None);
+
+        // Window state branch condition - missing pattern
+        form.condition_type = Some("window_state".to_string());
+        form.window_match_pattern = None;
+        assert_eq!(
+            validate_branch_form(&form, "window_state"),
+            Some("Please provide a window title match pattern for window state condition.".to_string())
+        );
+
+        // Window state branch condition - whitespace-only pattern
+        form.window_match_pattern = Some("   ".to_string());
+        assert_eq!(
+            validate_branch_form(&form, "window_state"),
+            Some("Please provide a window title match pattern for window state condition.".to_string())
+        );
+
+        // Window state branch condition - valid pattern
+        form.window_match_pattern = Some("Calculator".to_string());
+        assert_eq!(validate_branch_form(&form, "window_state"), None);
+    }
+
+    #[test]
+    fn test_generate_window_control_summary() {
+        assert_eq!(
+            generate_window_control_summary("activate", "Notepad", "contains", 5000),
+            "Focus window matching \"Notepad\" (contains)"
+        );
+        assert_eq!(
+            generate_window_control_summary("close", "Calculator", "exact", 5000),
+            "Close window matching \"Calculator\" (exact)"
+        );
+        assert_eq!(
+            generate_window_control_summary("minimize", "Terminal", "starts_with", 5000),
+            "Minimize window matching \"Terminal\" (starts_with)"
+        );
+        assert_eq!(
+            generate_window_control_summary("maximize", "Browser", "contains", 5000),
+            "Maximize window matching \"Browser\" (contains)"
+        );
+        assert_eq!(
+            generate_window_control_summary("wait", "Setup Wizard", "contains", 5000),
+            "Wait for window matching \"Setup Wizard\" (contains) [timeout 5.0s]"
+        );
+        assert_eq!(
+            generate_window_control_summary("ACTIVATE", "Notepad", "contains", 5000),
+            "Focus window matching \"Notepad\" (contains)"
+        );
+        assert_eq!(
+            generate_window_control_summary("wait", "Dialog", "exact", 12500),
+            "Wait for window matching \"Dialog\" (exact) [timeout 12.5s]"
+        );
+        assert_eq!(
+            generate_window_control_summary(
+                "activate",
+                "Very Long Application Title That Exceeds Thirty Chars Limit",
+                "contains",
+                5000
+            ),
+            "Focus window matching \"Very Long Application Title...\" (contains)"
+        );
+        assert_eq!(
+            generate_window_control_summary("unknown_action", "App", "contains", 5000),
+            "Control window matching \"App\" (contains)"
+        );
+    }
+
+    #[test]
+    fn test_generate_mouse_scroll_summary() {
+        // 1. Region variable target
+        assert_eq!(
+            generate_mouse_scroll_summary("down", 5, None, None, None, None, Some("scroll_area")),
+            "Scroll down (5 ticks) at region «scroll_area» center"
+        );
+
+        // 2. Fixed coordinates
+        assert_eq!(
+            generate_mouse_scroll_summary("up", 3, Some(100), Some(200), None, None, None),
+            "Scroll up (3 ticks) at (100, 200)"
+        );
+
+        // 3. Variable coordinates
+        assert_eq!(
+            generate_mouse_scroll_summary("left", 2, None, None, Some("pos_x"), Some("pos_y"), None),
+            "Scroll left (2 ticks) at («pos_x», «pos_y»)"
+        );
+
+        // 4. Mixed coordinates (fixed X, variable Y)
+        assert_eq!(
+            generate_mouse_scroll_summary("right", 1, Some(150), None, None, Some("pos_y"), None),
+            "Scroll right (1 ticks) at (150, «pos_y»)"
+        );
+
+        // 5. Partial missing coordinate (fixed X, missing Y)
+        assert_eq!(
+            generate_mouse_scroll_summary("down", 3, Some(100), None, None, None, None),
+            "Scroll down (3 ticks) at (100, 0)"
+        );
+
+        // 6. No coordinates or regions specified
+        assert_eq!(
+            generate_mouse_scroll_summary("down", 3, None, None, None, None, None),
+            "Scroll down (3 ticks)"
+        );
     }
 
     #[test]
