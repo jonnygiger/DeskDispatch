@@ -6,7 +6,7 @@ use axum::{
     response::{IntoResponse, Redirect},
     routing::{get, post},
 };
-use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::FromRow;
 use std::borrow::Cow;
@@ -307,348 +307,8 @@ async fn validate_schedule_form<'a>(
     })
 }
 
-/// Represents a zero-dependency 5-field cron pattern (`<minute> <hour> <day> <month> <day-of-week>`).
-/// Fields are stored as efficient bitmasks for O(1) matching without heap allocations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CronPattern {
-    pub minutes: u64, // bits 0..=59
-    pub hours: u32,   // bits 0..=23
-    pub days: u32,    // bits 1..=31
-    pub months: u16,  // bits 1..=12
-    pub weekdays: u8, // bits 0..=6 (0=Sun, 6=Sat)
-}
-
-fn month_name_lookup(s: &str) -> Option<u32> {
-    if s.len() != 3 {
-        return None;
-    }
-    let b = s.as_bytes();
-    match &[
-        b[0].to_ascii_uppercase(),
-        b[1].to_ascii_uppercase(),
-        b[2].to_ascii_uppercase(),
-    ] {
-        b"JAN" => Some(1),
-        b"FEB" => Some(2),
-        b"MAR" => Some(3),
-        b"APR" => Some(4),
-        b"MAY" => Some(5),
-        b"JUN" => Some(6),
-        b"JUL" => Some(7),
-        b"AUG" => Some(8),
-        b"SEP" => Some(9),
-        b"OCT" => Some(10),
-        b"NOV" => Some(11),
-        b"DEC" => Some(12),
-        _ => None,
-    }
-}
-
-fn weekday_name_lookup(s: &str) -> Option<u32> {
-    if s.len() != 3 {
-        return None;
-    }
-    let b = s.as_bytes();
-    match &[
-        b[0].to_ascii_uppercase(),
-        b[1].to_ascii_uppercase(),
-        b[2].to_ascii_uppercase(),
-    ] {
-        b"SUN" => Some(0),
-        b"MON" => Some(1),
-        b"TUE" => Some(2),
-        b"WED" => Some(3),
-        b"THU" => Some(4),
-        b"FRI" => Some(5),
-        b"SAT" => Some(6),
-        _ => None,
-    }
-}
-
-fn parse_cron_value(
-    s: &str,
-    min_val: u32,
-    max_val: u32,
-    name_lookup: Option<fn(&str) -> Option<u32>>,
-) -> Result<u32, String> {
-    let s = s.trim();
-    if let Ok(num) = s.parse::<u32>() {
-        if num >= min_val && num <= max_val {
-            return Ok(num);
-        }
-    }
-    if let Some(lookup) = name_lookup {
-        if let Some(num) = lookup(s) {
-            return Ok(num);
-        }
-    }
-    Err(format!("Invalid cron value '{s}'"))
-}
-
-fn parse_cron_field(
-    field_str: &str,
-    min_val: u32,
-    max_val: u32,
-    name_lookup: Option<fn(&str) -> Option<u32>>,
-) -> Result<u64, String> {
-    let mut mask: u64 = 0;
-    for item in field_str.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            return Err("Empty cron field element".to_string());
-        }
-
-        let (expr, step) = if let Some((e, s)) = item.split_once('/') {
-            let step_num: u32 = s.parse().map_err(|_| format!("Invalid step value '{s}'"))?;
-            if step_num == 0 {
-                return Err("Cron step cannot be 0".to_string());
-            }
-            (e, step_num)
-        } else {
-            (item, 1)
-        };
-
-        let (start, end) = if expr == "*" {
-            (min_val, max_val)
-        } else if let Some((s, e)) = expr.split_once('-') {
-            let start = parse_cron_value(s, min_val, max_val, name_lookup)?;
-            let end = parse_cron_value(e, min_val, max_val, name_lookup)?;
-            (start, end)
-        } else {
-            let val = parse_cron_value(expr, min_val, max_val, name_lookup)?;
-            (val, val)
-        };
-
-        if start > end {
-            return Err(format!("Invalid range {start}-{end}"));
-        }
-
-        let mut v = start;
-        while v <= end {
-            if v >= min_val && v <= max_val {
-                let target_bit = if max_val == 7 && v == 7 { 0 } else { v };
-                mask |= 1u64 << target_bit;
-            }
-            v += step;
-        }
-    }
-
-    if mask == 0 {
-        return Err(format!("Field '{field_str}' produced no valid values"));
-    }
-
-    Ok(mask)
-}
-
-impl CronPattern {
-    pub fn parse(expr: &str) -> Result<Self, String> {
-        let mut fields = expr.split_whitespace();
-        let (min, hour, day, month, wday) = match (
-            fields.next(),
-            fields.next(),
-            fields.next(),
-            fields.next(),
-            fields.next(),
-            fields.next(),
-        ) {
-            (Some(f1), Some(f2), Some(f3), Some(f4), Some(f5), None) => (f1, f2, f3, f4, f5),
-            _ => {
-                let count = expr.split_whitespace().count();
-                return Err(format!("Expected 5 cron expression fields, found {count}"));
-            }
-        };
-
-        Ok(Self {
-            minutes: parse_cron_field(min, 0, 59, None)?,
-            hours: parse_cron_field(hour, 0, 23, None)? as u32,
-            days: parse_cron_field(day, 1, 31, None)? as u32,
-            months: parse_cron_field(month, 1, 12, Some(month_name_lookup))? as u16,
-            weekdays: parse_cron_field(wday, 0, 7, Some(weekday_name_lookup))? as u8,
-        })
-    }
-
-    #[inline]
-    pub fn contains_minute(&self, m: u32) -> bool {
-        (self.minutes & (1u64 << m)) != 0
-    }
-
-    #[inline]
-    pub fn contains_hour(&self, h: u32) -> bool {
-        (self.hours & (1u32 << h)) != 0
-    }
-
-    #[inline]
-    pub fn contains_day(&self, d: u32) -> bool {
-        (self.days & (1u32 << d)) != 0
-    }
-
-    #[inline]
-    pub fn contains_month(&self, m: u32) -> bool {
-        (self.months & (1u16 << m)) != 0
-    }
-
-    #[inline]
-    pub fn contains_weekday(&self, w: u32) -> bool {
-        (self.weekdays & (1u8 << w)) != 0
-    }
-
-    pub fn next_after<Tz: TimeZone>(&self, from_dt: &DateTime<Tz>) -> Result<DateTime<Tz>, String> {
-        const ONE_MIN: Duration = Duration::minutes(1);
-        const ONE_HOUR: Duration = Duration::hours(1);
-        const ONE_DAY: Duration = Duration::days(1);
-
-        let start_naive = from_dt.naive_local();
-        let start_sec_truncated = start_naive
-            .with_second(0)
-            .and_then(|dt| dt.with_nanosecond(0))
-            .ok_or_else(|| "Invalid datetime".to_string())?;
-
-        let tz = from_dt.timezone();
-        let mut current = match tz.from_local_datetime(&start_sec_truncated) {
-            chrono::LocalResult::Single(dt) => dt + ONE_MIN,
-            chrono::LocalResult::Ambiguous(dt1, _) => dt1 + ONE_MIN,
-            chrono::LocalResult::None => {
-                tz.from_utc_datetime(&(start_sec_truncated.and_utc().naive_utc())) + ONE_MIN
-            }
-        };
-
-        #[inline]
-        fn resolve_local_dt<Tz: TimeZone>(
-            tz: &Tz,
-            naive: &chrono::NaiveDateTime,
-        ) -> Option<DateTime<Tz>> {
-            tz.from_local_datetime(naive)
-                .single()
-                .or_else(|| tz.from_local_datetime(naive).latest())
-        }
-
-        let all_days_mask = 0xFFFFFFFE_u32; // bits 1..=31
-        let all_weekdays_mask = 0x7F; // bits 0..=6
-        let both_day_restrictions =
-            (self.days != all_days_mask) && (self.weekdays != all_weekdays_mask);
-
-        let max_steps = 5 * 365 * 24 * 60;
-        let mut steps = 0;
-
-        while steps < max_steps {
-            steps += 1;
-
-            let month = current.month();
-            if !self.contains_month(month) {
-                let mask_after = if month < 12 {
-                    self.months & (!0u16 << (month + 1))
-                } else {
-                    0
-                };
-                let (next_y, next_m) = if mask_after != 0 {
-                    (current.year(), mask_after.trailing_zeros())
-                } else {
-                    (current.year() + 1, self.months.trailing_zeros())
-                };
-
-                if let Some(naive_next) = chrono::NaiveDate::from_ymd_opt(next_y, next_m, 1)
-                    .and_then(|d| d.and_hms_opt(0, 0, 0))
-                {
-                    if let Some(next_dt) = resolve_local_dt(&tz, &naive_next) {
-                        current = next_dt;
-                        continue;
-                    }
-                }
-                current += ONE_DAY;
-                continue;
-            }
-
-            let day = current.day();
-            let wday = current.weekday().num_days_from_sunday();
-
-            let day_matches = if both_day_restrictions {
-                self.contains_day(day) || self.contains_weekday(wday)
-            } else {
-                self.contains_day(day) && self.contains_weekday(wday)
-            };
-
-            if !day_matches {
-                if let Some(naive_next) = current
-                    .naive_local()
-                    .date()
-                    .succ_opt()
-                    .and_then(|d| d.and_hms_opt(0, 0, 0))
-                {
-                    if let Some(next_dt) = resolve_local_dt(&tz, &naive_next) {
-                        current = next_dt;
-                        continue;
-                    }
-                }
-                current += ONE_DAY;
-                continue;
-            }
-
-            let hour = current.hour();
-            if !self.contains_hour(hour) {
-                let mask_after = if hour < 23 {
-                    self.hours & (!0u32 << (hour + 1))
-                } else {
-                    0
-                };
-                let next_h_opt = if mask_after != 0 {
-                    Some(mask_after.trailing_zeros())
-                } else {
-                    None
-                };
-
-                let naive_next = next_h_opt
-                    .and_then(|h| current.naive_local().date().and_hms_opt(h, 0, 0))
-                    .or_else(|| {
-                        current
-                            .naive_local()
-                            .date()
-                            .succ_opt()
-                            .and_then(|d| d.and_hms_opt(0, 0, 0))
-                    });
-
-                if let Some(naive_next) = naive_next {
-                    if let Some(next_dt) = resolve_local_dt(&tz, &naive_next) {
-                        current = next_dt;
-                        continue;
-                    }
-                }
-                current += ONE_HOUR;
-                continue;
-            }
-
-            let minute = current.minute();
-            if !self.contains_minute(minute) {
-                let mask_after = if minute < 59 {
-                    self.minutes & (!0u64 << (minute + 1))
-                } else {
-                    0
-                };
-                let next_m_opt = if mask_after != 0 {
-                    Some(mask_after.trailing_zeros())
-                } else {
-                    None
-                };
-
-                let naive_next = next_m_opt
-                    .and_then(|m| current.naive_local().date().and_hms_opt(hour, m, 0))
-                    .or_else(|| current.naive_local().with_minute(0).map(|dt| dt + ONE_HOUR));
-
-                if let Some(naive_next) = naive_next {
-                    if let Some(next_dt) = resolve_local_dt(&tz, &naive_next) {
-                        current = next_dt;
-                        continue;
-                    }
-                }
-                current += ONE_MIN;
-                continue;
-            }
-
-            return Ok(current);
-        }
-
-        Err("No matching cron occurrence found within 5 years".to_string())
-    }
-}
+use cron::Schedule;
+use std::str::FromStr;
 
 pub fn compute_next_run_at(
     cron_expr: &str,
@@ -665,14 +325,27 @@ pub fn compute_next_run_at(
         .parse()
         .map_err(|_| format!("Invalid timezone: '{tz_name}'"))?;
 
-    let cron =
-        CronPattern::parse(cron_expr).map_err(|e| format!("Invalid cron expression: {e}"))?;
+    let trimmed = cron_expr.trim();
+    let fields_count = trimmed.split_whitespace().count();
+
+    // `cron` crate expects standard 6 or 7 fields (sec min hour dom month dow [year]).
+    // Standard 5-field cron format (min hour dom month dow) needs '0 ' prepended for seconds.
+    let full_expr = if fields_count == 5 {
+        format!("0 {trimmed}")
+    } else {
+        trimmed.to_string()
+    };
+
+    let schedule = Schedule::from_str(&full_expr)
+        .map_err(|e| format!("Invalid cron expression: {e}"))?;
 
     let local_from = from_dt.with_timezone(&tz);
 
-    cron.next_after(&local_from)
-        .map_err(|e| format!("Failed to compute next run time: {e}"))
+    schedule
+        .after(&local_from)
+        .next()
         .map(|dt| dt.with_timezone(&Utc))
+        .ok_or_else(|| "No matching cron occurrence found".to_string())
 }
 
 #[tracing::instrument(skip(state, user))]
@@ -772,56 +445,9 @@ pub async fn post_create_schedule_handler(
     RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<ScheduleForm>,
 ) -> impl IntoResponse {
-    let name = form.name.trim();
-    let cron_expression = form.cron_expression.trim();
-    let timezone = if form.timezone.trim().is_empty() {
-        "UTC"
-    } else {
-        form.timezone.trim()
-    };
-    let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
-
-    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
-
-    if name.is_empty() || cron_expression.is_empty() {
-        return HtmlTemplate(ScheduleFormTemplate::build_error(
-            ScheduleFormErrorCtx {
-                user,
-                is_edit: false,
-                schedule_id: None,
-                form: &form,
-                wol_warmup_secs,
-                automations,
-                worker_groups,
-            },
-            "Schedule Name and Cron Expression are required.",
-        ))
-        .into_response();
-    }
-
-    let now = Utc::now();
-    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
-        Ok(next_dt) => next_dt,
-        Err(err_msg) => {
-            return HtmlTemplate(ScheduleFormTemplate::build_error(
-                ScheduleFormErrorCtx {
-                    user,
-                    is_edit: false,
-                    schedule_id: None,
-                    form: &form,
-                    wol_warmup_secs,
-                    automations,
-                    worker_groups,
-                },
-                err_msg,
-            ))
-            .into_response();
-        }
-    };
-    let next_run_at = if form.is_enabled {
-        Some(parsed_next_run_at)
-    } else {
-        None
+    let validated = match validate_schedule_form(&state.db, user.clone(), &form, None).await {
+        Ok(v) => v,
+        Err(err) => return err.into_response(),
     };
 
     let row_res = sqlx::query_scalar::<_, i64>(
@@ -955,56 +581,9 @@ pub async fn post_edit_schedule_handler(
     RequireEditor(user): RequireEditor,
     CsrfForm(form): CsrfForm<ScheduleForm>,
 ) -> impl IntoResponse {
-    let name = form.name.trim();
-    let cron_expression = form.cron_expression.trim();
-    let timezone = if form.timezone.trim().is_empty() {
-        "UTC"
-    } else {
-        form.timezone.trim()
-    };
-    let wol_warmup_secs = form.wol_warmup_secs.unwrap_or(0).max(0);
-
-    let (automations, worker_groups) = fetch_schedule_options(&state.db).await;
-
-    if name.is_empty() || cron_expression.is_empty() {
-        return HtmlTemplate(ScheduleFormTemplate::build_error(
-            ScheduleFormErrorCtx {
-                user,
-                is_edit: true,
-                schedule_id: Some(id),
-                form: &form,
-                wol_warmup_secs,
-                automations,
-                worker_groups,
-            },
-            "Schedule Name and Cron Expression are required.",
-        ))
-        .into_response();
-    }
-
-    let now = Utc::now();
-    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
-        Ok(next_dt) => next_dt,
-        Err(err_msg) => {
-            return HtmlTemplate(ScheduleFormTemplate::build_error(
-                ScheduleFormErrorCtx {
-                    user,
-                    is_edit: true,
-                    schedule_id: Some(id),
-                    form: &form,
-                    wol_warmup_secs,
-                    automations,
-                    worker_groups,
-                },
-                err_msg,
-            ))
-            .into_response();
-        }
-    };
-    let next_run_at = if form.is_enabled {
-        Some(parsed_next_run_at)
-    } else {
-        None
+    let validated = match validate_schedule_form(&state.db, user.clone(), &form, Some(id)).await {
+        Ok(v) => v,
+        Err(err) => return err.into_response(),
     };
 
     let update_res = sqlx::query(
@@ -1680,82 +1259,19 @@ mod tests {
     }
 
     #[test]
-    fn test_cron_pattern_parsing_and_syntax() {
-        let pattern = CronPattern::parse("*/15 9-17 1,15 JAN-JUN MON-FRI").unwrap();
-
-        assert!(pattern.contains_minute(0));
-        assert!(pattern.contains_minute(15));
-        assert!(pattern.contains_minute(30));
-        assert!(pattern.contains_minute(45));
-        assert!(!pattern.contains_minute(10));
-
-        assert!(pattern.contains_hour(9));
-        assert!(pattern.contains_hour(17));
-        assert!(!pattern.contains_hour(8));
-        assert!(!pattern.contains_hour(18));
-
-        assert!(pattern.contains_day(1));
-        assert!(pattern.contains_day(15));
-        assert!(!pattern.contains_day(2));
-
-        assert!(pattern.contains_month(1));
-        assert!(pattern.contains_month(6));
-        assert!(!pattern.contains_month(7));
-
-        assert!(pattern.contains_weekday(1));
-        assert!(pattern.contains_weekday(5));
-        assert!(!pattern.contains_weekday(0));
-        assert!(!pattern.contains_weekday(6));
-
-        assert!(CronPattern::parse("invalid cron").is_err());
-        assert!(CronPattern::parse("0 0 0 0 0 0").is_err());
-        assert!(CronPattern::parse("60 * * * *").is_err());
-        assert!(CronPattern::parse("* 24 * * *").is_err());
-        assert!(CronPattern::parse("* * 32 * *").is_err());
-        assert!(CronPattern::parse("* * * 13 *").is_err());
-        assert!(CronPattern::parse("* * * * 8").is_err());
-    }
-
-    #[test]
-    fn test_cron_pattern_next_after_edge_cases() {
+    fn test_compute_next_run_at_expressions_and_edge_cases() {
         use chrono::TimeZone;
 
-        let p_sun0 = CronPattern::parse("0 12 * * 0").unwrap();
-        let p_sun7 = CronPattern::parse("0 12 * * 7").unwrap();
-        let p_sun_name = CronPattern::parse("0 12 * * SUN").unwrap();
+        let base_dt = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let res = compute_next_run_at("*/15 9-17 1,15 JAN-JUN MON-FRI", "UTC", &base_dt);
+        assert!(res.is_ok());
 
-        assert_eq!(p_sun0.weekdays, p_sun7.weekdays);
-        assert_eq!(p_sun0.weekdays, p_sun_name.weekdays);
-        assert!(p_sun0.contains_weekday(0));
+        assert!(compute_next_run_at("invalid cron", "UTC", &base_dt).is_err());
+        assert!(compute_next_run_at("60 * * * *", "UTC", &base_dt).is_err());
+        assert!(compute_next_run_at("* 24 * * *", "UTC", &base_dt).is_err());
 
-        let cron_or = CronPattern::parse("0 9 15 * MON").unwrap();
-
-        let base_dom_match = Utc.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap();
-        let next_dom = cron_or.next_after(&base_dom_match).unwrap();
-        assert_eq!(
-            next_dom,
-            Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap()
-        );
-
-        let base_dow_match = Utc.with_ymd_and_hms(2025, 1, 20, 8, 0, 0).unwrap();
-        let next_dow = cron_or.next_after(&base_dow_match).unwrap();
-        assert_eq!(
-            next_dow,
-            Utc.with_ymd_and_hms(2025, 1, 20, 9, 0, 0).unwrap()
-        );
-
-        let p_step_range = CronPattern::parse("1-10/2 10 * * *").unwrap();
-        assert!(p_step_range.contains_minute(1));
-        assert!(p_step_range.contains_minute(3));
-        assert!(p_step_range.contains_minute(5));
-        assert!(p_step_range.contains_minute(7));
-        assert!(p_step_range.contains_minute(9));
-        assert!(!p_step_range.contains_minute(2));
-        assert!(!p_step_range.contains_minute(10));
-
-        let cron_year_end = CronPattern::parse("0 0 1 1 *").unwrap();
         let dec_31 = Utc.with_ymd_and_hms(2025, 12, 31, 23, 30, 0).unwrap();
-        let next_year_jan1 = cron_year_end.next_after(&dec_31).unwrap();
+        let next_year_jan1 = compute_next_run_at("0 0 1 1 *", "UTC", &dec_31).unwrap();
         assert_eq!(
             next_year_jan1,
             Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
