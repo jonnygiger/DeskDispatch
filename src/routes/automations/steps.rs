@@ -3665,14 +3665,20 @@ mod tests {
         form.window_match_pattern = None;
         assert_eq!(
             validate_branch_form(&form, "window_state"),
-            Some("Please provide a window title match pattern for window state condition.".to_string())
+            Some(
+                "Please provide a window title match pattern for window state condition."
+                    .to_string()
+            )
         );
 
         // Window state branch condition - whitespace-only pattern
         form.window_match_pattern = Some("   ".to_string());
         assert_eq!(
             validate_branch_form(&form, "window_state"),
-            Some("Please provide a window title match pattern for window state condition.".to_string())
+            Some(
+                "Please provide a window title match pattern for window state condition."
+                    .to_string()
+            )
         );
 
         // Window state branch condition - valid pattern
@@ -3741,7 +3747,15 @@ mod tests {
 
         // 3. Variable coordinates
         assert_eq!(
-            generate_mouse_scroll_summary("left", 2, None, None, Some("pos_x"), Some("pos_y"), None),
+            generate_mouse_scroll_summary(
+                "left",
+                2,
+                None,
+                None,
+                Some("pos_x"),
+                Some("pos_y"),
+                None
+            ),
             "Scroll left (2 ticks) at («pos_x», «pos_y»)"
         );
 
