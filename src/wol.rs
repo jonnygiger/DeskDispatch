@@ -4,43 +4,10 @@ use tokio::net::UdpSocket;
 /// Parses a MAC address string into a 6-byte array without intermediate heap allocations.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    let mut hex_digits = mac_str.bytes().filter(|b| b.is_ascii_hexdigit());
-
-    let mut bytes = [0u8; 6];
-    for b in &mut bytes {
-        let hi = hex_digits.next().ok_or_else(|| {
-            format!(
-                "Invalid MAC address '{}': expected 12 hexadecimal digits",
-                mac_str
-            )
-        })?;
-        let lo = hex_digits.next().ok_or_else(|| {
-            format!(
-                "Invalid MAC address '{}': expected 12 hexadecimal digits",
-                mac_str
-            )
-        })?;
-
-        let hex_val = |c: u8| -> u8 {
-            match c {
-                b'0'..=b'9' => c - b'0',
-                b'a'..=b'f' => c - b'a' + 10,
-                b'A'..=b'F' => c - b'A' + 10,
-                _ => 0,
-            }
-        };
-
-        *b = (hex_val(hi) << 4) | hex_val(lo);
-    }
-
-    if hex_digits.next().is_some() {
-        return Err(format!(
-            "Invalid MAC address '{}': expected 12 hexadecimal digits",
-            mac_str
-        ));
-    }
-
-    Ok(bytes)
+    mac_str
+        .parse::<macaddr::MacAddr6>()
+        .map(|addr| addr.into_array())
+        .map_err(|e| format!("Invalid MAC address '{}': {}", mac_str, e))
 }
 
 /// Constructs a 102-byte Wake-on-LAN Magic Packet for the given 6-byte MAC address.
