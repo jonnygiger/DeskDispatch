@@ -63,3 +63,7 @@ Action: In unit tests for `UserRole`, test `as_str()`, `can_edit()`, `is_admin()
 ## 2025-03-25 Cron Pattern Next After & Sunday Representation Edge Cases Coverage
 Learning: `CronPattern` in `src/routes/schedules.rs` normalizes Sunday as `0`, `7`, or `"SUN"`, supports step-range syntax (e.g., `1-10/2`), handles year-end boundary transitions (Dec 31 to Jan 1), and applies OR-logic when both day-of-month and day-of-week fields are restricted (non-wildcards).
 Action: Write pure unit tests asserting exact `CronPattern::next_after` outputs and bitmask matching across Sunday representations, step ranges, year rollover, and DOM/DOW OR-logic without requiring database or time-delay fixtures.
+
+## 2025-03-26 Window Control & Mouse Scroll Step Summaries & Branch Validation Coverage
+Learning: Step summary formatting routines (`generate_window_control_summary`, `generate_mouse_scroll_summary`) and step branch form validation (`validate_branch_form`) for `window_state` conditions contain multiple conditional string formatting paths (e.g. action string case-insensitivity, 30-character pattern truncation, region vs coordinate target formatting, and missing pattern validation) that can be tested synchronously without database setup.
+Action: Write pure unit tests in `src/routes/automations/steps.rs` covering window control actions, pattern truncation, mouse scroll coordinate modes, and window state branch validation rules.
