@@ -448,38 +448,8 @@ impl SimulatedWorker {
                 return Err("Simulated power outage mid-step".to_string());
             }
 
-            let (step_id, step_type, post_delay_ms) = match step {
-                StepPayload::MouseClick {
-                    id, post_delay_ms, ..
-                } => (*id, "mouse_click", *post_delay_ms as u64),
-                StepPayload::KeyPress {
-                    id, post_delay_ms, ..
-                } => (*id, "key_press", *post_delay_ms as u64),
-                StepPayload::TypeText {
-                    id, post_delay_ms, ..
-                } => (*id, "type_text", *post_delay_ms as u64),
-                StepPayload::FindPixelRgb {
-                    id, post_delay_ms, ..
-                } => (*id, "find_pixel_rgb", *post_delay_ms as u64),
-                StepPayload::FindBitmap {
-                    id, post_delay_ms, ..
-                } => (*id, "find_bitmap", *post_delay_ms as u64),
-                StepPayload::Branch {
-                    id, post_delay_ms, ..
-                } => (*id, "branch", *post_delay_ms as u64),
-                StepPayload::OcrExtract {
-                    id, post_delay_ms, ..
-                } => (*id, "ocr_extract", *post_delay_ms as u64),
-                StepPayload::WindowControl {
-                    id, post_delay_ms, ..
-                } => (*id, "window_control", *post_delay_ms as u64),
-                StepPayload::ClipboardControl {
-                    id, post_delay_ms, ..
-                } => (*id, "clipboard_control", *post_delay_ms as u64),
-                StepPayload::MouseScroll {
-                    id, post_delay_ms, ..
-                } => (*id, "mouse_scroll", *post_delay_ms as u64),
-            };
+            let (step_id, step_type, post_delay_ms) =
+                (step.id(), step.step_type(), step.post_delay_ms() as u64);
 
             info!(
                 worker_idx = self.config.worker_index,

@@ -329,6 +329,142 @@ pub enum StepPayload {
     },
 }
 
+impl StepPayload {
+    #[inline]
+    pub fn id(&self) -> i64 {
+        match self {
+            StepPayload::MouseClick { id, .. }
+            | StepPayload::KeyPress { id, .. }
+            | StepPayload::TypeText { id, .. }
+            | StepPayload::FindPixelRgb { id, .. }
+            | StepPayload::FindBitmap { id, .. }
+            | StepPayload::Branch { id, .. }
+            | StepPayload::OcrExtract { id, .. }
+            | StepPayload::WindowControl { id, .. }
+            | StepPayload::ClipboardControl { id, .. }
+            | StepPayload::MouseScroll { id, .. } => *id,
+        }
+    }
+
+    #[inline]
+    pub fn label(&self) -> Option<&str> {
+        match self {
+            StepPayload::MouseClick { label, .. }
+            | StepPayload::KeyPress { label, .. }
+            | StepPayload::TypeText { label, .. }
+            | StepPayload::FindPixelRgb { label, .. }
+            | StepPayload::FindBitmap { label, .. }
+            | StepPayload::Branch { label, .. }
+            | StepPayload::OcrExtract { label, .. }
+            | StepPayload::WindowControl { label, .. }
+            | StepPayload::ClipboardControl { label, .. }
+            | StepPayload::MouseScroll { label, .. } => label.as_deref(),
+        }
+    }
+
+    #[inline]
+    pub fn post_delay_ms(&self) -> i32 {
+        match self {
+            StepPayload::MouseClick { post_delay_ms, .. }
+            | StepPayload::KeyPress { post_delay_ms, .. }
+            | StepPayload::TypeText { post_delay_ms, .. }
+            | StepPayload::FindPixelRgb { post_delay_ms, .. }
+            | StepPayload::FindBitmap { post_delay_ms, .. }
+            | StepPayload::Branch { post_delay_ms, .. }
+            | StepPayload::OcrExtract { post_delay_ms, .. }
+            | StepPayload::WindowControl { post_delay_ms, .. }
+            | StepPayload::ClipboardControl { post_delay_ms, .. }
+            | StepPayload::MouseScroll { post_delay_ms, .. } => *post_delay_ms,
+        }
+    }
+
+    #[inline]
+    pub fn step_type(&self) -> &'static str {
+        match self {
+            StepPayload::MouseClick { .. } => "mouse_click",
+            StepPayload::KeyPress { .. } => "key_press",
+            StepPayload::TypeText { .. } => "type_text",
+            StepPayload::FindPixelRgb { .. } => "find_pixel_rgb",
+            StepPayload::FindBitmap { .. } => "find_bitmap",
+            StepPayload::Branch { .. } => "branch",
+            StepPayload::OcrExtract { .. } => "ocr_extract",
+            StepPayload::WindowControl { .. } => "window_control",
+            StepPayload::ClipboardControl { .. } => "clipboard_control",
+            StepPayload::MouseScroll { .. } => "mouse_scroll",
+        }
+    }
+
+    #[inline]
+    pub fn set_meta(&mut self, new_id: i64, new_label: Option<String>, new_post_delay_ms: i32) {
+        match self {
+            StepPayload::MouseClick {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::KeyPress {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::TypeText {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::FindPixelRgb {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::FindBitmap {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::Branch {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::OcrExtract {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::WindowControl {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::ClipboardControl {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            }
+            | StepPayload::MouseScroll {
+                id,
+                label,
+                post_delay_ms,
+                ..
+            } => {
+                *id = new_id;
+                *label = new_label;
+                *post_delay_ms = new_post_delay_ms;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FullAutomationPayload {
     pub id: i64,

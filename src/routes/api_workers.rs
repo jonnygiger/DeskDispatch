@@ -471,228 +471,213 @@ pub async fn fetch_full_automation_json_with_overrides(
         });
     }
 
-    enum StepDetail {
-        MouseClick(MouseClickRow),
-        MouseScroll(MouseScrollRow),
-        KeyPress(String),
-        TypeText(TypeTextRow),
-        WindowControl(WindowControlRow),
-        FindPixel(FindPixelRow),
-        FindBitmap(FindBitmapRow),
-        Branch(BranchRow),
-        OcrExtract(OcrExtractRow),
-        ClipboardControl(ClipboardControlRow),
-    }
+    let mut details_map: HashMap<i64, StepPayload> = HashMap::with_capacity(step_rows.len());
 
-    let mut details_map = HashMap::with_capacity(step_rows.len());
     for r in mouse_clicks_rows {
-        details_map.insert(r.step_id, StepDetail::MouseClick(r));
+        details_map.insert(
+            r.step_id,
+            StepPayload::MouseClick {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                x: r.x,
+                y: r.y,
+                x_variable_id: r.x_variable_id,
+                y_variable_id: r.y_variable_id,
+                region_variable_id: r.region_variable_id,
+                button: r.button,
+                click_type: r.click_type,
+            },
+        );
     }
     for r in mouse_scrolls_rows {
-        details_map.insert(r.step_id, StepDetail::MouseScroll(r));
+        details_map.insert(
+            r.step_id,
+            StepPayload::MouseScroll {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                direction: r.direction,
+                scroll_amount: r.scroll_amount,
+                x: r.x,
+                y: r.y,
+                x_variable_id: r.x_variable_id,
+                y_variable_id: r.y_variable_id,
+                region_variable_id: r.region_variable_id,
+            },
+        );
     }
     for r in key_presses_rows {
-        details_map.insert(r.step_id, StepDetail::KeyPress(r.key_combo));
+        details_map.insert(
+            r.step_id,
+            StepPayload::KeyPress {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                key_combo: r.key_combo,
+            },
+        );
     }
     for r in type_texts_rows {
-        details_map.insert(r.step_id, StepDetail::TypeText(r));
+        details_map.insert(
+            r.step_id,
+            StepPayload::TypeText {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                text_to_type: r.text_to_type,
+                delay_between_keys_ms: r.delay_between_keys_ms,
+            },
+        );
     }
     for r in window_controls_rows {
-        details_map.insert(r.step_id, StepDetail::WindowControl(r));
+        details_map.insert(
+            r.step_id,
+            StepPayload::WindowControl {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                action: r.action,
+                match_pattern: r.match_pattern,
+                match_type: r.match_type,
+                timeout_ms: r.timeout_ms as u64,
+            },
+        );
     }
     for r in find_pixel_rows {
-        details_map.insert(r.step_id, StepDetail::FindPixel(r));
+        details_map.insert(
+            r.step_id,
+            StepPayload::FindPixelRgb {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                x: r.x,
+                y: r.y,
+                output_variable_id: r.output_variable_id,
+                timeout_ms: 5000,
+                retry_interval_ms: 250,
+            },
+        );
     }
     for r in find_bitmap_rows {
-        details_map.insert(r.step_id, StepDetail::FindBitmap(r));
+        details_map.insert(
+            r.step_id,
+            StepPayload::FindBitmap {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                reference_bitmap_id: r.reference_bitmap_id,
+                reference_bitmap_key: r.reference_bitmap_key,
+                search_x: r.search_x,
+                search_y: r.search_y,
+                search_width: r.search_width,
+                search_height: r.search_height,
+                match_threshold: r.match_threshold,
+                output_found_variable_id: r.output_found_variable_id,
+                output_x_variable_id: r.output_x_variable_id,
+                output_y_variable_id: r.output_y_variable_id,
+                output_region_variable_id: r.output_region_variable_id,
+                timeout_ms: 5000,
+                retry_interval_ms: 250,
+            },
+        );
     }
     for r in branch_rows {
-        details_map.insert(r.step_id, StepDetail::Branch(r));
+        let condition = if r.condition_type == "pixel_rgb" {
+            let exp_r = r.expected_r.unwrap_or(0);
+            let exp_g = r.expected_g.unwrap_or(0);
+            let exp_b = r.expected_b.unwrap_or(0);
+            BranchConditionPayload::PixelRgb {
+                x: r.x,
+                y: r.y,
+                expected_r: exp_r,
+                expected_g: exp_g,
+                expected_b: exp_b,
+                expected_rgb: [exp_r, exp_g, exp_b],
+                tolerance: r.tolerance.unwrap_or(0),
+                timeout_ms: 5000,
+                retry_interval_ms: 250,
+            }
+        } else if r.condition_type == "window_state" {
+            BranchConditionPayload::WindowState {
+                match_pattern: r.window_match_pattern.unwrap_or_default(),
+                match_type: r
+                    .window_match_type
+                    .unwrap_or_else(|| "contains".to_string()),
+                check_type: r.window_check_type.unwrap_or_else(|| "exists".to_string()),
+                timeout_ms: 5000,
+                retry_interval_ms: 250,
+            }
+        } else {
+            BranchConditionPayload::Bitmap {
+                reference_bitmap_id: r.reference_bitmap_id,
+                reference_bitmap_key: r.reference_bitmap_key,
+                search_x: r.search_x,
+                search_y: r.search_y,
+                search_width: r.search_width,
+                search_height: r.search_height,
+                match_threshold: r.match_threshold,
+                timeout_ms: 5000,
+                retry_interval_ms: 250,
+            }
+        };
+
+        details_map.insert(
+            r.step_id,
+            StepPayload::Branch {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                condition,
+                on_match_step_id: r.on_match_step_id,
+                on_no_match_step_id: r.on_no_match_step_id,
+                timeout_ms: 5000,
+                retry_interval_ms: 250,
+            },
+        );
     }
     for r in ocr_rows {
-        details_map.insert(r.step_id, StepDetail::OcrExtract(r));
+        details_map.insert(
+            r.step_id,
+            StepPayload::OcrExtract {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                search_x: r.search_x,
+                search_y: r.search_y,
+                search_width: r.search_width,
+                search_height: r.search_height,
+                region_variable_id: r.region_variable_id,
+                output_variable_id: r.output_variable_id,
+                set_as_task_output: r.set_as_task_output,
+                timeout_ms: r.timeout_ms.max(0) as u64,
+                retry_interval_ms: r.retry_interval_ms.max(0) as u64,
+            },
+        );
     }
     for r in clipboard_rows {
-        details_map.insert(r.step_id, StepDetail::ClipboardControl(r));
+        details_map.insert(
+            r.step_id,
+            StepPayload::ClipboardControl {
+                id: r.step_id,
+                label: None,
+                post_delay_ms: 0,
+                action: r.action,
+                text_to_set: r.text_to_set,
+                input_variable_id: r.input_variable_id,
+                output_variable_id: r.output_variable_id,
+                set_as_task_output: r.set_as_task_output,
+                timeout_ms: r.timeout_ms.max(0) as u64,
+            },
+        );
     }
 
     let mut steps_list = Vec::with_capacity(step_rows.len());
     for step in step_rows {
         let step_id = step.id;
-        let label = step.label;
-        let post_delay_ms = step.post_delay_ms;
-
-        if let Some(detail) = details_map.remove(&step_id) {
-            match detail {
-                StepDetail::MouseClick(r) => {
-                    steps_list.push(StepPayload::MouseClick {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        x: r.x,
-                        y: r.y,
-                        x_variable_id: r.x_variable_id,
-                        y_variable_id: r.y_variable_id,
-                        region_variable_id: r.region_variable_id,
-                        button: r.button,
-                        click_type: r.click_type,
-                    });
-                }
-                StepDetail::MouseScroll(r) => {
-                    steps_list.push(StepPayload::MouseScroll {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        direction: r.direction,
-                        scroll_amount: r.scroll_amount,
-                        x: r.x,
-                        y: r.y,
-                        x_variable_id: r.x_variable_id,
-                        y_variable_id: r.y_variable_id,
-                        region_variable_id: r.region_variable_id,
-                    });
-                }
-                StepDetail::KeyPress(key_combo) => {
-                    steps_list.push(StepPayload::KeyPress {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        key_combo,
-                    });
-                }
-                StepDetail::TypeText(r) => {
-                    steps_list.push(StepPayload::TypeText {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        text_to_type: r.text_to_type,
-                        delay_between_keys_ms: r.delay_between_keys_ms,
-                    });
-                }
-                StepDetail::WindowControl(r) => {
-                    steps_list.push(StepPayload::WindowControl {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        action: r.action,
-                        match_pattern: r.match_pattern,
-                        match_type: r.match_type,
-                        timeout_ms: r.timeout_ms as u64,
-                    });
-                }
-                StepDetail::FindPixel(r) => {
-                    steps_list.push(StepPayload::FindPixelRgb {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        x: r.x,
-                        y: r.y,
-                        output_variable_id: r.output_variable_id,
-                        timeout_ms: 5000,
-                        retry_interval_ms: 250,
-                    });
-                }
-                StepDetail::FindBitmap(r) => {
-                    steps_list.push(StepPayload::FindBitmap {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        reference_bitmap_id: r.reference_bitmap_id,
-                        reference_bitmap_key: r.reference_bitmap_key,
-                        search_x: r.search_x,
-                        search_y: r.search_y,
-                        search_width: r.search_width,
-                        search_height: r.search_height,
-                        match_threshold: r.match_threshold,
-                        output_found_variable_id: r.output_found_variable_id,
-                        output_x_variable_id: r.output_x_variable_id,
-                        output_y_variable_id: r.output_y_variable_id,
-                        output_region_variable_id: r.output_region_variable_id,
-                        timeout_ms: 5000,
-                        retry_interval_ms: 250,
-                    });
-                }
-                StepDetail::Branch(r) => {
-                    let condition = if r.condition_type == "pixel_rgb" {
-                        let exp_r = r.expected_r.unwrap_or(0);
-                        let exp_g = r.expected_g.unwrap_or(0);
-                        let exp_b = r.expected_b.unwrap_or(0);
-                        BranchConditionPayload::PixelRgb {
-                            x: r.x,
-                            y: r.y,
-                            expected_r: exp_r,
-                            expected_g: exp_g,
-                            expected_b: exp_b,
-                            expected_rgb: [exp_r, exp_g, exp_b],
-                            tolerance: r.tolerance.unwrap_or(0),
-                            timeout_ms: 5000,
-                            retry_interval_ms: 250,
-                        }
-                    } else if r.condition_type == "window_state" {
-                        BranchConditionPayload::WindowState {
-                            match_pattern: r.window_match_pattern.unwrap_or_default(),
-                            match_type: r
-                                .window_match_type
-                                .unwrap_or_else(|| "contains".to_string()),
-                            check_type: r.window_check_type.unwrap_or_else(|| "exists".to_string()),
-                            timeout_ms: 5000,
-                            retry_interval_ms: 250,
-                        }
-                    } else {
-                        BranchConditionPayload::Bitmap {
-                            reference_bitmap_id: r.reference_bitmap_id,
-                            reference_bitmap_key: r.reference_bitmap_key,
-                            search_x: r.search_x,
-                            search_y: r.search_y,
-                            search_width: r.search_width,
-                            search_height: r.search_height,
-                            match_threshold: r.match_threshold,
-                            timeout_ms: 5000,
-                            retry_interval_ms: 250,
-                        }
-                    };
-
-                    steps_list.push(StepPayload::Branch {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        condition,
-                        on_match_step_id: r.on_match_step_id,
-                        on_no_match_step_id: r.on_no_match_step_id,
-                        timeout_ms: 5000,
-                        retry_interval_ms: 250,
-                    });
-                }
-                StepDetail::OcrExtract(r) => {
-                    steps_list.push(StepPayload::OcrExtract {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        search_x: r.search_x,
-                        search_y: r.search_y,
-                        search_width: r.search_width,
-                        search_height: r.search_height,
-                        region_variable_id: r.region_variable_id,
-                        output_variable_id: r.output_variable_id,
-                        set_as_task_output: r.set_as_task_output,
-                        timeout_ms: r.timeout_ms.max(0) as u64,
-                        retry_interval_ms: r.retry_interval_ms.max(0) as u64,
-                    });
-                }
-                StepDetail::ClipboardControl(r) => {
-                    steps_list.push(StepPayload::ClipboardControl {
-                        id: step_id,
-                        label,
-                        post_delay_ms,
-                        action: r.action,
-                        text_to_set: r.text_to_set,
-                        input_variable_id: r.input_variable_id,
-                        output_variable_id: r.output_variable_id,
-                        set_as_task_output: r.set_as_task_output,
-                        timeout_ms: r.timeout_ms.max(0) as u64,
-                    });
-                }
-            }
+        if let Some(mut payload) = details_map.remove(&step_id) {
+            payload.set_meta(step_id, step.label, step.post_delay_ms);
+            steps_list.push(payload);
         } else {
             return Err(sqlx::Error::Protocol(format!(
                 "Step {step_id} of automation {id} has type '{}' but no detail row",
