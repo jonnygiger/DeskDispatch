@@ -129,12 +129,6 @@ struct OcrExtractDetailRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct TypeTextDetailRow {
-    text_to_type: String,
-    delay_between_keys_ms: i32,
-}
-
-#[derive(sqlx::FromRow)]
 struct WindowControlViewRow {
     step_id: i64,
     action: String,
@@ -150,14 +144,6 @@ struct ClipboardControlDetailRow {
     input_variable_id: Option<i64>,
     output_variable_id: Option<i64>,
     set_as_task_output: bool,
-    timeout_ms: i64,
-}
-
-#[derive(sqlx::FromRow)]
-struct WindowControlDetailRow {
-    action: String,
-    match_pattern: String,
-    match_type: String,
     timeout_ms: i64,
 }
 
@@ -1748,6 +1734,22 @@ async fn render_step_form_with_options(
     let label = form.label.unwrap_or_default();
     let post_delay_seconds = form.post_delay_seconds.unwrap_or(0.0);
 
+    macro_rules! render_tmpl {
+        ($tmpl:ident { $($field:ident $(: $val:expr)?),* $(,)? }) => {
+            HtmlTemplate($tmpl {
+                user,
+                csrf_token,
+                automation_id,
+                step_id,
+                label,
+                post_delay_seconds,
+                error,
+                is_edit,
+                $($field $(: $val)?),*
+            }).into_response()
+        };
+    }
+
     let html_body = match step_type {
         "branch" => {
             let condition_type = form.condition_type.unwrap_or_else(|| "pixel_rgb".into());
@@ -1755,13 +1757,7 @@ async fn render_step_form_with_options(
                 Some(b) => b,
                 None => fetch_step_options_bundle(db, automation_id, step_id).await,
             };
-            HtmlTemplate(StepBranchTemplate {
-                user,
-                csrf_token,
-                automation_id,
-                step_id,
-                label,
-                post_delay_seconds,
+            render_tmpl!(StepBranchTemplate {
                 condition_type,
                 x: form.x,
                 y: form.y,
@@ -1782,23 +1778,11 @@ async fn render_step_form_with_options(
                 on_no_match_step_id: form.on_no_match_step_id,
                 steps: bundle.steps,
                 bitmaps: bundle.bitmaps,
-                error,
-                is_edit,
             })
-            .into_response()
         }
-        "key_press" => HtmlTemplate(StepKeyPressTemplate {
-            user,
-            csrf_token,
-            automation_id,
-            step_id,
-            label,
-            post_delay_seconds,
+        "key_press" => render_tmpl!(StepKeyPressTemplate {
             key_combo: form.key_combo.unwrap_or_default(),
-            error,
-            is_edit,
-        })
-        .into_response(),
+        }),
         "clipboard_control" => {
             let variables = match variables {
                 Some(v) => v,
@@ -1806,13 +1790,7 @@ async fn render_step_form_with_options(
             };
             let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
 
-            HtmlTemplate(StepClipboardControlTemplate {
-                user,
-                csrf_token,
-                automation_id,
-                step_id,
-                label,
-                post_delay_seconds,
+            render_tmpl!(StepClipboardControlTemplate {
                 action: form.action.unwrap_or_else(|| "set_text".into()),
                 text_mode: form.text_mode.unwrap_or_else(|| "literal".into()),
                 text_to_set: form.text_to_set,
@@ -1821,51 +1799,24 @@ async fn render_step_form_with_options(
                 set_as_task_output: set_task_out,
                 timeout_seconds: form.timeout_seconds.unwrap_or(5.0),
                 variables,
-                error,
-                is_edit,
             })
-            .into_response()
         }
-        "window_control" => HtmlTemplate(StepWindowControlTemplate {
-            user,
-            csrf_token,
-            automation_id,
-            step_id,
-            label,
-            post_delay_seconds,
+        "window_control" => render_tmpl!(StepWindowControlTemplate {
             action: form.action.unwrap_or_else(|| "activate".into()),
             match_pattern: form.match_pattern.unwrap_or_default(),
             match_type: form.match_type.unwrap_or_else(|| "contains".into()),
             timeout_seconds: form.timeout_seconds.unwrap_or(5.0),
-            error,
-            is_edit,
-        })
-        .into_response(),
-        "type_text" => HtmlTemplate(StepTypeTextTemplate {
-            user,
-            csrf_token,
-            automation_id,
-            step_id,
-            label,
-            post_delay_seconds,
+        }),
+        "type_text" => render_tmpl!(StepTypeTextTemplate {
             text_to_type: form.text_to_type.unwrap_or_default(),
             delay_between_keys_ms: form.delay_between_keys_ms.unwrap_or(0).max(0),
-            error,
-            is_edit,
-        })
-        .into_response(),
+        }),
         "mouse_scroll" => {
             let variables = match variables {
                 Some(v) => v,
                 None => fetch_automation_variables(db, automation_id).await,
             };
-            HtmlTemplate(StepMouseScrollTemplate {
-                user,
-                csrf_token,
-                automation_id,
-                step_id,
-                label,
-                post_delay_seconds,
+            render_tmpl!(StepMouseScrollTemplate {
                 direction: form.direction.unwrap_or_else(|| "down".into()),
                 scroll_amount: form.scroll_amount.unwrap_or(3).clamp(1, 100),
                 x_mode: form.x_mode.unwrap_or_else(|| "fixed".into()),
@@ -1877,23 +1828,14 @@ async fn render_step_form_with_options(
                 click_mode: form.click_mode.unwrap_or_else(|| "coordinates".into()),
                 region_variable_id: form.region_variable_id,
                 variables,
-                error,
-                is_edit,
             })
-            .into_response()
         }
         "mouse_click" => {
             let variables = match variables {
                 Some(v) => v,
                 None => fetch_automation_variables(db, automation_id).await,
             };
-            HtmlTemplate(StepMouseClickTemplate {
-                user,
-                csrf_token,
-                automation_id,
-                step_id,
-                label,
-                post_delay_seconds,
+            render_tmpl!(StepMouseClickTemplate {
                 x_mode: form.x_mode.unwrap_or_else(|| "fixed".into()),
                 x: form.x,
                 x_variable_id: form.x_variable_id,
@@ -1905,44 +1847,26 @@ async fn render_step_form_with_options(
                 button: form.button.unwrap_or_else(|| "left".into()),
                 click_type: form.click_type.unwrap_or_else(|| "single".into()),
                 variables,
-                error,
-                is_edit,
             })
-            .into_response()
         }
         "find_pixel_rgb" => {
             let variables = match variables {
                 Some(v) => v,
                 None => fetch_automation_variables(db, automation_id).await,
             };
-            HtmlTemplate(StepFindPixelRgbTemplate {
-                user,
-                csrf_token,
-                automation_id,
-                step_id,
-                label,
-                post_delay_seconds,
+            render_tmpl!(StepFindPixelRgbTemplate {
                 x: form.x,
                 y: form.y,
                 output_variable_id: form.output_variable_id,
                 variables,
-                error,
-                is_edit,
             })
-            .into_response()
         }
         "find_bitmap" => {
             let bundle = match bundle {
                 Some(b) => b,
                 None => fetch_step_options_bundle(db, automation_id, step_id).await,
             };
-            HtmlTemplate(StepFindBitmapTemplate {
-                user,
-                csrf_token,
-                automation_id,
-                step_id,
-                label,
-                post_delay_seconds,
+            render_tmpl!(StepFindBitmapTemplate {
                 reference_bitmap_id: form.reference_bitmap_id,
                 search_x: form.search_x,
                 search_y: form.search_y,
@@ -1955,10 +1879,7 @@ async fn render_step_form_with_options(
                 output_region_variable_id: form.output_region_variable_id,
                 bitmaps: bundle.bitmaps,
                 variables: bundle.variables,
-                error,
-                is_edit,
             })
-            .into_response()
         }
         "ocr_extract" => {
             let variables = match variables {
@@ -1970,13 +1891,7 @@ async fn render_step_form_with_options(
                 None => true,
             };
 
-            HtmlTemplate(StepOcrExtractTemplate {
-                user,
-                csrf_token,
-                automation_id,
-                step_id,
-                label,
-                post_delay_seconds,
+            render_tmpl!(StepOcrExtractTemplate {
                 search_x: form.search_x,
                 search_y: form.search_y,
                 search_width: form.search_width,
@@ -1985,10 +1900,7 @@ async fn render_step_form_with_options(
                 output_variable_id: form.output_variable_id,
                 set_as_task_output: set_task_out,
                 variables,
-                error,
-                is_edit,
             })
-            .into_response()
         }
         _ => return Redirect::to(&format!("/automations/{}", automation_id)).into_response(),
     };
@@ -2348,8 +2260,8 @@ pub async fn get_edit_step_handler(
             .flatten();
         }
         "window_control" => {
-            if let Ok(Some(wc)) = sqlx::query_as::<_, WindowControlDetailRow>(
-                "SELECT action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
+            if let Ok(Some(wc)) = sqlx::query_as::<_, WindowControlViewRow>(
+                "SELECT step_id, action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(&state.db)
@@ -2362,8 +2274,8 @@ pub async fn get_edit_step_handler(
             }
         }
         "type_text" => {
-            if let Ok(Some(tt)) = sqlx::query_as::<_, TypeTextDetailRow>(
-                "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
+            if let Ok(Some(tt)) = sqlx::query_as::<_, TypeTextViewRow>(
+                "SELECT step_id, text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(&state.db)
