@@ -1,53 +1,15 @@
+use macaddr::MacAddr6;
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
-#[inline]
-fn parse_hex_digit(b: u8) -> Result<u8, ()> {
-    match b {
-        b'0'..=b'9' => Ok(b - b'0'),
-        b'a'..=b'f' => Ok(b - b'a' + 10),
-        b'A'..=b'F' => Ok(b - b'A' + 10),
-        _ => Err(()),
-    }
-}
-
-/// Parses a MAC address string into a 6-byte array without external dependencies.
+/// Parses a MAC address string into a 6-byte array using the `macaddr` crate.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    let s = mac_str.trim();
-    let bytes = s.as_bytes();
-    let mut mac = [0u8; 6];
-
-    let parse_err = || format!("Invalid MAC address '{mac_str}'");
-
-    match bytes.len() {
-        17 => {
-            let sep = bytes[2];
-            if sep != b':' && sep != b'-' {
-                return Err(parse_err());
-            }
-            for (i, m) in mac.iter_mut().enumerate() {
-                let idx = i * 3;
-                if i < 5 && bytes[idx + 2] != sep {
-                    return Err(parse_err());
-                }
-                let hi = parse_hex_digit(bytes[idx]).map_err(|_| parse_err())?;
-                let lo = parse_hex_digit(bytes[idx + 1]).map_err(|_| parse_err())?;
-                *m = (hi << 4) | lo;
-            }
-            Ok(mac)
-        }
-        12 => {
-            for (i, m) in mac.iter_mut().enumerate() {
-                let idx = i * 2;
-                let hi = parse_hex_digit(bytes[idx]).map_err(|_| parse_err())?;
-                let lo = parse_hex_digit(bytes[idx + 1]).map_err(|_| parse_err())?;
-                *m = (hi << 4) | lo;
-            }
-            Ok(mac)
-        }
-        _ => Err(parse_err()),
-    }
+    mac_str
+        .trim()
+        .parse::<MacAddr6>()
+        .map(|m| m.into_array())
+        .map_err(|_| format!("Invalid MAC address '{mac_str}'"))
 }
 
 /// Constructs a 102-byte Wake-on-LAN Magic Packet for the given 6-byte MAC address.
