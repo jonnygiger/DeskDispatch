@@ -19,7 +19,8 @@ use uuid::Uuid;
 
 fn create_test_config() -> Config {
     Config {
-        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string(),
+        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch"
+            .to_string(),
         public_base_url: "http://localhost:3000".to_string(),
         s3_endpoint: None,
         s3_public_endpoint: None,
@@ -108,8 +109,10 @@ fn test_internal_server_error_template_rendering() {
 
 #[tokio::test]
 async fn test_fallback_404_route() {
-    let pool = sqlx::PgPool::connect_lazy("postgres://postgres:postgrespassword@localhost:5432/deskdispatch")
-        .expect("create lazy pool");
+    let pool = sqlx::PgPool::connect_lazy(
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch",
+    )
+    .expect("create lazy pool");
 
     let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(

@@ -308,4 +308,3 @@ fn test_heartbeat_response_contract() {
     assert_eq!(json["poll_interval_secs"], 5);
     assert_eq!(json["heartbeat_interval_secs"], 15);
 }
-

@@ -12,7 +12,8 @@ use tower::ServiceExt;
 
 fn create_test_config() -> Config {
     Config {
-        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string(),
+        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch"
+            .to_string(),
         public_base_url: "http://localhost:3000".to_string(),
         s3_endpoint: None,
         s3_public_endpoint: None,
@@ -40,8 +41,10 @@ fn create_test_config() -> Config {
 }
 
 fn create_test_state() -> AppState {
-    let pool = sqlx::PgPool::connect_lazy("postgres://postgres:postgrespassword@localhost:5432/deskdispatch")
-        .expect("create lazy pool");
+    let pool = sqlx::PgPool::connect_lazy(
+        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch",
+    )
+    .expect("create lazy pool");
     let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket);
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);

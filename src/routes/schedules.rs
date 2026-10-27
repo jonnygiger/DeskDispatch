@@ -336,8 +336,8 @@ pub fn compute_next_run_at(
         trimmed.to_string()
     };
 
-    let schedule = Schedule::from_str(&full_expr)
-        .map_err(|e| format!("Invalid cron expression: {e}"))?;
+    let schedule =
+        Schedule::from_str(&full_expr).map_err(|e| format!("Invalid cron expression: {e}"))?;
 
     let local_from = from_dt.with_timezone(&tz);
 
