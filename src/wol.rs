@@ -1,22 +1,60 @@
-use macaddr::MacAddr6;
 use std::net::SocketAddr;
-use std::str::FromStr;
 use tokio::net::UdpSocket;
 
-/// Parses a MAC address string into a 6-byte array.
+#[inline]
+fn parse_hex_digit(b: u8) -> Result<u8, ()> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        b'A'..=b'F' => Ok(b - b'A' + 10),
+        _ => Err(()),
+    }
+}
+
+/// Parses a MAC address string into a 6-byte array without external dependencies.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    MacAddr6::from_str(mac_str.trim())
-        .map(|mac| mac.into_array())
-        .map_err(|e| format!("Invalid MAC address '{mac_str}': {e}"))
+    let s = mac_str.trim();
+    let bytes = s.as_bytes();
+    let mut mac = [0u8; 6];
+
+    let parse_err = || format!("Invalid MAC address '{mac_str}'");
+
+    match bytes.len() {
+        17 => {
+            let sep = bytes[2];
+            if sep != b':' && sep != b'-' {
+                return Err(parse_err());
+            }
+            for (i, m) in mac.iter_mut().enumerate() {
+                let idx = i * 3;
+                if i < 5 && bytes[idx + 2] != sep {
+                    return Err(parse_err());
+                }
+                let hi = parse_hex_digit(bytes[idx]).map_err(|_| parse_err())?;
+                let lo = parse_hex_digit(bytes[idx + 1]).map_err(|_| parse_err())?;
+                *m = (hi << 4) | lo;
+            }
+            Ok(mac)
+        }
+        12 => {
+            for (i, m) in mac.iter_mut().enumerate() {
+                let idx = i * 2;
+                let hi = parse_hex_digit(bytes[idx]).map_err(|_| parse_err())?;
+                let lo = parse_hex_digit(bytes[idx + 1]).map_err(|_| parse_err())?;
+                *m = (hi << 4) | lo;
+            }
+            Ok(mac)
+        }
+        _ => Err(parse_err()),
+    }
 }
 
 /// Constructs a 102-byte Wake-on-LAN Magic Packet for the given 6-byte MAC address.
 ///
 /// The magic packet consists of 6 bytes of 0xFF followed by 16 repetitions of the target MAC address.
 pub fn create_magic_packet(mac: &[u8; 6]) -> [u8; 102] {
-    let mut packet = [0u8; 102];
-    packet[..6].fill(0xFF);
+    let mut packet = [0xFFu8; 102];
     let (chunks, _) = packet[6..].as_chunks_mut::<6>();
     for chunk in chunks {
         chunk.copy_from_slice(mac);
