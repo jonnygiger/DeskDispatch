@@ -1247,182 +1247,6 @@ pub async fn get_new_step_handler(
     .await
 }
 
-pub async fn get_new_key_press_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "key_press",
-        StepForm::default(),
-        None,
-    )
-    .await
-}
-
-pub async fn get_new_ocr_extract_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-    Query(query): Query<EditStepQuery>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "ocr_extract",
-        StepForm::from_query(query),
-        None,
-    )
-    .await
-}
-
-pub async fn get_new_window_control_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "window_control",
-        StepForm::default(),
-        None,
-    )
-    .await
-}
-
-pub async fn get_new_type_text_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "type_text",
-        StepForm::default(),
-        None,
-    )
-    .await
-}
-
-pub async fn get_new_branch_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-    Query(query): Query<EditStepQuery>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "branch",
-        StepForm::from_query(query),
-        None,
-    )
-    .await
-}
-
-pub async fn get_new_find_bitmap_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-    Query(query): Query<EditStepQuery>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "find_bitmap",
-        StepForm::from_query(query),
-        None,
-    )
-    .await
-}
-
-pub async fn get_new_find_pixel_rgb_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-    Query(query): Query<EditStepQuery>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "find_pixel_rgb",
-        StepForm::from_query(query),
-        None,
-    )
-    .await
-}
-
-pub async fn get_new_mouse_scroll_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "mouse_scroll",
-        StepForm::default(),
-        None,
-    )
-    .await
-}
-
-pub async fn get_new_mouse_click_step_handler(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<i64>,
-    Query(query): Query<EditStepQuery>,
-) -> impl IntoResponse {
-    let csrf_token = user.csrf_token.clone();
-    render_step_form(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        None,
-        "mouse_click",
-        StepForm::from_query(query),
-        None,
-    )
-    .await
-}
-
 // ============================================================================
 // Helpers for Step Persistence & Error Response Rendering
 // ============================================================================
@@ -1887,6 +1711,34 @@ async fn render_step_form(
     form: StepForm,
     error: Option<String>,
 ) -> axum::response::Response {
+    render_step_form_with_options(
+        db,
+        user,
+        csrf_token,
+        automation_id,
+        step_id,
+        step_type,
+        form,
+        error,
+        None,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn render_step_form_with_options(
+    db: &PgPool,
+    user: AuthUser,
+    csrf_token: String,
+    automation_id: i64,
+    step_id: Option<i64>,
+    step_type: &str,
+    form: StepForm,
+    error: Option<String>,
+    bundle: Option<StepOptionsBundle>,
+    variables: Option<Vec<VariableOption>>,
+) -> axum::response::Response {
     let is_edit = step_id.is_some();
     let status = if error.is_some() {
         StatusCode::BAD_REQUEST
@@ -1898,10 +1750,11 @@ async fn render_step_form(
 
     let html_body = match step_type {
         "branch" => {
-            let condition_type = form
-                .condition_type
-                .unwrap_or_else(|| "pixel_rgb".to_string());
-            let bundle = fetch_step_options_bundle(db, automation_id, step_id).await;
+            let condition_type = form.condition_type.unwrap_or_else(|| "pixel_rgb".into());
+            let bundle = match bundle {
+                Some(b) => b,
+                None => fetch_step_options_bundle(db, automation_id, step_id).await,
+            };
             HtmlTemplate(StepBranchTemplate {
                 user,
                 csrf_token,
@@ -1923,12 +1776,8 @@ async fn render_step_form(
                 search_height: form.search_height,
                 match_threshold: form.match_threshold,
                 window_match_pattern: form.window_match_pattern.unwrap_or_default(),
-                window_match_type: form
-                    .window_match_type
-                    .unwrap_or_else(|| "contains".to_string()),
-                window_check_type: form
-                    .window_check_type
-                    .unwrap_or_else(|| "exists".to_string()),
+                window_match_type: form.window_match_type.unwrap_or_else(|| "contains".into()),
+                window_check_type: form.window_check_type.unwrap_or_else(|| "exists".into()),
                 on_match_step_id: form.on_match_step_id,
                 on_no_match_step_id: form.on_no_match_step_id,
                 steps: bundle.steps,
@@ -1951,7 +1800,10 @@ async fn render_step_form(
         })
         .into_response(),
         "clipboard_control" => {
-            let variables = fetch_automation_variables(db, automation_id).await;
+            let variables = match variables {
+                Some(v) => v,
+                None => fetch_automation_variables(db, automation_id).await,
+            };
             let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
 
             HtmlTemplate(StepClipboardControlTemplate {
@@ -1961,8 +1813,8 @@ async fn render_step_form(
                 step_id,
                 label,
                 post_delay_seconds,
-                action: form.action.unwrap_or_else(|| "set_text".to_string()),
-                text_mode: form.text_mode.unwrap_or_else(|| "literal".to_string()),
+                action: form.action.unwrap_or_else(|| "set_text".into()),
+                text_mode: form.text_mode.unwrap_or_else(|| "literal".into()),
                 text_to_set: form.text_to_set,
                 input_variable_id: form.input_variable_id,
                 output_variable_id: form.output_variable_id,
@@ -1981,9 +1833,9 @@ async fn render_step_form(
             step_id,
             label,
             post_delay_seconds,
-            action: form.action.unwrap_or_else(|| "activate".to_string()),
+            action: form.action.unwrap_or_else(|| "activate".into()),
             match_pattern: form.match_pattern.unwrap_or_default(),
-            match_type: form.match_type.unwrap_or_else(|| "contains".to_string()),
+            match_type: form.match_type.unwrap_or_else(|| "contains".into()),
             timeout_seconds: form.timeout_seconds.unwrap_or(5.0),
             error,
             is_edit,
@@ -2003,7 +1855,10 @@ async fn render_step_form(
         })
         .into_response(),
         "mouse_scroll" => {
-            let variables = fetch_automation_variables(db, automation_id).await;
+            let variables = match variables {
+                Some(v) => v,
+                None => fetch_automation_variables(db, automation_id).await,
+            };
             HtmlTemplate(StepMouseScrollTemplate {
                 user,
                 csrf_token,
@@ -2011,15 +1866,15 @@ async fn render_step_form(
                 step_id,
                 label,
                 post_delay_seconds,
-                direction: form.direction.unwrap_or_else(|| "down".to_string()),
+                direction: form.direction.unwrap_or_else(|| "down".into()),
                 scroll_amount: form.scroll_amount.unwrap_or(3).clamp(1, 100),
-                x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
+                x_mode: form.x_mode.unwrap_or_else(|| "fixed".into()),
                 x: form.x,
                 x_variable_id: form.x_variable_id,
-                y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
+                y_mode: form.y_mode.unwrap_or_else(|| "fixed".into()),
                 y: form.y,
                 y_variable_id: form.y_variable_id,
-                click_mode: form.click_mode.unwrap_or_else(|| "coordinates".to_string()),
+                click_mode: form.click_mode.unwrap_or_else(|| "coordinates".into()),
                 region_variable_id: form.region_variable_id,
                 variables,
                 error,
@@ -2028,7 +1883,10 @@ async fn render_step_form(
             .into_response()
         }
         "mouse_click" => {
-            let variables = fetch_automation_variables(db, automation_id).await;
+            let variables = match variables {
+                Some(v) => v,
+                None => fetch_automation_variables(db, automation_id).await,
+            };
             HtmlTemplate(StepMouseClickTemplate {
                 user,
                 csrf_token,
@@ -2036,16 +1894,16 @@ async fn render_step_form(
                 step_id,
                 label,
                 post_delay_seconds,
-                x_mode: form.x_mode.unwrap_or_else(|| "fixed".to_string()),
+                x_mode: form.x_mode.unwrap_or_else(|| "fixed".into()),
                 x: form.x,
                 x_variable_id: form.x_variable_id,
-                y_mode: form.y_mode.unwrap_or_else(|| "fixed".to_string()),
+                y_mode: form.y_mode.unwrap_or_else(|| "fixed".into()),
                 y: form.y,
                 y_variable_id: form.y_variable_id,
-                click_mode: form.click_mode.unwrap_or_else(|| "coordinates".to_string()),
+                click_mode: form.click_mode.unwrap_or_else(|| "coordinates".into()),
                 region_variable_id: form.region_variable_id,
-                button: form.button.unwrap_or_else(|| "left".to_string()),
-                click_type: form.click_type.unwrap_or_else(|| "single".to_string()),
+                button: form.button.unwrap_or_else(|| "left".into()),
+                click_type: form.click_type.unwrap_or_else(|| "single".into()),
                 variables,
                 error,
                 is_edit,
@@ -2053,7 +1911,10 @@ async fn render_step_form(
             .into_response()
         }
         "find_pixel_rgb" => {
-            let variables = fetch_automation_variables(db, automation_id).await;
+            let variables = match variables {
+                Some(v) => v,
+                None => fetch_automation_variables(db, automation_id).await,
+            };
             HtmlTemplate(StepFindPixelRgbTemplate {
                 user,
                 csrf_token,
@@ -2071,7 +1932,10 @@ async fn render_step_form(
             .into_response()
         }
         "find_bitmap" => {
-            let bundle = fetch_step_options_bundle(db, automation_id, step_id).await;
+            let bundle = match bundle {
+                Some(b) => b,
+                None => fetch_step_options_bundle(db, automation_id, step_id).await,
+            };
             HtmlTemplate(StepFindBitmapTemplate {
                 user,
                 csrf_token,
@@ -2097,7 +1961,10 @@ async fn render_step_form(
             .into_response()
         }
         "ocr_extract" => {
-            let variables = fetch_automation_variables(db, automation_id).await;
+            let variables = match variables {
+                Some(v) => v,
+                None => fetch_automation_variables(db, automation_id).await,
+            };
             let set_task_out = match form.set_as_task_output.as_deref() {
                 Some(v) => is_form_flag_enabled(Some(v)),
                 None => true,
@@ -2466,6 +2333,9 @@ pub async fn get_edit_step_handler(
         ..Default::default()
     };
 
+    let mut pre_fetched_bundle = None;
+    let mut pre_fetched_variables = None;
+
     match step_row.step_type.as_str() {
         "key_press" => {
             form.key_combo = sqlx::query_scalar::<_, String>(
@@ -2504,13 +2374,16 @@ pub async fn get_edit_step_handler(
             }
         }
         "find_bitmap" => {
-            if let Ok(Some(fb)) = sqlx::query_as::<_, FindBitmapDetailRow>(
-                "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1",
-            )
-            .bind(sid)
-            .fetch_optional(&state.db)
-            .await
-            {
+            let (fb_res, bundle) = tokio::join!(
+                sqlx::query_as::<_, FindBitmapDetailRow>(
+                    "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1",
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_step_options_bundle(&state.db, id, Some(sid))
+            );
+            pre_fetched_bundle = Some(bundle);
+            if let Ok(Some(fb)) = fb_res {
                 form.reference_bitmap_id = query.reference_bitmap_id.or(fb.reference_bitmap_id);
                 form.search_x = query.search_x.or(fb.search_x);
                 form.search_y = query.search_y.or(fb.search_y);
@@ -2530,17 +2403,20 @@ pub async fn get_edit_step_handler(
             }
         }
         "branch" => {
-            if let Ok(Some(br)) = sqlx::query_as::<_, BranchDetailRow>(
-                r#"SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
-                          reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
-                          on_match_step_id, on_no_match_step_id,
-                          window_match_pattern, window_match_type, window_check_type
-                   FROM step_branches WHERE step_id = $1"#,
-            )
-            .bind(sid)
-            .fetch_optional(&state.db)
-            .await
-            {
+            let (br_res, bundle) = tokio::join!(
+                sqlx::query_as::<_, BranchDetailRow>(
+                    r#"SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                              reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                              on_match_step_id, on_no_match_step_id,
+                              window_match_pattern, window_match_type, window_check_type
+                       FROM step_branches WHERE step_id = $1"#,
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_step_options_bundle(&state.db, id, Some(sid))
+            );
+            pre_fetched_bundle = Some(bundle);
+            if let Ok(Some(br)) = br_res {
                 form.condition_type = Some(br.condition_type);
                 form.x = query.search_x.or(br.x);
                 form.y = query.search_y.or(br.y);
@@ -2570,13 +2446,16 @@ pub async fn get_edit_step_handler(
             }
         }
         "clipboard_control" => {
-            if let Ok(Some(cc)) = sqlx::query_as::<_, ClipboardControlDetailRow>(
-                "SELECT action, text_to_set, input_variable_id, output_variable_id, set_as_task_output, timeout_ms FROM step_clipboard_controls WHERE step_id = $1",
-            )
-            .bind(sid)
-            .fetch_optional(&state.db)
-            .await
-            {
+            let (cc_res, vars) = tokio::join!(
+                sqlx::query_as::<_, ClipboardControlDetailRow>(
+                    "SELECT action, text_to_set, input_variable_id, output_variable_id, set_as_task_output, timeout_ms FROM step_clipboard_controls WHERE step_id = $1",
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id)
+            );
+            pre_fetched_variables = Some(vars);
+            if let Ok(Some(cc)) = cc_res {
                 form.action = Some(cc.action);
                 form.text_to_set = cc.text_to_set;
                 form.input_variable_id = cc.input_variable_id;
@@ -2586,26 +2465,32 @@ pub async fn get_edit_step_handler(
             }
         }
         "find_pixel_rgb" => {
-            if let Ok(Some(fp)) = sqlx::query_as::<_, FindPixelDetailRow>(
-                "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
-            )
-            .bind(sid)
-            .fetch_optional(&state.db)
-            .await
-            {
+            let (fp_res, vars) = tokio::join!(
+                sqlx::query_as::<_, FindPixelDetailRow>(
+                    "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id)
+            );
+            pre_fetched_variables = Some(vars);
+            if let Ok(Some(fp)) = fp_res {
                 form.x = fp.x;
                 form.y = fp.y;
                 form.output_variable_id = fp.output_variable_id;
             }
         }
         "ocr_extract" => {
-            if let Ok(Some(ocr)) = sqlx::query_as::<_, OcrExtractDetailRow>(
-                "SELECT search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts WHERE step_id = $1",
-            )
-            .bind(sid)
-            .fetch_optional(&state.db)
-            .await
-            {
+            let (ocr_res, vars) = tokio::join!(
+                sqlx::query_as::<_, OcrExtractDetailRow>(
+                    "SELECT search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts WHERE step_id = $1",
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id)
+            );
+            pre_fetched_variables = Some(vars);
+            if let Ok(Some(ocr)) = ocr_res {
                 form.search_x = query.search_x.or(ocr.search_x);
                 form.search_y = query.search_y.or(ocr.search_y);
                 form.search_width = query.search_width.or(ocr.search_width);
@@ -2621,13 +2506,16 @@ pub async fn get_edit_step_handler(
             }
         }
         "mouse_scroll" => {
-            if let Ok(Some(ms)) = sqlx::query_as::<_, MouseScrollDetailRow>(
-                "SELECT direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id FROM step_mouse_scrolls WHERE step_id = $1",
-            )
-            .bind(sid)
-            .fetch_optional(&state.db)
-            .await
-            {
+            let (ms_res, vars) = tokio::join!(
+                sqlx::query_as::<_, MouseScrollDetailRow>(
+                    "SELECT direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id FROM step_mouse_scrolls WHERE step_id = $1",
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id)
+            );
+            pre_fetched_variables = Some(vars);
+            if let Ok(Some(ms)) = ms_res {
                 form.direction = Some(ms.direction);
                 form.scroll_amount = Some(ms.scroll_amount);
                 form.x = query.search_x.or(ms.x);
@@ -2644,13 +2532,16 @@ pub async fn get_edit_step_handler(
             }
         }
         "mouse_click" => {
-            if let Ok(Some(mc)) = sqlx::query_as::<_, MouseClickDetailRow>(
-                "SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1",
-            )
-            .bind(sid)
-            .fetch_optional(&state.db)
-            .await
-            {
+            let (mc_res, vars) = tokio::join!(
+                sqlx::query_as::<_, MouseClickDetailRow>(
+                    "SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1",
+                )
+                .bind(sid)
+                .fetch_optional(&state.db),
+                fetch_automation_variables(&state.db, id)
+            );
+            pre_fetched_variables = Some(vars);
+            if let Ok(Some(mc)) = mc_res {
                 form.x = mc.x;
                 form.y = mc.y;
                 form.x_variable_id = mc.x_variable_id;
@@ -2666,7 +2557,7 @@ pub async fn get_edit_step_handler(
         _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     }
 
-    render_step_form(
+    render_step_form_with_options(
         &state.db,
         user,
         csrf_token,
@@ -2675,6 +2566,8 @@ pub async fn get_edit_step_handler(
         &step_row.step_type,
         form,
         None,
+        pre_fetched_bundle,
+        pre_fetched_variables,
     )
     .await
 }
