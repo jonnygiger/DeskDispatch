@@ -2,20 +2,47 @@
 
 use axum::{
     body::{Body, to_bytes},
-    http::{Request, StatusCode, header},
+    http::{HeaderValue, Request, StatusCode, header},
 };
 use deskdispatch::AppState;
 use deskdispatch::auth::LoginRateLimiter;
-use deskdispatch::config::Config;
+use deskdispatch::config::{Config, SecretString};
 use deskdispatch::routes::static_assets::router as static_assets_router;
 use tower::ServiceExt;
 
+fn create_test_config() -> Config {
+    Config {
+        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string(),
+        public_base_url: "http://localhost:3000".to_string(),
+        s3_endpoint: None,
+        s3_public_endpoint: None,
+        s3_bucket: "deskdispatch-bucket".to_string(),
+        s3_access_key: "test_key".to_string(),
+        s3_secret_key: SecretString::from("test_secret"),
+        s3_region: "us-east-1".to_string(),
+        session_secret: SecretString::from("test_session_secret"),
+        bind_address: "0.0.0.0:3000".to_string(),
+        environment: "development".to_string(),
+        min_agent_version: None,
+        worker_poll_interval_secs: 5,
+        worker_heartbeat_interval_secs: 15,
+        trust_proxy_headers: false,
+        database_max_connections: 5,
+        database_acquire_timeout_secs: 5,
+        worker_long_poll_timeout_secs: 10,
+        session_retention_days: 7,
+        audit_log_retention_days: 90,
+        task_run_step_retention_days: 30,
+        screenshot_retention_days: 30,
+        metrics_bind_address: None,
+        unattended_registration_psk: SecretString::from("test_psk"),
+    }
+}
+
 fn create_test_state() -> AppState {
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
-    });
-    let pool = sqlx::PgPool::connect_lazy(&db_url).expect("create lazy pool");
-    let config = Config::from_env().unwrap();
+    let pool = sqlx::PgPool::connect_lazy("postgres://postgres:postgrespassword@localhost:5432/deskdispatch")
+        .expect("create lazy pool");
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket);
     let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
@@ -111,12 +138,50 @@ async fn test_static_asset_etag_304() {
         .unwrap()
         .to_string();
 
+    // Exact matching ETag -> 304 NOT_MODIFIED
     let req_304 = Request::builder()
         .uri("/static/style.css")
-        .header(header::IF_NONE_MATCH, etag)
+        .header(header::IF_NONE_MATCH, &etag)
         .body(Body::empty())
         .unwrap();
 
-    let not_modified_res = app.oneshot(req_304).await.unwrap();
+    let not_modified_res = app.clone().oneshot(req_304).await.unwrap();
     assert_eq!(not_modified_res.status(), StatusCode::NOT_MODIFIED);
+
+    // List of ETags containing valid ETag -> 304 NOT_MODIFIED
+    let list_etag = format!("\"other-etag-999\", {etag}");
+    let req_list_304 = Request::builder()
+        .uri("/static/style.css")
+        .header(header::IF_NONE_MATCH, &list_etag)
+        .body(Body::empty())
+        .unwrap();
+
+    let list_res = app.clone().oneshot(req_list_304).await.unwrap();
+    assert_eq!(list_res.status(), StatusCode::NOT_MODIFIED);
+
+    // Mismatched ETag -> 200 OK
+    let req_200 = Request::builder()
+        .uri("/static/style.css")
+        .header(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"outdated-etag-12345\""),
+        )
+        .body(Body::empty())
+        .unwrap();
+
+    let ok_res = app.oneshot(req_200).await.unwrap();
+    assert_eq!(ok_res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_static_asset_leading_slash_path_resolution() {
+    let app = static_assets_router().with_state(create_test_state());
+
+    let req = Request::builder()
+        .uri("/static//style.css")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }
