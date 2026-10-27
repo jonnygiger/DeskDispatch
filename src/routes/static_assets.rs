@@ -18,6 +18,9 @@ pub fn router() -> Router<AppState> {
 pub struct AssetFile {
     pub data: Cow<'static, [u8]>,
     pub metadata: AssetMetadata,
+    pub etag_str: &'static str,
+    pub mime_header: HeaderValue,
+    pub etag_header: HeaderValue,
 }
 
 pub struct AssetMetadata {
@@ -36,38 +39,48 @@ pub struct Assets;
 static STYLE_CSS_DATA: &[u8] = include_bytes!("../../static/style.css");
 static STYLE_CSS_HASH: LazyLock<[u8; 32]> = LazyLock::new(|| Sha256::digest(STYLE_CSS_DATA).into());
 
-impl Assets {
-    #[inline]
-    pub fn get(path: &str) -> Option<AssetFile> {
-        let clean_path = path.trim_start_matches('/');
-        match clean_path {
-            "style.css" => Some(AssetFile {
-                data: Cow::Borrowed(STYLE_CSS_DATA),
-                metadata: AssetMetadata {
-                    hash: *STYLE_CSS_HASH,
-                },
-            }),
-            _ => None,
-        }
-    }
-}
-
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 
-/// Zero-allocation helper to format a 256-bit SHA-256 hash array into a quoted ETag ASCII byte buffer
-/// `[0x22, hex_0, hex_1, ..., hex_63, 0x22]` and a pre-constructed `HeaderValue`.
-#[inline]
-fn format_etag(hash: &[u8; 32]) -> ([u8; 66], HeaderValue) {
-    let mut buf = [0u8; 66];
+fn format_etag_header(hash: &[u8; 32]) -> (String, HeaderValue) {
+    let mut buf = vec![0u8; 66];
     buf[0] = b'"';
     for (i, &b) in hash.iter().enumerate() {
         buf[1 + i * 2] = HEX_CHARS[(b >> 4) as usize];
         buf[2 + i * 2] = HEX_CHARS[(b & 0x0f) as usize];
     }
     buf[65] = b'"';
-    // Safety: buf contains only ASCII '"' and lowercase hex digits
-    let header_val = HeaderValue::from_bytes(&buf).expect("valid ASCII ETag header value");
-    (buf, header_val)
+    let etag_str = String::from_utf8(buf).expect("valid ASCII ETag");
+    let header_val = HeaderValue::from_str(&etag_str).expect("valid ETag header value");
+    (etag_str, header_val)
+}
+
+static STYLE_CSS_ETAG: LazyLock<(String, HeaderValue)> =
+    LazyLock::new(|| format_etag_header(&STYLE_CSS_HASH));
+
+static CACHE_CONTROL_IMMUTABLE: HeaderValue =
+    HeaderValue::from_static("public, max-age=31536000, immutable");
+static CONTENT_TYPE_CSS: HeaderValue = HeaderValue::from_static("text/css; charset=utf-8");
+
+impl Assets {
+    #[inline]
+    pub fn get(path: &str) -> Option<AssetFile> {
+        let clean_path = path.trim_start_matches('/');
+        match clean_path {
+            "style.css" => {
+                let (ref etag_str, ref etag_hdr) = *STYLE_CSS_ETAG;
+                Some(AssetFile {
+                    data: Cow::Borrowed(STYLE_CSS_DATA),
+                    metadata: AssetMetadata {
+                        hash: *STYLE_CSS_HASH,
+                    },
+                    etag_str: etag_str.as_str(),
+                    mime_header: CONTENT_TYPE_CSS.clone(),
+                    etag_header: etag_hdr.clone(),
+                })
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Returns the static string slice corresponding to the file extension of `path`.
@@ -92,12 +105,6 @@ pub fn get_mime_type(path: &str) -> &'static str {
     }
 }
 
-/// Returns the static `HeaderValue` corresponding to the file extension of `path`.
-#[inline]
-fn get_mime_header_value(path: &str) -> HeaderValue {
-    HeaderValue::from_static(get_mime_type(path))
-}
-
 #[tracing::instrument(skip(headers))]
 pub async fn static_asset_handler(
     headers: HeaderMap,
@@ -106,25 +113,30 @@ pub async fn static_asset_handler(
     let clean_path = path.trim_start_matches('/');
     match Assets::get(clean_path) {
         Some(content) => {
-            let (etag_buf, etag_val) = format_etag(&content.metadata.sha256_hash());
-            let etag_str = std::str::from_utf8(&etag_buf).unwrap_or_default();
-
-            let mut response_headers = HeaderMap::with_capacity(3);
-            response_headers.insert(header::CONTENT_TYPE, get_mime_header_value(clean_path));
-            response_headers.insert(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("public, max-age=31536000, immutable"),
-            );
-            response_headers.insert(header::ETAG, etag_val);
-
             if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH)
                 && let Ok(req_etag) = if_none_match.to_str()
-                && (req_etag.trim() == etag_str || req_etag.contains(etag_str))
+                && (req_etag.trim() == content.etag_str || req_etag.contains(content.etag_str))
             {
-                return (StatusCode::NOT_MODIFIED, response_headers).into_response();
+                return (
+                    StatusCode::NOT_MODIFIED,
+                    [
+                        (header::CACHE_CONTROL, CACHE_CONTROL_IMMUTABLE.clone()),
+                        (header::ETAG, content.etag_header),
+                    ],
+                )
+                    .into_response();
             }
 
-            (StatusCode::OK, response_headers, content.data).into_response()
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, content.mime_header),
+                    (header::CACHE_CONTROL, CACHE_CONTROL_IMMUTABLE.clone()),
+                    (header::ETAG, content.etag_header),
+                ],
+                content.data,
+            )
+                .into_response()
         }
         None => (StatusCode::NOT_FOUND, "404 Not Found").into_response(),
     }
@@ -175,17 +187,6 @@ mod tests {
         assert_eq!(get_mime_type("README"), "application/octet-stream");
         assert_eq!(get_mime_type("binary.dat"), "application/octet-stream");
         assert_eq!(get_mime_type(".gitignore"), "application/octet-stream");
-    }
-
-    #[test]
-    fn test_format_etag() {
-        let dummy_hash = [0xab_u8; 32];
-        let (buf, val) = format_etag(&dummy_hash);
-        let s = std::str::from_utf8(&buf).unwrap();
-        assert_eq!(s.len(), 66);
-        assert!(s.starts_with('"'));
-        assert!(s.ends_with('"'));
-        assert_eq!(val.to_str().unwrap(), s);
     }
 
     #[tokio::test]
