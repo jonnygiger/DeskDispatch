@@ -70,3 +70,7 @@ Action: Test `escape_css_url` zero-copy borrow returns, multi-character escaping
 ## 2025-03-26 Window Control & Mouse Scroll Step Summaries & Branch Validation Coverage
 Learning: Step summary formatting routines (`generate_window_control_summary`, `generate_mouse_scroll_summary`) and step branch form validation (`validate_branch_form`) for `window_state` conditions contain multiple conditional string formatting paths (e.g. action string case-insensitivity, 30-character pattern truncation, region vs coordinate target formatting, and missing pattern validation) that can be tested synchronously without database setup.
 Action: Write pure unit tests in `src/routes/automations/steps.rs` covering window control actions, pattern truncation, mouse scroll coordinate modes, and window state branch validation rules.
+
+## 2025-03-27 Worker API Key Rotation Grace Period & Expiration Coverage
+Learning: `AuthWorker::from_request_parts` supports API key rotation by matching requests against either `api_key_hash` or `(previous_api_key_hash = $1 AND previous_api_key_expires_at > now())`. Key edge cases include authenticating during non-expired rotation grace periods vs rejection after `previous_api_key_expires_at` has elapsed.
+Action: Test worker authentication during key rotation with non-expired vs expired previous API keys in `tests/worker_auth_test.rs` alongside token generation format and hash utility unit tests in `src/auth/worker.rs`.

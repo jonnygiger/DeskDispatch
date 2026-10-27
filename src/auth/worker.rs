@@ -145,15 +145,37 @@ mod tests {
     #[test]
     fn test_worker_auth_sha256_hashing() {
         let api_key = "test_api_key_1234567890_sample";
-        let mut hasher = Sha256::new();
-        hasher.update(api_key.as_bytes());
-        let hash: Vec<u8> = hasher.finalize().to_vec();
+        let hash = hash_token(api_key);
 
         assert_eq!(hash.len(), 32);
 
-        // Verify that same key produces exact same hash
-        let mut hasher2 = Sha256::new();
-        hasher2.update(api_key.as_bytes());
-        assert_eq!(hash, hasher2.finalize().to_vec());
+        // Verify that same key produces exact same hash via hash_token helper
+        let hash2 = hash_token(api_key);
+        assert_eq!(hash, hash2);
+
+        // Different keys produce different hashes
+        let diff_hash = hash_token("different_api_key");
+        assert_ne!(hash, diff_hash);
+    }
+
+    #[test]
+    fn test_token_generation_format_and_uniqueness() {
+        let key1 = generate_worker_api_key();
+        let key2 = generate_worker_api_key();
+
+        assert!(key1.starts_with("dd_pk_"));
+        assert!(key2.starts_with("dd_pk_"));
+        assert_ne!(key1, key2);
+        // dd_pk_ (6 chars) + 2x 32-char simple UUIDs = 70 chars
+        assert_eq!(key1.len(), 70);
+
+        let reg1 = generate_registration_token();
+        let reg2 = generate_registration_token();
+
+        assert!(reg1.starts_with("dd_reg_"));
+        assert!(reg2.starts_with("dd_reg_"));
+        assert_ne!(reg1, reg2);
+        // dd_reg_ (7 chars) + 2x 32-char simple UUIDs = 71 chars
+        assert_eq!(reg1.len(), 71);
     }
 }
