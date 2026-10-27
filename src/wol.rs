@@ -1,13 +1,52 @@
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
-/// Parses a MAC address string into a 6-byte array without intermediate heap allocations.
+/// Parses a MAC address string into a 6-byte array without intermediate heap allocations or external dependencies.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    mac_str
-        .parse::<macaddr::MacAddr6>()
-        .map(|addr| addr.into_array())
-        .map_err(|e| format!("Invalid MAC address '{}': {}", mac_str, e))
+    let s = mac_str.trim();
+    let mut bytes = [0u8; 6];
+    let mut count = 0;
+    let mut current_byte = 0u8;
+    let mut nibble_idx = 0;
+
+    for &b in s.as_bytes() {
+        if b == b':' || b == b'-' {
+            continue;
+        }
+        let val = match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            b'A'..=b'F' => b - b'A' + 10,
+            _ => {
+                return Err(format!(
+                    "Invalid MAC address '{mac_str}': invalid hex character"
+                ));
+            }
+        };
+        if nibble_idx == 0 {
+            current_byte = val << 4;
+            nibble_idx = 1;
+        } else {
+            current_byte |= val;
+            if count >= 6 {
+                return Err(format!(
+                    "Invalid MAC address '{mac_str}': too many hex digits"
+                ));
+            }
+            bytes[count] = current_byte;
+            count += 1;
+            nibble_idx = 0;
+        }
+    }
+
+    if count == 6 && nibble_idx == 0 {
+        Ok(bytes)
+    } else {
+        Err(format!(
+            "Invalid MAC address '{mac_str}': expected 6 hex bytes"
+        ))
+    }
 }
 
 /// Constructs a 102-byte Wake-on-LAN Magic Packet for the given 6-byte MAC address.
@@ -30,22 +69,22 @@ pub async fn send_wol_packet(mac_str: &str) -> Result<(), String> {
 
     let socket = UdpSocket::bind("0.0.0.0:0")
         .await
-        .map_err(|e| format!("Failed to bind UDP socket for WOL: {}", e))?;
+        .map_err(|e| format!("Failed to bind UDP socket for WOL: {e}"))?;
 
     socket
         .set_broadcast(true)
-        .map_err(|e| format!("Failed to set UDP broadcast option for WOL: {}", e))?;
+        .map_err(|e| format!("Failed to set UDP broadcast option for WOL: {e}"))?;
 
     let dest: SocketAddr = "255.255.255.255:9"
         .parse()
-        .map_err(|e| format!("Invalid broadcast address for WOL: {}", e))?;
+        .map_err(|e| format!("Invalid broadcast address for WOL: {e}"))?;
 
     socket
         .send_to(&packet, dest)
         .await
-        .map_err(|e| format!("Failed to send WOL packet to {}: {}", mac_str, e))?;
+        .map_err(|e| format!("Failed to send WOL packet to {mac_str}: {e}"))?;
 
-    tracing::info!("Sent Wake-on-LAN magic packet to MAC {}", mac_str);
+    tracing::info!("Sent Wake-on-LAN magic packet to MAC {mac_str}");
     Ok(())
 }
 
