@@ -94,12 +94,8 @@ async fn test_automations_crud_and_steps_ordering() {
             axum::routing::get(get_step_type_picker_handler),
         )
         .route(
-            "/automations/{id}/steps/new/key_press",
-            axum::routing::get(get_new_key_press_step_handler),
-        )
-        .route(
-            "/automations/{id}/steps/new/mouse_click",
-            axum::routing::get(get_new_mouse_click_step_handler),
+            "/automations/{id}/steps/new/{step_type}",
+            axum::routing::get(get_new_step_handler),
         )
         .route(
             "/automations/{id}/steps",
@@ -321,8 +317,8 @@ async fn test_mouse_click_step_crud_and_validation() {
             axum::routing::get(get_automation_detail_handler),
         )
         .route(
-            "/automations/{id}/steps/new/mouse_click",
-            axum::routing::get(get_new_mouse_click_step_handler),
+            "/automations/{id}/steps/new/{step_type}",
+            axum::routing::get(get_new_step_handler),
         )
         .route(
             "/automations/{id}/steps",
@@ -559,8 +555,8 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
             axum::routing::get(get_automation_detail_handler),
         )
         .route(
-            "/automations/{id}/steps/new/find_pixel_rgb",
-            axum::routing::get(get_new_find_pixel_rgb_step_handler),
+            "/automations/{id}/steps/new/{step_type}",
+            axum::routing::get(get_new_step_handler),
         )
         .route(
             "/automations/{id}/steps",
@@ -863,8 +859,8 @@ async fn test_type_text_step_crud_and_validation() {
             axum::routing::get(get_automation_detail_handler),
         )
         .route(
-            "/automations/{id}/steps/new/type_text",
-            axum::routing::get(get_new_type_text_step_handler),
+            "/automations/{id}/steps/new/{step_type}",
+            axum::routing::get(get_new_step_handler),
         )
         .route(
             "/automations/{id}/steps",
@@ -1088,8 +1084,8 @@ async fn test_window_control_step_crud_and_validation() {
             axum::routing::get(get_automation_detail_handler),
         )
         .route(
-            "/automations/{id}/steps/new/window_control",
-            axum::routing::get(get_new_window_control_step_handler),
+            "/automations/{id}/steps/new/{step_type}",
+            axum::routing::get(get_new_step_handler),
         )
         .route(
             "/automations/{id}/steps",
@@ -1323,8 +1319,8 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
             axum::routing::get(get_automation_detail_handler),
         )
         .route(
-            "/automations/{id}/steps/new/branch",
-            axum::routing::get(get_new_branch_step_handler),
+            "/automations/{id}/steps/new/{step_type}",
+            axum::routing::get(get_new_step_handler),
         )
         .route(
             "/automations/{id}/steps",
@@ -1785,8 +1781,8 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
             axum::routing::get(get_bitmap_commit_handler).post(bitmaps::post_bitmap_commit_handler),
         )
         .route(
-            "/automations/{id}/steps/new/find_bitmap",
-            axum::routing::get(get_new_find_bitmap_step_handler),
+            "/automations/{id}/steps/new/{step_type}",
+            axum::routing::get(get_new_step_handler),
         )
         .route(
             "/automations/{id}/steps",
