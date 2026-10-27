@@ -1,52 +1,14 @@
+use macaddr::MacAddr6;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use tokio::net::UdpSocket;
 
-/// Parses a MAC address string into a 6-byte array without intermediate heap allocations or external dependencies.
+/// Parses a MAC address string into a 6-byte array.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    let s = mac_str.trim();
-    let mut bytes = [0u8; 6];
-    let mut count = 0;
-    let mut current_byte = 0u8;
-    let mut nibble_idx = 0;
-
-    for &b in s.as_bytes() {
-        if b == b':' || b == b'-' {
-            continue;
-        }
-        let val = match b {
-            b'0'..=b'9' => b - b'0',
-            b'a'..=b'f' => b - b'a' + 10,
-            b'A'..=b'F' => b - b'A' + 10,
-            _ => {
-                return Err(format!(
-                    "Invalid MAC address '{mac_str}': invalid hex character"
-                ));
-            }
-        };
-        if nibble_idx == 0 {
-            current_byte = val << 4;
-            nibble_idx = 1;
-        } else {
-            current_byte |= val;
-            if count >= 6 {
-                return Err(format!(
-                    "Invalid MAC address '{mac_str}': too many hex digits"
-                ));
-            }
-            bytes[count] = current_byte;
-            count += 1;
-            nibble_idx = 0;
-        }
-    }
-
-    if count == 6 && nibble_idx == 0 {
-        Ok(bytes)
-    } else {
-        Err(format!(
-            "Invalid MAC address '{mac_str}': expected 6 hex bytes"
-        ))
-    }
+    MacAddr6::from_str(mac_str.trim())
+        .map(|mac| mac.into_array())
+        .map_err(|e| format!("Invalid MAC address '{mac_str}': {e}"))
 }
 
 /// Constructs a 102-byte Wake-on-LAN Magic Packet for the given 6-byte MAC address.
