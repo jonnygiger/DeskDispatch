@@ -182,3 +182,121 @@ async fn test_worker_auth_extractor_integration() {
     assert_eq!(resp_json["hostname"], hostname);
     assert_eq!(resp_json["display_name"], display_name);
 }
+
+#[tokio::test]
+async fn test_worker_auth_key_rotation_and_expiration() {
+    let Some(pool) = get_test_pool().await else {
+        println!("Database not available, skipping worker auth key rotation test");
+        return;
+    };
+
+    let current_api_key = format!("curr_key_{}", Uuid::new_v4().simple());
+    let current_key_hash = Sha256::digest(current_api_key.as_bytes()).to_vec();
+
+    let previous_api_key = format!("prev_key_{}", Uuid::new_v4().simple());
+    let previous_key_hash = Sha256::digest(previous_api_key.as_bytes()).to_vec();
+
+    let hostname = format!("rotation-host-{}", Uuid::new_v4().simple());
+    let display_name = "Key Rotation Test Worker PC";
+
+    // Insert worker with active previous API key valid for 1 hour in the future
+    let worker_id: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO task_worker_pcs (
+            hostname, display_name, api_key_hash, previous_api_key_hash,
+            previous_api_key_expires_at, status
+        )
+        VALUES ($1, $2, $3, $4, now() + interval '1 hour', 'online')
+        RETURNING id
+        "#,
+    )
+    .bind(&hostname)
+    .bind(display_name)
+    .bind(&current_key_hash)
+    .bind(&previous_key_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let _cleanup_guard = WorkerAuthCleanupGuard {
+        pool: pool.clone(),
+        worker_id,
+    };
+
+    let config = Config::from_env().unwrap();
+    let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
+        "key",
+        "secret",
+        "us-east-1",
+        None::<String>,
+    );
+
+    let state = AppState {
+        db: pool.clone(),
+        storage,
+        config: config.clone(),
+        rate_limiter: deskdispatch::auth::LoginRateLimiter::default(),
+        task_queue_notifier: tokio::sync::broadcast::channel::<()>(100).0,
+        wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+
+    let app = Router::new()
+        .route(
+            "/api/v1/workers/test-auth",
+            get(test_protected_worker_route),
+        )
+        .with_state(state);
+
+    // 1. Authenticate using non-expired previous API key -> 200 OK
+    let req = Request::builder()
+        .uri("/api/v1/workers/test-auth")
+        .header(AUTHORIZATION, format!("Bearer {}", previous_api_key))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 2. Authenticate using current API key -> 200 OK
+    let req = Request::builder()
+        .uri("/api/v1/workers/test-auth")
+        .header(AUTHORIZATION, format!("Bearer {}", current_api_key))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 3. Expire the previous API key by updating previous_api_key_expires_at to 1 hour in the past
+    sqlx::query(
+        r#"
+        UPDATE task_worker_pcs
+        SET previous_api_key_expires_at = now() - interval '1 hour'
+        WHERE id = $1
+        "#,
+    )
+    .bind(worker_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // 4. Authenticate using expired previous API key -> 401 Unauthorized
+    let req = Request::builder()
+        .uri("/api/v1/workers/test-auth")
+        .header(AUTHORIZATION, format!("Bearer {}", previous_api_key))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // 5. Current API key still authenticates successfully -> 200 OK
+    let req = Request::builder()
+        .uri("/api/v1/workers/test-auth")
+        .header(AUTHORIZATION, format!("Bearer {}", current_api_key))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
