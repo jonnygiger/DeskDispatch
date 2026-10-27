@@ -588,20 +588,8 @@ impl StepRunner {
                     *on_no_match_step_id
                 };
 
-                let next_step_idx = target_step_id.and_then(|sid| {
-                    all_steps.iter().position(|s| match s {
-                        StepPayload::MouseClick { id, .. } => *id == sid,
-                        StepPayload::KeyPress { id, .. } => *id == sid,
-                        StepPayload::TypeText { id, .. } => *id == sid,
-                        StepPayload::WindowControl { id, .. } => *id == sid,
-                        StepPayload::FindPixelRgb { id, .. } => *id == sid,
-                        StepPayload::FindBitmap { id, .. } => *id == sid,
-                        StepPayload::Branch { id, .. } => *id == sid,
-                        StepPayload::OcrExtract { id, .. } => *id == sid,
-                        StepPayload::ClipboardControl { id, .. } => *id == sid,
-                        StepPayload::MouseScroll { id, .. } => *id == sid,
-                    })
-                });
+                let next_step_idx =
+                    target_step_id.and_then(|sid| all_steps.iter().position(|s| s.id() == sid));
 
                 let status = if is_match {
                     "branch_matched"
