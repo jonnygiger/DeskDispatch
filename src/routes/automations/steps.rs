@@ -129,12 +129,6 @@ struct OcrExtractDetailRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct TypeTextDetailRow {
-    text_to_type: String,
-    delay_between_keys_ms: i32,
-}
-
-#[derive(sqlx::FromRow)]
 struct WindowControlViewRow {
     step_id: i64,
     action: String,
@@ -150,14 +144,6 @@ struct ClipboardControlDetailRow {
     input_variable_id: Option<i64>,
     output_variable_id: Option<i64>,
     set_as_task_output: bool,
-    timeout_ms: i64,
-}
-
-#[derive(sqlx::FromRow)]
-struct WindowControlDetailRow {
-    action: String,
-    match_pattern: String,
-    match_type: String,
     timeout_ms: i64,
 }
 
@@ -2274,8 +2260,8 @@ pub async fn get_edit_step_handler(
             .flatten();
         }
         "window_control" => {
-            if let Ok(Some(wc)) = sqlx::query_as::<_, WindowControlDetailRow>(
-                "SELECT action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
+            if let Ok(Some(wc)) = sqlx::query_as::<_, WindowControlViewRow>(
+                "SELECT step_id, action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(&state.db)
@@ -2288,8 +2274,8 @@ pub async fn get_edit_step_handler(
             }
         }
         "type_text" => {
-            if let Ok(Some(tt)) = sqlx::query_as::<_, TypeTextDetailRow>(
-                "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
+            if let Ok(Some(tt)) = sqlx::query_as::<_, TypeTextViewRow>(
+                "SELECT step_id, text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(&state.db)
