@@ -8,9 +8,44 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
-use deskdispatch::{AppState, auth::generate_csrf_token, config::Config, routes::*};
+use deskdispatch::{
+    AppState,
+    auth::generate_csrf_token,
+    config::{Config, SecretString},
+    routes::*,
+};
 use sqlx::PgPool;
 use tower::ServiceExt;
+
+fn create_test_config() -> Config {
+    Config {
+        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch"
+            .to_string(),
+        public_base_url: "http://localhost:3000".to_string(),
+        s3_endpoint: None,
+        s3_public_endpoint: None,
+        s3_bucket: "deskdispatch-bucket".to_string(),
+        s3_access_key: "test_key".to_string(),
+        s3_secret_key: SecretString::from("test_secret"),
+        s3_region: "us-east-1".to_string(),
+        session_secret: SecretString::from("test_session_secret"),
+        bind_address: "0.0.0.0:3000".to_string(),
+        environment: "development".to_string(),
+        min_agent_version: None,
+        worker_poll_interval_secs: 5,
+        worker_heartbeat_interval_secs: 15,
+        trust_proxy_headers: false,
+        database_max_connections: 5,
+        database_acquire_timeout_secs: 5,
+        worker_long_poll_timeout_secs: 10,
+        session_retention_days: 7,
+        audit_log_retention_days: 90,
+        task_run_step_retention_days: 30,
+        screenshot_retention_days: 30,
+        metrics_bind_address: None,
+        unattended_registration_psk: SecretString::from("test_psk"),
+    }
+}
 
 async fn get_test_pool() -> Option<PgPool> {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
@@ -23,8 +58,135 @@ async fn get_test_pool() -> Option<PgPool> {
         .ok()
 }
 
+struct AutomationsCleanupGuard {
+    pool: PgPool,
+    user_ids: Vec<i64>,
+    automation_ids: Vec<i64>,
+    bitmap_ids: Vec<i64>,
+}
+
+impl Drop for AutomationsCleanupGuard {
+    fn drop(&mut self) {
+        if self.user_ids.is_empty() && self.automation_ids.is_empty() && self.bitmap_ids.is_empty()
+        {
+            return;
+        }
+        let pool = self.pool.clone();
+        let user_ids = self.user_ids.clone();
+        let automation_ids = self.automation_ids.clone();
+        let bitmap_ids = self.bitmap_ids.clone();
+
+        let cleanup = async move {
+            if !automation_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM automation_steps WHERE automation_id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+                let _ =
+                    sqlx::query("DELETE FROM automation_variables WHERE automation_id = ANY($1)")
+                        .bind(&automation_ids)
+                        .execute(&pool)
+                        .await;
+                let _ = sqlx::query(
+                    "DELETE FROM automation_parameters WHERE automation_id = ANY($1)",
+                )
+                .bind(&automation_ids)
+                .execute(&pool)
+                .await;
+                let _ = sqlx::query("DELETE FROM automations WHERE id = ANY($1)")
+                    .bind(&automation_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !bitmap_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM bitmaps WHERE id = ANY($1)")
+                    .bind(&bitmap_ids)
+                    .execute(&pool)
+                    .await;
+            }
+            if !user_ids.is_empty() {
+                let _ = sqlx::query("DELETE FROM sessions WHERE user_id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+                let _ = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+                    .bind(&user_ids)
+                    .execute(&pool)
+                    .await;
+            }
+        };
+
+        let _ = std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                rt.block_on(cleanup);
+            }
+        })
+        .join();
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct StepIdTypeRow {
+    id: i64,
+    step_type: String,
+    label: Option<String>,
+    post_delay_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct MouseClickDbRow {
+    x: Option<i32>,
+    y: Option<i32>,
+    x_variable_id: Option<i64>,
+    #[allow(dead_code)]
+    y_variable_id: Option<i64>,
+    button: String,
+    click_type: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct FindPixelDbRow {
+    x: i32,
+    y: i32,
+    output_variable_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct TypeTextDbRow {
+    text_to_type: String,
+    delay_between_keys_ms: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct WindowControlDbRow {
+    action: String,
+    match_pattern: String,
+    match_type: String,
+    timeout_ms: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct BranchDbRow {
+    condition_type: String,
+    automation_id: i64,
+    on_match_step_id: Option<i64>,
+    on_no_match_step_id: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ParamDbRow {
+    name: String,
+    #[allow(dead_code)]
+    param_type: String,
+    default_value: String,
+    description: String,
+}
+
 async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, String) {
-    let row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role) VALUES ($1, 'hash', $2, $3) RETURNING id",
     )
     .bind(username)
@@ -34,9 +196,7 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
     .await
     .unwrap();
 
-    let user_id: i64 = sqlx::Row::get(&row, "id");
-
-    let session_row = sqlx::query(
+    let session_id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO sessions (user_id, expires_at) VALUES ($1, now() + interval '1 hour') RETURNING id",
     )
     .bind(user_id)
@@ -44,7 +204,6 @@ async fn create_test_user(pool: &PgPool, username: &str, role: &str) -> (i64, St
     .await
     .unwrap();
 
-    let session_id: uuid::Uuid = sqlx::Row::get(&session_row, "id");
     (user_id, session_id.to_string())
 }
 
@@ -55,7 +214,7 @@ async fn test_automations_crud_and_steps_ordering() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -127,12 +286,20 @@ async fn test_automations_crud_and_steps_ordering() {
         ))
         .with_state(state.clone());
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("auto_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+
+    let mut guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
+
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
@@ -164,6 +331,7 @@ async fn test_automations_crud_and_steps_ordering() {
         .trim_start_matches("/automations/")
         .parse()
         .unwrap();
+    guard.automation_ids.push(automation_id);
 
     // 2. Fetch automation details
     let req = Request::builder()
@@ -206,16 +374,16 @@ async fn test_automations_crud_and_steps_ordering() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify steps in DB
-    let steps = sqlx::query(
-        "SELECT id, position FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC",
+    let step_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(steps.len(), 2);
-    let step1_id: i64 = sqlx::Row::get(&steps[0], "id");
-    let step2_id: i64 = sqlx::Row::get(&steps[1], "id");
+    assert_eq!(step_ids.len(), 2);
+    let step1_id = step_ids[0];
+    let step2_id = step_ids[1];
 
     // 4. Move step 2 UP
     let move_body = format!("csrf_token={}", csrf_token);
@@ -233,15 +401,14 @@ async fn test_automations_crud_and_steps_ordering() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify step 2 is now first
-    let steps_after_move = sqlx::query(
-        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC",
+    let steps_after_move: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(&pool)
     .await
     .unwrap();
-    let first_id: i64 = sqlx::Row::get(&steps_after_move[0], "id");
-    assert_eq!(first_id, step2_id);
+    assert_eq!(steps_after_move[0], step2_id);
 
     // 5. Delete step 1
     let req = Request::builder()
@@ -257,7 +424,7 @@ async fn test_automations_crud_and_steps_ordering() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
-    let remaining_steps = sqlx::query("SELECT id FROM automation_steps WHERE automation_id = $1")
+    let remaining_steps: Vec<i64> = sqlx::query_scalar("SELECT id FROM automation_steps WHERE automation_id = $1")
         .bind(automation_id)
         .fetch_all(&pool)
         .await
@@ -275,7 +442,7 @@ async fn test_automations_crud_and_steps_ordering() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
-    let auto_check = sqlx::query("SELECT id FROM automations WHERE id = $1")
+    let auto_check: Option<i64> = sqlx::query_scalar("SELECT id FROM automations WHERE id = $1")
         .bind(automation_id)
         .fetch_optional(&pool)
         .await
@@ -290,7 +457,7 @@ async fn test_mouse_click_step_crud_and_validation() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -338,12 +505,20 @@ async fn test_mouse_click_step_crud_and_validation() {
         ))
         .with_state(state.clone());
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("mc_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+
+    let mut guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
+
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
@@ -374,6 +549,7 @@ async fn test_mouse_click_step_crud_and_validation() {
         .trim_start_matches("/automations/")
         .parse()
         .unwrap();
+    guard.automation_ids.push(automation_id);
 
     // 2. GET new mouse_click step page with query params
     let req = Request::builder()
@@ -419,44 +595,35 @@ async fn test_mouse_click_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify DB insertion
-    let step_row = sqlx::query(
+    let step_row: StepIdTypeRow = sqlx::query_as(
         "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1",
     )
     .bind(automation_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step_id: i64 = sqlx::Row::get(&step_row, "id");
-    let step_type: String = sqlx::Row::get(&step_row, "step_type");
-    let label: Option<String> = sqlx::Row::get(&step_row, "label");
-    let post_delay_ms: i32 = sqlx::Row::get(&step_row, "post_delay_ms");
 
-    assert_eq!(step_type, "mouse_click");
-    assert_eq!(label.as_deref(), Some("Click Submit"));
-    assert_eq!(post_delay_ms, 500);
+    assert_eq!(step_row.step_type, "mouse_click");
+    assert_eq!(step_row.label.as_deref(), Some("Click Submit"));
+    assert_eq!(step_row.post_delay_ms, 500);
 
-    let click_row = sqlx::query("SELECT x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
-        .bind(step_id)
+    let click_row: MouseClickDbRow = sqlx::query_as("SELECT x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
+        .bind(step_row.id)
         .fetch_one(&pool)
         .await
         .unwrap();
 
-    let x: Option<i32> = sqlx::Row::get(&click_row, "x");
-    let y: Option<i32> = sqlx::Row::get(&click_row, "y");
-    let button: String = sqlx::Row::get(&click_row, "button");
-    let click_type: String = sqlx::Row::get(&click_row, "click_type");
-
-    assert_eq!(x, Some(824));
-    assert_eq!(y, Some(391));
-    assert_eq!(button, "left");
-    assert_eq!(click_type, "single");
+    assert_eq!(click_row.x, Some(824));
+    assert_eq!(click_row.y, Some(391));
+    assert_eq!(click_row.button, "left");
+    assert_eq!(click_row.click_type, "single");
 
     // 5. GET edit mouse_click page
     let req = Request::builder()
         .method("GET")
         .uri(format!(
             "/automations/{}/steps/{}/edit",
-            automation_id, step_id
+            automation_id, step_row.id
         ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
@@ -465,12 +632,11 @@ async fn test_mouse_click_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::OK);
 
     // 6. Create variable and update step to variable binding
-    let var_row = sqlx::query("INSERT INTO automation_variables (automation_id, name, var_type) VALUES ($1, 'target_x', 'int') RETURNING id")
+    let var_id: i64 = sqlx::query_scalar("INSERT INTO automation_variables (automation_id, name, var_type) VALUES ($1, 'target_x', 'int') RETURNING id")
         .bind(automation_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let var_id: i64 = sqlx::Row::get(&var_row, "id");
 
     let edit_body = format!(
         "step_type=mouse_click&label=Click+Variable&x_mode=variable&x_variable_id={}&y_mode=fixed&y=400&button=right&click_type=double&post_delay_seconds=1.0&csrf_token={}",
@@ -478,7 +644,7 @@ async fn test_mouse_click_step_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, step_id))
+        .uri(format!("/automations/{}/steps/{}", automation_id, step_row.id))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_body))
@@ -487,23 +653,17 @@ async fn test_mouse_click_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify updated values in DB
-    let updated_click_row = sqlx::query("SELECT x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
-        .bind(step_id)
+    let updated_click_row: MouseClickDbRow = sqlx::query_as("SELECT x, y, x_variable_id, y_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1")
+        .bind(step_row.id)
         .fetch_one(&pool)
         .await
         .unwrap();
 
-    let updated_x: Option<i32> = sqlx::Row::get(&updated_click_row, "x");
-    let updated_y: Option<i32> = sqlx::Row::get(&updated_click_row, "y");
-    let updated_x_var: Option<i64> = sqlx::Row::get(&updated_click_row, "x_variable_id");
-    let updated_button: String = sqlx::Row::get(&updated_click_row, "button");
-    let updated_click_type: String = sqlx::Row::get(&updated_click_row, "click_type");
-
-    assert_eq!(updated_x, None);
-    assert_eq!(updated_x_var, Some(var_id));
-    assert_eq!(updated_y, Some(400));
-    assert_eq!(updated_button, "right");
-    assert_eq!(updated_click_type, "double");
+    assert_eq!(updated_click_row.x, None);
+    assert_eq!(updated_click_row.x_variable_id, Some(var_id));
+    assert_eq!(updated_click_row.y, Some(400));
+    assert_eq!(updated_click_row.button, "right");
+    assert_eq!(updated_click_row.click_type, "double");
 
     // 7. Verify plain-language string rendering in detail page for mouse_click with variable
     let req = Request::builder()
@@ -528,7 +688,7 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -576,12 +736,20 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
         ))
         .with_state(state.clone());
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("fp_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+
+    let mut guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
+
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
@@ -612,6 +780,7 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
         .trim_start_matches("/automations/")
         .parse()
         .unwrap();
+    guard.automation_ids.push(automation_id);
 
     // 2. GET new find_pixel_rgb step page
     let req = Request::builder()
@@ -654,43 +823,35 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify DB insertion
-    let step_row = sqlx::query(
+    let step_row: StepIdTypeRow = sqlx::query_as(
         "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1",
     )
     .bind(automation_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step_id: i64 = sqlx::Row::get(&step_row, "id");
-    let step_type: String = sqlx::Row::get(&step_row, "step_type");
-    let label: Option<String> = sqlx::Row::get(&step_row, "label");
-    let post_delay_ms: i32 = sqlx::Row::get(&step_row, "post_delay_ms");
 
-    assert_eq!(step_type, "find_pixel_rgb");
-    assert_eq!(label.as_deref(), Some("Sample Pixel"));
-    assert_eq!(post_delay_ms, 500);
+    assert_eq!(step_row.step_type, "find_pixel_rgb");
+    assert_eq!(step_row.label.as_deref(), Some("Sample Pixel"));
+    assert_eq!(step_row.post_delay_ms, 500);
 
-    let fp_row =
-        sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
-            .bind(step_id)
+    let fp_row: FindPixelDbRow =
+        sqlx::query_as("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
+            .bind(step_row.id)
             .fetch_one(&pool)
             .await
             .unwrap();
 
-    let x: i32 = sqlx::Row::get(&fp_row, "x");
-    let y: i32 = sqlx::Row::get(&fp_row, "y");
-    let output_var_id: Option<i64> = sqlx::Row::get(&fp_row, "output_variable_id");
-
-    assert_eq!(x, 100);
-    assert_eq!(y, 200);
-    assert_eq!(output_var_id, None);
+    assert_eq!(fp_row.x, 100);
+    assert_eq!(fp_row.y, 200);
+    assert_eq!(fp_row.output_variable_id, None);
 
     // 5. GET edit page
     let req = Request::builder()
         .method("GET")
         .uri(format!(
             "/automations/{}/steps/{}/edit",
-            automation_id, step_id
+            automation_id, step_row.id
         ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
@@ -699,12 +860,11 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::OK);
 
     // 6. Create output variable and update step
-    let var_row = sqlx::query("INSERT INTO automation_variables (automation_id, name, var_type) VALUES ($1, 'bg_color', 'color') RETURNING id")
+    let var_id: i64 = sqlx::query_scalar("INSERT INTO automation_variables (automation_id, name, var_type) VALUES ($1, 'bg_color', 'color') RETURNING id")
         .bind(automation_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let var_id: i64 = sqlx::Row::get(&var_row, "id");
 
     let edit_body = format!(
         "step_type=find_pixel_rgb&label=Updated+Pixel&x=150&y=250&output_variable_id={}&post_delay_seconds=1.0&csrf_token={}",
@@ -712,7 +872,7 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, step_id))
+        .uri(format!("/automations/{}/steps/{}", automation_id, step_row.id))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_body))
@@ -721,20 +881,16 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify updated values in DB
-    let updated_fp_row =
-        sqlx::query("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
-            .bind(step_id)
+    let updated_fp_row: FindPixelDbRow =
+        sqlx::query_as("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
+            .bind(step_row.id)
             .fetch_one(&pool)
             .await
             .unwrap();
 
-    let updated_x: i32 = sqlx::Row::get(&updated_fp_row, "x");
-    let updated_y: i32 = sqlx::Row::get(&updated_fp_row, "y");
-    let updated_output_var_id: Option<i64> = sqlx::Row::get(&updated_fp_row, "output_variable_id");
-
-    assert_eq!(updated_x, 150);
-    assert_eq!(updated_y, 250);
-    assert_eq!(updated_output_var_id, Some(var_id));
+    assert_eq!(updated_fp_row.x, 150);
+    assert_eq!(updated_fp_row.y, 250);
+    assert_eq!(updated_fp_row.output_variable_id, Some(var_id));
 
     // 7. Verify plain-language string rendering in detail page
     let req = Request::builder()
@@ -759,7 +915,7 @@ async fn test_step_type_picker_interface() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -787,12 +943,19 @@ async fn test_step_type_picker_interface() {
         ))
         .with_state(state.clone());
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("picker_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+
+    let _guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
 
     let req = Request::builder()
         .method("GET")
@@ -832,7 +995,7 @@ async fn test_type_text_step_crud_and_validation() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -880,12 +1043,20 @@ async fn test_type_text_step_crud_and_validation() {
         ))
         .with_state(state.clone());
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("tt_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+
+    let mut guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
+
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
@@ -916,6 +1087,7 @@ async fn test_type_text_step_crud_and_validation() {
         .trim_start_matches("/automations/")
         .parse()
         .unwrap();
+    guard.automation_ids.push(automation_id);
 
     // 2. GET new type_text step page
     let req = Request::builder()
@@ -961,42 +1133,35 @@ async fn test_type_text_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify DB insertion
-    let step_row = sqlx::query(
+    let step_row: StepIdTypeRow = sqlx::query_as(
         "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1",
     )
     .bind(automation_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step_id: i64 = sqlx::Row::get(&step_row, "id");
-    let step_type: String = sqlx::Row::get(&step_row, "step_type");
-    let label: Option<String> = sqlx::Row::get(&step_row, "label");
-    let post_delay_ms: i32 = sqlx::Row::get(&step_row, "post_delay_ms");
 
-    assert_eq!(step_type, "type_text");
-    assert_eq!(label.as_deref(), Some("Type Greeting"));
-    assert_eq!(post_delay_ms, 500);
+    assert_eq!(step_row.step_type, "type_text");
+    assert_eq!(step_row.label.as_deref(), Some("Type Greeting"));
+    assert_eq!(step_row.post_delay_ms, 500);
 
-    let tt_row = sqlx::query(
+    let tt_row: TypeTextDbRow = sqlx::query_as(
         "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
     )
-    .bind(step_id)
+    .bind(step_row.id)
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let text_to_type: String = sqlx::Row::get(&tt_row, "text_to_type");
-    let delay_between_keys_ms: i32 = sqlx::Row::get(&tt_row, "delay_between_keys_ms");
-
-    assert_eq!(text_to_type, "Hello World");
-    assert_eq!(delay_between_keys_ms, 50);
+    assert_eq!(tt_row.text_to_type, "Hello World");
+    assert_eq!(tt_row.delay_between_keys_ms, 50);
 
     // 5. GET edit page
     let req = Request::builder()
         .method("GET")
         .uri(format!(
             "/automations/{}/steps/{}/edit",
-            automation_id, step_id
+            automation_id, step_row.id
         ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
@@ -1011,7 +1176,7 @@ async fn test_type_text_step_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, step_id))
+        .uri(format!("/automations/{}/steps/{}", automation_id, step_row.id))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_body))
@@ -1020,19 +1185,16 @@ async fn test_type_text_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify updated values in DB
-    let updated_tt_row = sqlx::query(
+    let updated_tt_row: TypeTextDbRow = sqlx::query_as(
         "SELECT text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
     )
-    .bind(step_id)
+    .bind(step_row.id)
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let updated_text: String = sqlx::Row::get(&updated_tt_row, "text_to_type");
-    let updated_delay: i32 = sqlx::Row::get(&updated_tt_row, "delay_between_keys_ms");
-
-    assert_eq!(updated_text, "Hello DeskDispatch");
-    assert_eq!(updated_delay, 100);
+    assert_eq!(updated_tt_row.text_to_type, "Hello DeskDispatch");
+    assert_eq!(updated_tt_row.delay_between_keys_ms, 100);
 
     // 7. Verify plain-language summary rendering in automation detail page
     let req = Request::builder()
@@ -1057,7 +1219,7 @@ async fn test_window_control_step_crud_and_validation() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -1105,12 +1267,20 @@ async fn test_window_control_step_crud_and_validation() {
         ))
         .with_state(state.clone());
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("wc_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+
+    let mut guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
+
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
@@ -1141,6 +1311,7 @@ async fn test_window_control_step_crud_and_validation() {
         .trim_start_matches("/automations/")
         .parse()
         .unwrap();
+    guard.automation_ids.push(automation_id);
 
     // 2. GET new window_control step page
     let req = Request::builder()
@@ -1186,46 +1357,37 @@ async fn test_window_control_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify DB insertion
-    let step_row = sqlx::query(
+    let step_row: StepIdTypeRow = sqlx::query_as(
         "SELECT id, step_type, label, post_delay_ms FROM automation_steps WHERE automation_id = $1",
     )
     .bind(automation_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step_id: i64 = sqlx::Row::get(&step_row, "id");
-    let step_type: String = sqlx::Row::get(&step_row, "step_type");
-    let label: Option<String> = sqlx::Row::get(&step_row, "label");
-    let post_delay_ms: i32 = sqlx::Row::get(&step_row, "post_delay_ms");
 
-    assert_eq!(step_type, "window_control");
-    assert_eq!(label.as_deref(), Some("Focus Firefox"));
-    assert_eq!(post_delay_ms, 500);
+    assert_eq!(step_row.step_type, "window_control");
+    assert_eq!(step_row.label.as_deref(), Some("Focus Firefox"));
+    assert_eq!(step_row.post_delay_ms, 500);
 
-    let wc_row = sqlx::query(
+    let wc_row: WindowControlDbRow = sqlx::query_as(
         "SELECT action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
     )
-    .bind(step_id)
+    .bind(step_row.id)
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let action: String = sqlx::Row::get(&wc_row, "action");
-    let match_pattern: String = sqlx::Row::get(&wc_row, "match_pattern");
-    let match_type: String = sqlx::Row::get(&wc_row, "match_type");
-    let timeout_ms: i64 = sqlx::Row::get(&wc_row, "timeout_ms");
-
-    assert_eq!(action, "activate");
-    assert_eq!(match_pattern, "Mozilla Firefox");
-    assert_eq!(match_type, "contains");
-    assert_eq!(timeout_ms, 5000);
+    assert_eq!(wc_row.action, "activate");
+    assert_eq!(wc_row.match_pattern, "Mozilla Firefox");
+    assert_eq!(wc_row.match_type, "contains");
+    assert_eq!(wc_row.timeout_ms, 5000);
 
     // 5. GET edit page
     let req = Request::builder()
         .method("GET")
         .uri(format!(
             "/automations/{}/steps/{}/edit",
-            automation_id, step_id
+            automation_id, step_row.id
         ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .body(Body::empty())
@@ -1240,7 +1402,7 @@ async fn test_window_control_step_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, step_id))
+        .uri(format!("/automations/{}/steps/{}", automation_id, step_row.id))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_body))
@@ -1249,23 +1411,18 @@ async fn test_window_control_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify updated values in DB
-    let updated_wc_row = sqlx::query(
+    let updated_wc_row: WindowControlDbRow = sqlx::query_as(
         "SELECT action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
     )
-    .bind(step_id)
+    .bind(step_row.id)
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let updated_action: String = sqlx::Row::get(&updated_wc_row, "action");
-    let updated_pattern: String = sqlx::Row::get(&updated_wc_row, "match_pattern");
-    let updated_match_type: String = sqlx::Row::get(&updated_wc_row, "match_type");
-    let updated_timeout: i64 = sqlx::Row::get(&updated_wc_row, "timeout_ms");
-
-    assert_eq!(updated_action, "wait");
-    assert_eq!(updated_pattern, "Calculator");
-    assert_eq!(updated_match_type, "exact");
-    assert_eq!(updated_timeout, 10000);
+    assert_eq!(updated_wc_row.action, "wait");
+    assert_eq!(updated_wc_row.match_pattern, "Calculator");
+    assert_eq!(updated_wc_row.match_type, "exact");
+    assert_eq!(updated_wc_row.timeout_ms, 10000);
 
     // 7. Verify plain-language summary rendering in automation detail page
     let req = Request::builder()
@@ -1292,7 +1449,7 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -1340,12 +1497,20 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         ))
         .with_state(state.clone());
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("branch_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+
+    let mut guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
+
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
@@ -1376,6 +1541,7 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
         .trim_start_matches("/automations/")
         .parse()
         .unwrap();
+    guard.automation_ids.push(automation_id);
 
     // 2. Add Step 1 (key_press)
     let step1_body = format!("key_combo=F5&label=Step+Alpha&csrf_token={}", csrf_token);
@@ -1402,16 +1568,16 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Fetch step IDs
-    let steps = sqlx::query(
-        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC",
+    let step_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(steps.len(), 2);
-    let step1_id: i64 = sqlx::Row::get(&steps[0], "id");
-    let step2_id: i64 = sqlx::Row::get(&steps[1], "id");
+    assert_eq!(step_ids.len(), 2);
+    let step1_id = step_ids[0];
+    let step2_id = step_ids[1];
 
     // 3. GET /automations/{id}/steps/new/branch and check target step dropdown options
     let req = Request::builder()
@@ -1446,32 +1612,27 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Fetch branch step ID
-    let steps_all = sqlx::query(
-        "SELECT id, step_type FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC",
+    let steps_all: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM automation_steps WHERE automation_id = $1 ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(&pool)
     .await
     .unwrap();
     assert_eq!(steps_all.len(), 3);
-    let branch_step_id: i64 = sqlx::Row::get(&steps_all[2], "id");
+    let branch_step_id = steps_all[2];
 
     // Verify foreign keys in step_branches
-    let branch_row = sqlx::query("SELECT condition_type, automation_id, on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1")
+    let branch_row: BranchDbRow = sqlx::query_as("SELECT condition_type, automation_id, on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1")
         .bind(branch_step_id)
         .fetch_one(&pool)
         .await
         .unwrap();
 
-    let cond_type: String = sqlx::Row::get(&branch_row, "condition_type");
-    let branch_auto_id: i64 = sqlx::Row::get(&branch_row, "automation_id");
-    let match_target: Option<i64> = sqlx::Row::get(&branch_row, "on_match_step_id");
-    let no_match_target: Option<i64> = sqlx::Row::get(&branch_row, "on_no_match_step_id");
-
-    assert_eq!(cond_type, "pixel_rgb");
-    assert_eq!(branch_auto_id, automation_id);
-    assert_eq!(match_target, Some(step1_id));
-    assert_eq!(no_match_target, Some(step2_id));
+    assert_eq!(branch_row.condition_type, "pixel_rgb");
+    assert_eq!(branch_row.automation_id, automation_id);
+    assert_eq!(branch_row.on_match_step_id, Some(step1_id));
+    assert_eq!(branch_row.on_no_match_step_id, Some(step2_id));
 
     // 5. GET edit branch step page and check selected targets
     let req = Request::builder()
@@ -1505,20 +1666,16 @@ async fn test_branch_step_target_selectors_and_foreign_keys() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify updated foreign keys in step_branches
-    let updated_branch_row = sqlx::query(
-        "SELECT on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1",
+    let updated_branch_row: BranchDbRow = sqlx::query_as(
+        "SELECT condition_type, automation_id, on_match_step_id, on_no_match_step_id FROM step_branches WHERE step_id = $1",
     )
     .bind(branch_step_id)
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let updated_match_target: Option<i64> = sqlx::Row::get(&updated_branch_row, "on_match_step_id");
-    let updated_no_match_target: Option<i64> =
-        sqlx::Row::get(&updated_branch_row, "on_no_match_step_id");
-
-    assert_eq!(updated_match_target, Some(step2_id));
-    assert_eq!(updated_no_match_target, Some(step1_id));
+    assert_eq!(updated_branch_row.on_match_step_id, Some(step2_id));
+    assert_eq!(updated_branch_row.on_no_match_step_id, Some(step1_id));
 
     // 7. Verify plain-language branch step description rendering in automation detail view
     let req = Request::builder()
@@ -1543,7 +1700,7 @@ async fn test_automation_parameters_crud_and_validation() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -1584,12 +1741,20 @@ async fn test_automation_parameters_crud_and_validation() {
         ))
         .with_state(state.clone());
 
-    let (_admin_id, admin_session) = create_test_user(
+    let (admin_id, admin_session) = create_test_user(
         &pool,
         &format!("param_admin_{}", uuid::Uuid::new_v4().simple()),
         "admin",
     )
     .await;
+
+    let mut guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
+
     let csrf_token = deskdispatch::auth::generate_csrf_token(
         uuid::Uuid::parse_str(&admin_session).unwrap(),
         config.session_secret.expose_secret(),
@@ -1620,6 +1785,7 @@ async fn test_automation_parameters_crud_and_validation() {
         .trim_start_matches("/automations/")
         .parse()
         .unwrap();
+    guard.automation_ids.push(automation_id);
 
     // 2. GET /automations/{id}/parameters
     let req = Request::builder()
@@ -1662,19 +1828,20 @@ async fn test_automation_parameters_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Check parameter in DB
-    let param_row = sqlx::query("SELECT id, name, param_type, default_value, description FROM automation_parameters WHERE automation_id = $1")
+    let param_id: i64 = sqlx::query_scalar("SELECT id FROM automation_parameters WHERE automation_id = $1")
         .bind(automation_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let param_id: i64 = sqlx::Row::get(&param_row, "id");
-    let name: String = sqlx::Row::get(&param_row, "name");
-    let param_type: String = sqlx::Row::get(&param_row, "param_type");
-    let default_val: String = sqlx::Row::get(&param_row, "default_value");
 
-    assert_eq!(name, "click_tolerance");
-    assert_eq!(param_type, "int");
-    assert_eq!(default_val, "10");
+    let param_row: ParamDbRow = sqlx::query_as("SELECT name, param_type, default_value, description FROM automation_parameters WHERE id = $1")
+        .bind(param_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(param_row.name, "click_tolerance");
+    assert_eq!(param_row.default_value, "10");
 
     // 5. POST update parameter
     let update_param_body = format!(
@@ -1694,16 +1861,14 @@ async fn test_automation_parameters_crud_and_validation() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
-    let updated_row =
-        sqlx::query("SELECT default_value, description FROM automation_parameters WHERE id = $1")
+    let updated_row: ParamDbRow =
+        sqlx::query_as("SELECT name, param_type, default_value, description FROM automation_parameters WHERE id = $1")
             .bind(param_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    let updated_val: String = sqlx::Row::get(&updated_row, "default_value");
-    let updated_desc: String = sqlx::Row::get(&updated_row, "description");
-    assert_eq!(updated_val, "15");
-    assert_eq!(updated_desc, "Updated Tolerance");
+    assert_eq!(updated_row.default_value, "15");
+    assert_eq!(updated_row.description, "Updated Tolerance");
 
     // 6. POST delete parameter
     let delete_param_body = format!("csrf_token={}", csrf_token);
@@ -1738,7 +1903,7 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -1813,7 +1978,7 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         .unwrap()
         .to_string();
 
-    let admin_row = sqlx::query(
+    let admin_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role, is_active) VALUES ($1, $2, 'E2E Admin', 'admin', true) RETURNING id",
     )
     .bind(&username)
@@ -1821,7 +1986,13 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let admin_id: i64 = sqlx::Row::get(&admin_row, "id");
+
+    let mut guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![admin_id],
+        automation_ids: vec![],
+        bitmap_ids: vec![],
+    };
 
     // Admin logs in via POST /login
     let login_form = format!("username={}&password={}", username, old_password);
@@ -1862,12 +2033,11 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
     assert_eq!(res.status(), StatusCode::OK);
 
     // Verify updated password hash in DB
-    let user_db = sqlx::query("SELECT password_hash FROM users WHERE id = $1")
+    let updated_hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
         .bind(admin_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let updated_hash: String = sqlx::Row::get(&user_db, "password_hash");
     let parsed_hash = PasswordHash::new(&updated_hash).unwrap();
     assert!(
         argon2
@@ -1902,6 +2072,7 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
         .trim_start_matches("/automations/")
         .parse()
         .unwrap();
+    guard.automation_ids.push(automation_id);
 
     // 4. Admin uploads a reference bitmap
     let test_bitmap_name = format!("E2E Target Logo {}", uuid::Uuid::new_v4().simple());
@@ -1938,12 +2109,12 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Obtain uploaded bitmap record ID from DB
-    let bitmap_row = sqlx::query("SELECT id FROM bitmaps WHERE object_storage_key = $1")
+    let bitmap_id: i64 = sqlx::query_scalar("SELECT id FROM bitmaps WHERE object_storage_key = $1")
         .bind(&bitmap_key)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let bitmap_id: i64 = sqlx::Row::get(&bitmap_row, "id");
+    guard.bitmap_ids.push(bitmap_id);
 
     // 5. Admin creates a step using the bitmap via POST /automations/{id}/steps
     let create_step_form = format!(
@@ -1961,14 +2132,13 @@ async fn test_e2e_admin_password_change_automation_bitmap_step_flow() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
-    let step_row = sqlx::query(
+    let step_id: i64 = sqlx::query_scalar(
         "SELECT id FROM automation_steps WHERE automation_id = $1 AND step_type = 'find_bitmap'",
     )
     .bind(automation_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    let step_id: i64 = sqlx::Row::get(&step_row, "id");
 
     // 6. In the image selection screen, verify presented image matches up with uploaded bitmap
     // Test A: GET /automations/{id}/steps/new/find_bitmap renders reference_bitmap_id options
@@ -2039,15 +2209,14 @@ async fn test_ocr_extract_step_crud_and_task_output() {
         return;
     };
 
-    let row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role) VALUES ('ocr_editor', 'hash', 'Test', 'editor') RETURNING id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    let user_id: i64 = sqlx::Row::get(&row, "id");
 
-    let session_row = sqlx::query(
+    let session_uuid: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO sessions (user_id, expires_at) VALUES ($1, now() + interval '1 hour') RETURNING id",
     )
     .bind(user_id)
@@ -2055,10 +2224,9 @@ async fn test_ocr_extract_step_crud_and_task_output() {
     .await
     .unwrap();
 
-    let session_uuid: uuid::Uuid = sqlx::Row::get(&session_row, "id");
     let cookie_header = format!("__Host-session_id={}", session_uuid);
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -2082,6 +2250,13 @@ async fn test_ocr_extract_step_crud_and_task_output() {
         .fetch_one(&pool)
         .await
         .unwrap();
+
+    let _guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![user_id],
+        automation_ids: vec![automation_id],
+        bitmap_ids: vec![],
+    };
 
     let csrf = generate_csrf_token(session_uuid, config.session_secret.expose_secret());
 
@@ -2145,15 +2320,14 @@ async fn test_clipboard_control_step_crud_and_validation() {
         return;
     };
 
-    let row = sqlx::query(
+    let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, display_name, role) VALUES ('clip_editor', 'hash', 'Test', 'editor') RETURNING id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    let user_id: i64 = sqlx::Row::get(&row, "id");
 
-    let session_row = sqlx::query(
+    let session_uuid: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO sessions (user_id, expires_at) VALUES ($1, now() + interval '1 hour') RETURNING id",
     )
     .bind(user_id)
@@ -2161,10 +2335,9 @@ async fn test_clipboard_control_step_crud_and_validation() {
     .await
     .unwrap();
 
-    let session_uuid: uuid::Uuid = sqlx::Row::get(&session_row, "id");
     let cookie_header = format!("__Host-session_id={}", session_uuid);
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -2188,6 +2361,13 @@ async fn test_clipboard_control_step_crud_and_validation() {
         .fetch_one(&pool)
         .await
         .unwrap();
+
+    let _guard = AutomationsCleanupGuard {
+        pool: pool.clone(),
+        user_ids: vec![user_id],
+        automation_ids: vec![automation_id],
+        bitmap_ids: vec![],
+    };
 
     let csrf = generate_csrf_token(session_uuid, config.session_secret.expose_secret());
 
