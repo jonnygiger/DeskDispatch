@@ -460,7 +460,6 @@ impl SimulatedWorker {
                 "Executing automation step"
             );
 
-            let started_at = Utc::now();
             let typing_delay = if let StepPayload::TypeText {
                 text_to_type,
                 delay_between_keys_ms,
@@ -652,6 +651,7 @@ impl SimulatedWorker {
                 Some(var_updates)
             };
 
+            let started_at = Utc::now();
             let completed_at = Utc::now();
 
             let step_req = StepResultRequest {
