@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
-use deskdispatch::domain::TaskRunStatus;
+use deskdispatch::domain::{
+    AutomationStatus, RecordingSessionStatus, TaskRunStatus, UserSessionStatus, WorkerStatus,
+};
 use proptest::prelude::*;
 
 /// Pure helper for step position compaction logic (mirroring DB compaction)
@@ -132,7 +134,7 @@ proptest! {
         }
     }
 
-    // 5. Task run state machine transition validity property
+    // 5. Task run state machine transition validity property (exhaustive over all variants)
     #[test]
     fn prop_task_run_state_transitions(
         from in prop::sample::select(vec![
@@ -156,18 +158,129 @@ proptest! {
     ) {
         let is_valid = from.can_transition_to(to);
 
-        if is_terminal_status(from) {
-            prop_assert_eq!(is_valid, from == to);
-        }
+        let allowed = match from {
+            TaskRunStatus::Queued => {
+                to == TaskRunStatus::Queued
+                    || to == TaskRunStatus::Running
+                    || to == TaskRunStatus::Cancelled
+            }
+            TaskRunStatus::Running => to != TaskRunStatus::Queued,
+            TaskRunStatus::Cancelling => {
+                to == TaskRunStatus::Cancelling
+                    || to == TaskRunStatus::Cancelled
+                    || to == TaskRunStatus::Failed
+                    || to == TaskRunStatus::Lost
+            }
+            TaskRunStatus::Cancelled
+            | TaskRunStatus::Succeeded
+            | TaskRunStatus::Failed
+            | TaskRunStatus::Lost => from == to,
+        };
 
-        if from == TaskRunStatus::Queued {
-            let allowed = to == TaskRunStatus::Queued || to == TaskRunStatus::Running || to == TaskRunStatus::Cancelled;
-            prop_assert_eq!(is_valid, allowed);
-        }
+        prop_assert_eq!(is_valid, allowed);
+    }
 
-        if from == TaskRunStatus::Cancelling {
-            let allowed = to == TaskRunStatus::Cancelling || to == TaskRunStatus::Cancelled || to == TaskRunStatus::Failed || to == TaskRunStatus::Lost;
-            prop_assert_eq!(is_valid, allowed);
-        }
+    // 6. Worker status state machine transition property
+    #[test]
+    fn prop_worker_status_state_transitions(
+        from in prop::sample::select(vec![
+            WorkerStatus::Offline,
+            WorkerStatus::Online,
+            WorkerStatus::Busy,
+            WorkerStatus::Error,
+        ]),
+        to in prop::sample::select(vec![
+            WorkerStatus::Offline,
+            WorkerStatus::Online,
+            WorkerStatus::Busy,
+            WorkerStatus::Error,
+        ])
+    ) {
+        let is_valid = from.can_transition_to(to);
+
+        let allowed = match from {
+            WorkerStatus::Offline => to != WorkerStatus::Busy,
+            WorkerStatus::Online => true,
+            WorkerStatus::Busy => true,
+            WorkerStatus::Error => to != WorkerStatus::Busy,
+        };
+
+        prop_assert_eq!(is_valid, allowed);
+    }
+
+    // 7. Automation status state machine transition property
+    #[test]
+    fn prop_automation_status_state_transitions(
+        from in prop::sample::select(vec![
+            AutomationStatus::Draft,
+            AutomationStatus::Active,
+            AutomationStatus::Archived,
+        ]),
+        to in prop::sample::select(vec![
+            AutomationStatus::Draft,
+            AutomationStatus::Active,
+            AutomationStatus::Archived,
+        ])
+    ) {
+        let is_valid = from.can_transition_to(to);
+
+        let allowed = match from {
+            AutomationStatus::Draft => true,
+            AutomationStatus::Active => true,
+            AutomationStatus::Archived => from == to,
+        };
+
+        prop_assert_eq!(is_valid, allowed);
+    }
+
+    // 8. Recording session status state machine transition property
+    #[test]
+    fn prop_recording_session_status_state_transitions(
+        from in prop::sample::select(vec![
+            RecordingSessionStatus::Recording,
+            RecordingSessionStatus::Completed,
+            RecordingSessionStatus::Imported,
+            RecordingSessionStatus::Discarded,
+        ]),
+        to in prop::sample::select(vec![
+            RecordingSessionStatus::Recording,
+            RecordingSessionStatus::Completed,
+            RecordingSessionStatus::Imported,
+            RecordingSessionStatus::Discarded,
+        ])
+    ) {
+        let is_valid = from.can_transition_to(to);
+
+        let allowed = match from {
+            RecordingSessionStatus::Recording => to != RecordingSessionStatus::Imported,
+            RecordingSessionStatus::Completed => to != RecordingSessionStatus::Recording,
+            RecordingSessionStatus::Imported | RecordingSessionStatus::Discarded => from == to,
+        };
+
+        prop_assert_eq!(is_valid, allowed);
+    }
+
+    // 9. User session status state machine transition property
+    #[test]
+    fn prop_user_session_status_state_transitions(
+        from in prop::sample::select(vec![
+            UserSessionStatus::Active,
+            UserSessionStatus::Expired,
+            UserSessionStatus::Revoked,
+        ]),
+        to in prop::sample::select(vec![
+            UserSessionStatus::Active,
+            UserSessionStatus::Expired,
+            UserSessionStatus::Revoked,
+        ])
+    ) {
+        let is_valid = from.can_transition_to(to);
+
+        let allowed = match from {
+            UserSessionStatus::Active => true,
+            UserSessionStatus::Expired | UserSessionStatus::Revoked => from == to,
+        };
+
+        prop_assert_eq!(is_valid, allowed);
     }
 }
