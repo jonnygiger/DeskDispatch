@@ -87,12 +87,11 @@ impl Drop for AutomationsCleanupGuard {
                         .bind(&automation_ids)
                         .execute(&pool)
                         .await;
-                let _ = sqlx::query(
-                    "DELETE FROM automation_parameters WHERE automation_id = ANY($1)",
-                )
-                .bind(&automation_ids)
-                .execute(&pool)
-                .await;
+                let _ =
+                    sqlx::query("DELETE FROM automation_parameters WHERE automation_id = ANY($1)")
+                        .bind(&automation_ids)
+                        .execute(&pool)
+                        .await;
                 let _ = sqlx::query("DELETE FROM automations WHERE id = ANY($1)")
                     .bind(&automation_ids)
                     .execute(&pool)
@@ -424,11 +423,12 @@ async fn test_automations_crud_and_steps_ordering() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
-    let remaining_steps: Vec<i64> = sqlx::query_scalar("SELECT id FROM automation_steps WHERE automation_id = $1")
-        .bind(automation_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+    let remaining_steps: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM automation_steps WHERE automation_id = $1")
+            .bind(automation_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(remaining_steps.len(), 1);
 
     // 6. Delete automation
@@ -644,7 +644,10 @@ async fn test_mouse_click_step_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, step_row.id))
+        .uri(format!(
+            "/automations/{}/steps/{}",
+            automation_id, step_row.id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_body))
@@ -835,12 +838,13 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     assert_eq!(step_row.label.as_deref(), Some("Sample Pixel"));
     assert_eq!(step_row.post_delay_ms, 500);
 
-    let fp_row: FindPixelDbRow =
-        sqlx::query_as("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
-            .bind(step_row.id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let fp_row: FindPixelDbRow = sqlx::query_as(
+        "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
+    )
+    .bind(step_row.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     assert_eq!(fp_row.x, 100);
     assert_eq!(fp_row.y, 200);
@@ -872,7 +876,10 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, step_row.id))
+        .uri(format!(
+            "/automations/{}/steps/{}",
+            automation_id, step_row.id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_body))
@@ -881,12 +888,13 @@ async fn test_find_pixel_rgb_step_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Verify updated values in DB
-    let updated_fp_row: FindPixelDbRow =
-        sqlx::query_as("SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1")
-            .bind(step_row.id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let updated_fp_row: FindPixelDbRow = sqlx::query_as(
+        "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
+    )
+    .bind(step_row.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     assert_eq!(updated_fp_row.x, 150);
     assert_eq!(updated_fp_row.y, 250);
@@ -1176,7 +1184,10 @@ async fn test_type_text_step_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, step_row.id))
+        .uri(format!(
+            "/automations/{}/steps/{}",
+            automation_id, step_row.id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_body))
@@ -1402,7 +1413,10 @@ async fn test_window_control_step_crud_and_validation() {
     );
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/automations/{}/steps/{}", automation_id, step_row.id))
+        .uri(format!(
+            "/automations/{}/steps/{}",
+            automation_id, step_row.id
+        ))
         .header(header::COOKIE, format!("session_id={}", admin_session))
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(Body::from(edit_body))
@@ -1828,11 +1842,12 @@ async fn test_automation_parameters_crud_and_validation() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
     // Check parameter in DB
-    let param_id: i64 = sqlx::query_scalar("SELECT id FROM automation_parameters WHERE automation_id = $1")
-        .bind(automation_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let param_id: i64 =
+        sqlx::query_scalar("SELECT id FROM automation_parameters WHERE automation_id = $1")
+            .bind(automation_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     let param_row: ParamDbRow = sqlx::query_as("SELECT name, param_type, default_value, description FROM automation_parameters WHERE id = $1")
         .bind(param_id)
