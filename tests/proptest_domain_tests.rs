@@ -28,33 +28,6 @@ fn needs_position_compaction(ordered_positions: &[f64]) -> bool {
     false
 }
 
-/// Helper function defining valid task run state machine transitions
-fn is_valid_state_transition(from: TaskRunStatus, to: TaskRunStatus) -> bool {
-    match (from, to) {
-        // Queued can transition to Running or Cancelled
-        (TaskRunStatus::Queued, TaskRunStatus::Running) => true,
-        (TaskRunStatus::Queued, TaskRunStatus::Cancelled) => true,
-
-        // Running can transition to Cancelling, Cancelled, Succeeded, Failed, Lost
-        (TaskRunStatus::Running, TaskRunStatus::Cancelling) => true,
-        (TaskRunStatus::Running, TaskRunStatus::Cancelled) => true,
-        (TaskRunStatus::Running, TaskRunStatus::Succeeded) => true,
-        (TaskRunStatus::Running, TaskRunStatus::Failed) => true,
-        (TaskRunStatus::Running, TaskRunStatus::Lost) => true,
-
-        // Cancelling can transition to Cancelled, Failed, Lost
-        (TaskRunStatus::Cancelling, TaskRunStatus::Cancelled) => true,
-        (TaskRunStatus::Cancelling, TaskRunStatus::Failed) => true,
-        (TaskRunStatus::Cancelling, TaskRunStatus::Lost) => true,
-
-        // Self-transitions (idempotent updates)
-        (a, b) if a == b => true,
-
-        // All other transitions, including any transition out of terminal states, are invalid
-        _ => false,
-    }
-}
-
 /// Helper checking if a state is terminal
 fn is_terminal_status(status: TaskRunStatus) -> bool {
     matches!(
@@ -153,9 +126,9 @@ proptest! {
     ) {
         prop_assert!(is_terminal_status(terminal));
         if terminal == target {
-            prop_assert!(is_valid_state_transition(terminal, target));
+            prop_assert!(terminal.can_transition_to(target));
         } else {
-            prop_assert!(!is_valid_state_transition(terminal, target));
+            prop_assert!(!terminal.can_transition_to(target));
         }
     }
 
@@ -181,7 +154,7 @@ proptest! {
             TaskRunStatus::Lost,
         ])
     ) {
-        let is_valid = is_valid_state_transition(from, to);
+        let is_valid = from.can_transition_to(to);
 
         if is_terminal_status(from) {
             prop_assert_eq!(is_valid, from == to);
