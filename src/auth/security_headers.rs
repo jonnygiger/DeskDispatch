@@ -167,10 +167,8 @@ mod tests {
     #[tokio::test]
     async fn test_security_headers_middleware_s3_fallback_and_empty_endpoints() {
         // Case 1: s3_public_endpoint is None, falls back to s3_endpoint
-        let fallback_state = create_test_state_with_endpoints(
-            Some("http://s3.internal:9000".to_string()),
-            None,
-        );
+        let fallback_state =
+            create_test_state_with_endpoints(Some("http://s3.internal:9000".to_string()), None);
         let app = Router::new()
             .route("/test", get(|| async { "OK" }))
             .layer(axum::middleware::from_fn_with_state(
@@ -199,10 +197,8 @@ mod tests {
         assert!(csp.contains("img-src 'self' data: http://s3.internal:9000"));
 
         // Case 2: Whitespace-only or None endpoints yield clean CSP without extra origin spaces
-        let empty_state = create_test_state_with_endpoints(
-            Some("   ".to_string()),
-            Some(" \t ".to_string()),
-        );
+        let empty_state =
+            create_test_state_with_endpoints(Some("   ".to_string()), Some(" \t ".to_string()));
         let app = Router::new()
             .route("/test", get(|| async { "OK" }))
             .layer(axum::middleware::from_fn_with_state(
