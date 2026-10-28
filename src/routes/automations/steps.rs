@@ -1646,7 +1646,7 @@ async fn save_step_details(
             };
             let text_mode = form.text_mode.as_deref().unwrap_or("literal");
             let text_to_set = if action == "set_text" && text_mode != "variable" {
-                form.text_to_set.clone()
+                form.text_to_set.as_deref()
             } else {
                 None
             };
@@ -1940,20 +1940,27 @@ async fn validate_automation_variables_exist(
     if var_ids.is_empty() {
         return Ok(());
     }
-    let mut vars = var_ids.to_vec();
-    vars.sort_unstable();
-    vars.dedup();
+
+    let (query_slice, expected_len) = if var_ids.len() == 1 {
+        (var_ids, 1)
+    } else {
+        let mut vars = var_ids.to_vec();
+        vars.sort_unstable();
+        vars.dedup();
+        let len = vars.len();
+        (var_ids, len)
+    };
 
     let count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
+        "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2 AND deleted_at IS NULL",
     )
-    .bind(&vars)
+    .bind(query_slice)
     .bind(automation_id)
     .fetch_one(db)
     .await
     .unwrap_or(0);
 
-    if count as usize != vars.len() {
+    if count as usize != expected_len {
         Err("Selected output variable is invalid for this automation.".to_string())
     } else {
         Ok(())
@@ -2033,10 +2040,14 @@ async fn validate_step_form(
                     .ok_or_else(|| "Please select a valid Region variable.".to_string())?;
                 validate_automation_variables_exist(db, automation_id, &[reg_id]).await?;
             } else {
-                let mut var_ids = Vec::new();
+                let mut var_ids = [0i64; 2];
+                let mut count = 0;
                 if form.x_mode.as_deref() == Some("variable") {
                     match form.x_variable_id.filter(|&id| id > 0) {
-                        Some(id) => var_ids.push(id),
+                        Some(id) => {
+                            var_ids[count] = id;
+                            count += 1;
+                        }
                         None => {
                             return Err("Please select a variable for X coordinate.".to_string());
                         }
@@ -2044,13 +2055,16 @@ async fn validate_step_form(
                 }
                 if form.y_mode.as_deref() == Some("variable") {
                     match form.y_variable_id.filter(|&id| id > 0) {
-                        Some(id) => var_ids.push(id),
+                        Some(id) => {
+                            var_ids[count] = id;
+                            count += 1;
+                        }
                         None => {
                             return Err("Please select a variable for Y coordinate.".to_string());
                         }
                     }
                 }
-                validate_automation_variables_exist(db, automation_id, &var_ids).await?;
+                validate_automation_variables_exist(db, automation_id, &var_ids[..count]).await?;
             }
             if let Some(amount) = form.scroll_amount
                 && !(1..=100).contains(&amount)
@@ -2060,11 +2074,17 @@ async fn validate_step_form(
         }
         "clipboard_control" => {
             let action = form.action.as_deref().unwrap_or("set_text");
-            let var_ids: Vec<i64> = [form.input_variable_id, form.output_variable_id]
-                .into_iter()
-                .flatten()
-                .collect();
-            validate_automation_variables_exist(db, automation_id, &var_ids).await?;
+            let mut var_ids = [0i64; 2];
+            let mut count = 0;
+            if let Some(id) = form.input_variable_id {
+                var_ids[count] = id;
+                count += 1;
+            }
+            if let Some(id) = form.output_variable_id {
+                var_ids[count] = id;
+                count += 1;
+            }
+            validate_automation_variables_exist(db, automation_id, &var_ids[..count]).await?;
 
             match action {
                 "set_text" => {
@@ -2111,7 +2131,9 @@ async fn validate_step_form(
                 return Err("Please select a reference bitmap.".to_string());
             }
 
-            let out_vars: Vec<i64> = [
+            let mut var_ids = [0i64; 4];
+            let mut count = 0;
+            for id in [
                 form.output_found_variable_id,
                 form.output_x_variable_id,
                 form.output_y_variable_id,
@@ -2119,17 +2141,25 @@ async fn validate_step_form(
             ]
             .into_iter()
             .flatten()
-            .collect();
+            {
+                var_ids[count] = id;
+                count += 1;
+            }
 
-            validate_automation_variables_exist(db, automation_id, &out_vars).await?;
+            validate_automation_variables_exist(db, automation_id, &var_ids[..count]).await?;
         }
         "ocr_extract" => {
-            let out_vars: Vec<i64> = [form.region_variable_id, form.output_variable_id]
+            let mut var_ids = [0i64; 2];
+            let mut count = 0;
+            for id in [form.region_variable_id, form.output_variable_id]
                 .into_iter()
                 .flatten()
-                .collect();
+            {
+                var_ids[count] = id;
+                count += 1;
+            }
 
-            validate_automation_variables_exist(db, automation_id, &out_vars).await?;
+            validate_automation_variables_exist(db, automation_id, &var_ids[..count]).await?;
         }
         _ => return Err("Invalid step type.".to_string()),
     }
