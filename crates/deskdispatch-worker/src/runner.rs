@@ -168,6 +168,50 @@ impl StepRunner {
         Ok(())
     }
 
+    fn resolve_target_coords(
+        &self,
+        x: Option<i32>,
+        y: Option<i32>,
+        x_variable_id: Option<i64>,
+        y_variable_id: Option<i64>,
+        region_variable_id: Option<i64>,
+    ) -> (Option<i32>, Option<i32>) {
+        if let Some(vid) = region_variable_id
+            && let Some(val) = self.variables.get(&vid)
+        {
+            if let Some(tl) = val.get("top_left").and_then(|v| v.as_array())
+                && let Some(br) = val.get("bottom_right").and_then(|v| v.as_array())
+            {
+                if tl.len() >= 2 && br.len() >= 2 {
+                    let x1 = tl[0].as_i64().unwrap_or(0) as i32;
+                    let y1 = tl[1].as_i64().unwrap_or(0) as i32;
+                    let x2 = br[0].as_i64().unwrap_or(0) as i32;
+                    let y2 = br[1].as_i64().unwrap_or(0) as i32;
+                    return (Some((x1 + x2) / 2), Some((y1 + y2) / 2));
+                }
+            }
+        }
+
+        let mut target_x = x;
+        let mut target_y = y;
+
+        if let Some(vid) = x_variable_id
+            && let Some(val) = self.variables.get(&vid)
+            && let Some(num) = val.as_i64()
+        {
+            target_x = Some(num as i32);
+        }
+
+        if let Some(vid) = y_variable_id
+            && let Some(val) = self.variables.get(&vid)
+            && let Some(num) = val.as_i64()
+        {
+            target_y = Some(num as i32);
+        }
+
+        (target_x, target_y)
+    }
+
     async fn execute_single_step(
         &mut self,
         _task_run_id: i64,
@@ -187,10 +231,8 @@ impl StepRunner {
         let mut captured = StepCapturedData::default();
         let mut updates = Vec::new();
 
-        match step {
+        let (next_step_idx, status) = match step {
             StepPayload::MouseScroll {
-                id,
-                post_delay_ms,
                 direction,
                 scroll_amount,
                 x,
@@ -200,53 +242,23 @@ impl StepRunner {
                 region_variable_id,
                 ..
             } => {
-                let mut target_x = *x;
-                let mut target_y = *y;
-
-                if let Some(vid) = x_variable_id
-                    && let Some(val) = self.variables.get(vid)
-                    && let Some(num) = val.as_i64()
-                {
-                    target_x = Some(num as i32);
-                }
-
-                if let Some(vid) = y_variable_id
-                    && let Some(val) = self.variables.get(vid)
-                    && let Some(num) = val.as_i64()
-                {
-                    target_y = Some(num as i32);
-                }
-
-                if let Some(vid) = region_variable_id
-                    && let Some(val) = self.variables.get(vid)
-                {
-                    if let Some(tl) = val.get("top_left").and_then(|v| v.as_array())
-                        && let Some(br) = val.get("bottom_right").and_then(|v| v.as_array())
-                    {
-                        if tl.len() >= 2 && br.len() >= 2 {
-                            let x1 = tl[0].as_i64().unwrap_or(0) as i32;
-                            let y1 = tl[1].as_i64().unwrap_or(0) as i32;
-                            let x2 = br[0].as_i64().unwrap_or(0) as i32;
-                            let y2 = br[1].as_i64().unwrap_or(0) as i32;
-                            target_x = Some((x1 + x2) / 2);
-                            target_y = Some((y1 + y2) / 2);
-                        }
-                    }
-                }
+                let (target_x, target_y) = self.resolve_target_coords(
+                    *x,
+                    *y,
+                    *x_variable_id,
+                    *y_variable_id,
+                    *region_variable_id,
+                );
 
                 self.input
                     .mouse_scroll(direction, *scroll_amount, target_x, target_y)?;
                 captured.captured_x = target_x;
                 captured.captured_y = target_y;
 
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                Ok((None, *id, "success".to_string(), None, captured))
+                (None, "success".to_string())
             }
 
             StepPayload::MouseClick {
-                id,
-                post_delay_ms,
                 x,
                 y,
                 x_variable_id,
@@ -256,53 +268,25 @@ impl StepRunner {
                 click_type,
                 ..
             } => {
-                let mut target_x = x.unwrap_or(0);
-                let mut target_y = y.unwrap_or(0);
-
-                if let Some(vid) = x_variable_id
-                    && let Some(val) = self.variables.get(vid)
-                    && let Some(num) = val.as_i64()
-                {
-                    target_x = num as i32;
-                }
-
-                if let Some(vid) = y_variable_id
-                    && let Some(val) = self.variables.get(vid)
-                    && let Some(num) = val.as_i64()
-                {
-                    target_y = num as i32;
-                }
-
-                if let Some(vid) = region_variable_id
-                    && let Some(val) = self.variables.get(vid)
-                {
-                    if let Some(tl) = val.get("top_left").and_then(|v| v.as_array())
-                        && let Some(br) = val.get("bottom_right").and_then(|v| v.as_array())
-                    {
-                        if tl.len() >= 2 && br.len() >= 2 {
-                            let x1 = tl[0].as_i64().unwrap_or(0) as i32;
-                            let y1 = tl[1].as_i64().unwrap_or(0) as i32;
-                            let x2 = br[0].as_i64().unwrap_or(0) as i32;
-                            let y2 = br[1].as_i64().unwrap_or(0) as i32;
-                            target_x = (x1 + x2) / 2;
-                            target_y = (y1 + y2) / 2;
-                        }
-                    }
-                }
+                let (target_x_opt, target_y_opt) = self.resolve_target_coords(
+                    *x,
+                    *y,
+                    *x_variable_id,
+                    *y_variable_id,
+                    *region_variable_id,
+                );
+                let target_x = target_x_opt.unwrap_or(0);
+                let target_y = target_y_opt.unwrap_or(0);
 
                 self.input
                     .mouse_click(target_x, target_y, button, click_type)?;
                 captured.captured_x = Some(target_x);
                 captured.captured_y = Some(target_y);
 
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                Ok((None, *id, "success".to_string(), None, captured))
+                (None, "success".to_string())
             }
 
             StepPayload::WindowControl {
-                id,
-                post_delay_ms,
                 action,
                 match_pattern,
                 match_type,
@@ -314,45 +298,28 @@ impl StepRunner {
                         .window_control(action, match_pattern, match_type, *timeout_ms)
                 {
                     warn!("Window control failed: {}", e);
-                    return Ok((None, *id, "failed".to_string(), None, captured));
+                    (None, "failed".to_string())
+                } else {
+                    (None, "success".to_string())
                 }
-
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                Ok((None, *id, "success".to_string(), None, captured))
             }
 
             StepPayload::TypeText {
-                id,
-                post_delay_ms,
                 text_to_type,
                 delay_between_keys_ms,
                 ..
             } => {
                 self.input
                     .type_text(text_to_type, (*delay_between_keys_ms).max(0) as u64)?;
-
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                Ok((None, *id, "success".to_string(), None, captured))
+                (None, "success".to_string())
             }
 
-            StepPayload::KeyPress {
-                id,
-                post_delay_ms,
-                key_combo,
-                ..
-            } => {
+            StepPayload::KeyPress { key_combo, .. } => {
                 self.input.key_press(key_combo)?;
-
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                Ok((None, *id, "success".to_string(), None, captured))
+                (None, "success".to_string())
             }
 
             StepPayload::FindPixelRgb {
-                id,
-                post_delay_ms,
                 x,
                 y,
                 output_variable_id,
@@ -377,19 +344,10 @@ impl StepRunner {
                     }
                 }
 
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                let updates_opt = if updates.is_empty() {
-                    None
-                } else {
-                    Some(updates)
-                };
-                Ok((None, *id, "success".to_string(), updates_opt, captured))
+                (None, "success".to_string())
             }
 
             StepPayload::FindBitmap {
-                id,
-                post_delay_ms,
                 reference_bitmap_id,
                 reference_bitmap_key,
                 search_x,
@@ -413,7 +371,7 @@ impl StepRunner {
                     Ok(img) => img,
                     Err(e) => {
                         warn!("Failed to load reference bitmap: {}", e);
-                        return Ok((None, *id, "failed".to_string(), None, captured));
+                        return Ok((None, step.id(), "failed".to_string(), None, captured));
                     }
                 };
 
@@ -471,20 +429,11 @@ impl StepRunner {
                     });
                 }
 
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
                 let status = if match_res.found { "success" } else { "failed" };
-                let updates_opt = if updates.is_empty() {
-                    None
-                } else {
-                    Some(updates)
-                };
-                Ok((None, *id, status.to_string(), updates_opt, captured))
+                (None, status.to_string())
             }
 
             StepPayload::Branch {
-                id,
-                post_delay_ms,
                 condition,
                 on_match_step_id,
                 on_no_match_step_id,
@@ -597,14 +546,10 @@ impl StepRunner {
                     "branch_not_matched"
                 };
 
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                Ok((next_step_idx, *id, status.to_string(), None, captured))
+                (next_step_idx, status.to_string())
             }
 
             StepPayload::ClipboardControl {
-                id,
-                post_delay_ms,
                 action,
                 text_to_set,
                 input_variable_id,
@@ -630,7 +575,7 @@ impl StepRunner {
 
                         if let Err(e) = self.input.clipboard_set_text(&text_val) {
                             warn!("Clipboard set_text failed: {}", e);
-                            return Ok((None, *id, "failed".to_string(), None, captured));
+                            return Ok((None, step.id(), "failed".to_string(), None, captured));
                         }
                     }
                     "get_text" => {
@@ -664,25 +609,16 @@ impl StepRunner {
                         }
                         Err(e) => {
                             warn!("Clipboard wait_for_change failed: {}", e);
-                            return Ok((None, *id, "failed".to_string(), None, captured));
+                            return Ok((None, step.id(), "failed".to_string(), None, captured));
                         }
                     },
                     _ => {}
                 }
 
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                let updates_opt = if updates.is_empty() {
-                    None
-                } else {
-                    Some(updates)
-                };
-                Ok((None, *id, "success".to_string(), updates_opt, captured))
+                (None, "success".to_string())
             }
 
             StepPayload::OcrExtract {
-                id,
-                post_delay_ms,
                 search_x,
                 search_y,
                 search_width,
@@ -709,21 +645,19 @@ impl StepRunner {
 
                 if let Some(vid) = region_variable_id
                     && let Some(val) = self.variables.get(vid)
+                    && let Some(tl) = val.get("top_left").and_then(|v| v.as_array())
+                    && let Some(br) = val.get("bottom_right").and_then(|v| v.as_array())
+                    && tl.len() >= 2
+                    && br.len() >= 2
                 {
-                    if let Some(tl) = val.get("top_left").and_then(|v| v.as_array())
-                        && let Some(br) = val.get("bottom_right").and_then(|v| v.as_array())
-                    {
-                        if tl.len() >= 2 && br.len() >= 2 {
-                            let x1 = tl[0].as_i64().unwrap_or(0).max(0) as u32;
-                            let y1 = tl[1].as_i64().unwrap_or(0).max(0) as u32;
-                            let x2 = br[0].as_i64().unwrap_or(0).max(0) as u32;
-                            let y2 = br[1].as_i64().unwrap_or(0).max(0) as u32;
-                            crop_x = x1;
-                            crop_y = y1;
-                            crop_w = x2.saturating_sub(x1).max(1);
-                            crop_h = y2.saturating_sub(y1).max(1);
-                        }
-                    }
+                    let x1 = tl[0].as_i64().unwrap_or(0).max(0) as u32;
+                    let y1 = tl[1].as_i64().unwrap_or(0).max(0) as u32;
+                    let x2 = br[0].as_i64().unwrap_or(0).max(0) as u32;
+                    let y2 = br[1].as_i64().unwrap_or(0).max(0) as u32;
+                    crop_x = x1;
+                    crop_y = y1;
+                    crop_w = x2.saturating_sub(x1).max(1);
+                    crop_h = y2.saturating_sub(y1).max(1);
                 }
 
                 let cropped = screen.crop(crop_x, crop_y, crop_w, crop_h);
@@ -741,16 +675,22 @@ impl StepRunner {
                     self.task_output_value = Some(ocr_text);
                 }
 
-                tokio::time::sleep(Duration::from_millis((*post_delay_ms).max(0) as u64)).await;
-
-                let updates_opt = if updates.is_empty() {
-                    None
-                } else {
-                    Some(updates)
-                };
-                Ok((None, *id, "success".to_string(), updates_opt, captured))
+                (None, "success".to_string())
             }
+        };
+
+        let post_delay_ms = step.post_delay_ms();
+        if post_delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(post_delay_ms as u64)).await;
         }
+
+        let updates_opt = if updates.is_empty() {
+            None
+        } else {
+            Some(updates)
+        };
+
+        Ok((next_step_idx, step.id(), status, updates_opt, captured))
     }
 
     async fn get_or_download_bitmap(
@@ -759,18 +699,21 @@ impl StepRunner {
         key: Option<&str>,
     ) -> Result<CapturedImage, String> {
         let bitmap_id = bitmap_id.ok_or_else(|| "Missing reference bitmap id".to_string())?;
-        let cache_key = key
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("bitmap:{bitmap_id}"));
 
-        if let Some(cached) = self.bitmap_cache.get(&cache_key) {
+        let cache_key = match key {
+            Some(k) => std::borrow::Cow::Borrowed(k),
+            None => std::borrow::Cow::Owned(format!("bitmap:{bitmap_id}")),
+        };
+
+        if let Some(cached) = self.bitmap_cache.get(cache_key.as_ref()) {
             return Ok(cached.clone());
         }
 
         let bytes = self.api_client.download_bitmap(bitmap_id).await?;
-
         let img = CapturedImage::decode_png(&bytes)?;
-        self.bitmap_cache.insert(cache_key, img.clone());
+
+        self.bitmap_cache
+            .insert(cache_key.into_owned(), img.clone());
         Ok(img)
     }
 }
