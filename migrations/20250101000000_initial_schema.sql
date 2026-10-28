@@ -41,20 +41,25 @@ CREATE INDEX idx_audit_log_created_at ON audit_log (created_at DESC);
 
 -- 2. Automations & Base Steps
 CREATE TABLE automations (
-    id          BIGSERIAL PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    status      TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'archived')),
-    created_by  BIGINT NOT NULL REFERENCES users(id),
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                   BIGSERIAL PRIMARY KEY,
+    name                 TEXT NOT NULL,
+    description          TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'archived')),
+    expected_output_type TEXT CHECK (expected_output_type IN ('boolean', 'image', 'ocr_text')),
+    created_by           BIGINT NOT NULL REFERENCES users(id),
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE automation_steps (
     id            BIGSERIAL PRIMARY KEY,
     automation_id BIGINT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
     position      DOUBLE PRECISION NOT NULL,
-    step_type     TEXT NOT NULL CHECK (step_type IN ('mouse_click', 'key_press', 'find_pixel_rgb', 'find_bitmap', 'branch')),
+    step_type     TEXT NOT NULL CHECK (step_type IN (
+                    'mouse_click', 'key_press', 'type_text', 'find_pixel_rgb',
+                    'find_bitmap', 'branch', 'window_control', 'ocr_extract',
+                    'mouse_scroll', 'clipboard_control'
+                  )),
     label         TEXT,
     post_delay_ms INTEGER NOT NULL DEFAULT 0 CHECK (post_delay_ms >= 0),
     deleted_at    TIMESTAMPTZ,
@@ -81,7 +86,7 @@ CREATE TABLE automation_variables (
     id            BIGSERIAL PRIMARY KEY,
     automation_id BIGINT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
     name          TEXT NOT NULL,
-    var_type      TEXT NOT NULL CHECK (var_type IN ('int', 'bool', 'color', 'point', 'string')),
+    var_type      TEXT NOT NULL CHECK (var_type IN ('int', 'bool', 'color', 'point', 'string', 'region')),
     description   TEXT NOT NULL DEFAULT '',
     UNIQUE (automation_id, name)
 );
@@ -107,6 +112,9 @@ CREATE TABLE bitmaps (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX bitmaps_object_storage_key_key
+    ON bitmaps (object_storage_key);
+
 CREATE TABLE step_screenshots (
     step_id            BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
     object_storage_key TEXT NOT NULL,
@@ -117,13 +125,14 @@ CREATE TABLE step_screenshots (
 
 -- 4. Step Detail Tables
 CREATE TABLE step_mouse_clicks (
-    step_id       BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
-    x             INTEGER CHECK (x IS NULL OR x >= 0),
-    y             INTEGER CHECK (y IS NULL OR y >= 0),
-    x_variable_id BIGINT REFERENCES automation_variables(id),
-    y_variable_id BIGINT REFERENCES automation_variables(id),
-    button        TEXT NOT NULL DEFAULT 'left' CHECK (button IN ('left', 'right', 'middle')),
-    click_type    TEXT NOT NULL DEFAULT 'single' CHECK (click_type IN ('single', 'double')),
+    step_id            BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
+    x                  INTEGER CHECK (x IS NULL OR x >= 0),
+    y                  INTEGER CHECK (y IS NULL OR y >= 0),
+    x_variable_id      BIGINT REFERENCES automation_variables(id),
+    y_variable_id      BIGINT REFERENCES automation_variables(id),
+    region_variable_id BIGINT REFERENCES automation_variables(id),
+    button             TEXT NOT NULL DEFAULT 'left' CHECK (button IN ('left', 'right', 'middle')),
+    click_type         TEXT NOT NULL DEFAULT 'single' CHECK (click_type IN ('single', 'double')),
     CHECK ((x IS NOT NULL) <> (x_variable_id IS NOT NULL)),
     CHECK ((y IS NOT NULL) <> (y_variable_id IS NOT NULL))
 );
@@ -131,6 +140,12 @@ CREATE TABLE step_mouse_clicks (
 CREATE TABLE step_key_presses (
     step_id   BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
     key_combo TEXT NOT NULL
+);
+
+CREATE TABLE step_type_texts (
+    step_id               BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
+    text_to_type          TEXT NOT NULL,
+    delay_between_keys_ms INTEGER NOT NULL DEFAULT 0 CHECK (delay_between_keys_ms >= 0)
 );
 
 CREATE TABLE step_find_pixel_rgb (
@@ -150,13 +165,14 @@ CREATE TABLE step_find_bitmap (
     match_threshold          REAL NOT NULL DEFAULT 0.95 CHECK (match_threshold >= 0.0 AND match_threshold <= 1.0),
     output_found_variable_id BIGINT REFERENCES automation_variables(id),
     output_x_variable_id     BIGINT REFERENCES automation_variables(id),
-    output_y_variable_id     BIGINT REFERENCES automation_variables(id)
+    output_y_variable_id     BIGINT REFERENCES automation_variables(id),
+    output_region_variable_id BIGINT REFERENCES automation_variables(id)
 );
 
 CREATE TABLE step_branches (
     step_id             BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
     automation_id       BIGINT NOT NULL,
-    condition_type      TEXT NOT NULL CHECK (condition_type IN ('pixel_rgb', 'bitmap')),
+    condition_type      TEXT NOT NULL CHECK (condition_type IN ('pixel_rgb', 'bitmap', 'window_state')),
     x                   INTEGER CHECK (x IS NULL OR x >= 0),
     y                   INTEGER CHECK (y IS NULL OR y >= 0),
     expected_r          SMALLINT CHECK (expected_r IS NULL OR (expected_r >= 0 AND expected_r <= 255)),
@@ -169,11 +185,15 @@ CREATE TABLE step_branches (
     search_width        INTEGER CHECK (search_width IS NULL OR search_width > 0),
     search_height       INTEGER CHECK (search_height IS NULL OR search_height > 0),
     match_threshold     REAL CHECK (match_threshold IS NULL OR (match_threshold >= 0.0 AND match_threshold <= 1.0)),
+    window_match_pattern TEXT,
+    window_match_type   TEXT DEFAULT 'contains' CHECK (window_match_type IS NULL OR window_match_type IN ('contains', 'exact', 'starts_with')),
+    window_check_type   TEXT DEFAULT 'exists' CHECK (window_check_type IS NULL OR window_check_type IN ('active', 'exists')),
     on_match_step_id    BIGINT NOT NULL,
     on_no_match_step_id BIGINT NOT NULL,
     CHECK (
-      (condition_type = 'pixel_rgb' AND x IS NOT NULL AND reference_bitmap_id IS NULL) OR
-      (condition_type = 'bitmap' AND reference_bitmap_id IS NOT NULL AND x IS NULL)
+      (condition_type = 'pixel_rgb' AND x IS NOT NULL AND reference_bitmap_id IS NULL AND window_match_pattern IS NULL) OR
+      (condition_type = 'bitmap' AND reference_bitmap_id IS NOT NULL AND x IS NULL AND window_match_pattern IS NULL) OR
+      (condition_type = 'window_state' AND window_match_pattern IS NOT NULL AND x IS NULL AND reference_bitmap_id IS NULL)
     ),
     CONSTRAINT step_branches_step_automation_fkey
         FOREIGN KEY (step_id, automation_id)
@@ -189,6 +209,51 @@ CREATE TABLE step_branches (
 
 CREATE INDEX idx_step_branches_on_match_step_id ON step_branches (on_match_step_id);
 CREATE INDEX idx_step_branches_on_no_match_step_id ON step_branches (on_no_match_step_id);
+
+CREATE TABLE step_ocr_extracts (
+    step_id            BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
+    search_x           INT,
+    search_y           INT,
+    search_width       INT,
+    search_height      INT,
+    region_variable_id BIGINT REFERENCES automation_variables(id) ON DELETE SET NULL,
+    output_variable_id BIGINT REFERENCES automation_variables(id) ON DELETE SET NULL,
+    set_as_task_output BOOLEAN NOT NULL DEFAULT TRUE,
+    timeout_ms         BIGINT NOT NULL DEFAULT 5000,
+    retry_interval_ms  BIGINT NOT NULL DEFAULT 250
+);
+
+CREATE TABLE step_window_controls (
+    step_id       BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
+    action        TEXT NOT NULL CHECK (action IN ('activate', 'close', 'minimize', 'maximize', 'wait')),
+    match_pattern TEXT NOT NULL,
+    match_type    TEXT NOT NULL DEFAULT 'contains' CHECK (match_type IN ('contains', 'exact', 'starts_with')),
+    timeout_ms    BIGINT NOT NULL DEFAULT 5000 CHECK (timeout_ms >= 0)
+);
+
+CREATE TABLE step_mouse_scrolls (
+    step_id            BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
+    direction          TEXT NOT NULL DEFAULT 'down' CHECK (direction IN ('up', 'down', 'left', 'right')),
+    scroll_amount      INTEGER NOT NULL DEFAULT 3 CHECK (scroll_amount >= 1 AND scroll_amount <= 100),
+    x                  INTEGER CHECK (x IS NULL OR x >= 0),
+    y                  INTEGER CHECK (y IS NULL OR y >= 0),
+    x_variable_id      BIGINT REFERENCES automation_variables(id) ON DELETE SET NULL,
+    y_variable_id      BIGINT REFERENCES automation_variables(id) ON DELETE SET NULL,
+    region_variable_id BIGINT REFERENCES automation_variables(id) ON DELETE SET NULL,
+    CHECK (x IS NULL OR x_variable_id IS NULL),
+    CHECK (y IS NULL OR y_variable_id IS NULL)
+);
+
+CREATE TABLE step_clipboard_controls (
+    step_id            BIGINT PRIMARY KEY REFERENCES automation_steps(id) ON DELETE CASCADE,
+    action             TEXT NOT NULL DEFAULT 'set_text'
+                           CHECK (action IN ('set_text', 'get_text', 'clear', 'wait_for_change')),
+    text_to_set        TEXT,
+    input_variable_id  BIGINT REFERENCES automation_variables(id) ON DELETE SET NULL,
+    output_variable_id BIGINT REFERENCES automation_variables(id) ON DELETE SET NULL,
+    set_as_task_output BOOLEAN NOT NULL DEFAULT FALSE,
+    timeout_ms         BIGINT NOT NULL DEFAULT 5000 CHECK (timeout_ms >= 0)
+);
 
 -- 5. Task Worker PCs & Worker Groups
 CREATE TABLE task_worker_pcs (
@@ -233,22 +298,22 @@ CREATE TABLE worker_group_members (
 
 -- 6. Scheduling
 CREATE TABLE schedules (
-    id              BIGSERIAL PRIMARY KEY,
-    automation_id   BIGINT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
-    name            TEXT NOT NULL,
-    cron_expression TEXT NOT NULL,
-    timezone        TEXT NOT NULL DEFAULT 'UTC',
-    worker_group_id BIGINT REFERENCES worker_groups(id),
-    is_enabled      BOOLEAN NOT NULL DEFAULT true,
-    overlap_policy  TEXT NOT NULL DEFAULT 'allow' CHECK (overlap_policy IN ('allow', 'skip', 'queue')),
+    id                 BIGSERIAL PRIMARY KEY,
+    automation_id      BIGINT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+    name               TEXT NOT NULL,
+    cron_expression    TEXT NOT NULL,
+    timezone           TEXT NOT NULL DEFAULT 'UTC',
+    worker_group_id    BIGINT REFERENCES worker_groups(id),
+    is_enabled         BOOLEAN NOT NULL DEFAULT true,
+    overlap_policy     TEXT NOT NULL DEFAULT 'allow' CHECK (overlap_policy IN ('allow', 'skip', 'queue')),
     max_queue_age_secs INTEGER,
-    wol_enabled     BOOLEAN NOT NULL DEFAULT false,
-    wol_warmup_secs INTEGER NOT NULL DEFAULT 0 CHECK (wol_warmup_secs >= 0),
-    last_wol_sent_at TIMESTAMPTZ,
-    next_run_at     TIMESTAMPTZ,
-    last_run_at     TIMESTAMPTZ,
-    created_by      BIGINT NOT NULL REFERENCES users(id),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    wol_enabled        BOOLEAN NOT NULL DEFAULT false,
+    wol_warmup_secs    INTEGER NOT NULL DEFAULT 0 CHECK (wol_warmup_secs >= 0),
+    last_wol_sent_at   TIMESTAMPTZ,
+    next_run_at        TIMESTAMPTZ,
+    last_run_at        TIMESTAMPTZ,
+    created_by         BIGINT NOT NULL REFERENCES users(id),
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_schedules_due ON schedules (next_run_at) WHERE is_enabled;
@@ -261,6 +326,8 @@ CREATE TABLE task_runs (
     worker_id                  BIGINT REFERENCES task_worker_pcs(id),
     status                     TEXT NOT NULL DEFAULT 'queued'
                                  CHECK (status IN ('queued', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'lost')),
+    output_type                TEXT CHECK (output_type IN ('boolean', 'image', 'ocr_text')),
+    output_value               TEXT,
     triggered_by_user_id       BIGINT REFERENCES users(id),
     current_step_id            BIGINT REFERENCES automation_steps(id) ON DELETE SET NULL,
     queued_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
