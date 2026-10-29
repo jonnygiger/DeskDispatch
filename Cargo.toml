@@ -17,7 +17,7 @@ deskdispatch-protocol = { path = "crates/deskdispatch-protocol" }
 argon2 = "0.6"
 askama = "0.16"
 chrono = { version = "0.4", features = ["serde"] }
-sha2 = "0.11"
+sha2 = "0.10"
 axum = "0.8"
 chrono-tz = "0.10"
 reqwest = "0.12"
