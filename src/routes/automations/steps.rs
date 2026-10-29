@@ -460,6 +460,21 @@ pub fn is_form_flag_enabled(val: Option<&str>) -> bool {
 }
 
 #[inline]
+fn default_step_description(step_type: &str) -> &'static str {
+    match step_type {
+        "key_press" => "Press key",
+        "type_text" => "Type text",
+        "window_control" => "Control window",
+        "mouse_click" => "Click mouse",
+        "mouse_scroll" => "Mouse scroll",
+        "find_pixel_rgb" => "Read pixel at coordinate",
+        "find_bitmap" => "Search for bitmap on screen",
+        "branch" => "BRANCH evaluation",
+        _ => "Unknown step",
+    }
+}
+
+#[inline]
 fn fmt_coord_param<W: std::fmt::Write>(
     buf: &mut W,
     val: Option<i32>,
@@ -1009,18 +1024,6 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     let ocr_rows = ocr_res.unwrap_or_default();
     let ss_rows = ss_res.unwrap_or_default();
 
-    enum StepDetailView {
-        KeyPress(KeyPressViewRow),
-        TypeText(TypeTextViewRow),
-        WindowControl(WindowControlViewRow),
-        MouseClick(MouseClickViewRow),
-        MouseScroll(MouseScrollViewRow),
-        FindPixel(FindPixelViewRow),
-        FindBitmap(FindBitmapViewRow),
-        Branch(BranchViewRow),
-        OcrExtract(OcrExtractViewRow),
-    }
-
     use std::collections::HashMap;
 
     let step_target_map = if !br_rows.is_empty() {
@@ -1061,34 +1064,141 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         + fb_rows.len()
         + br_rows.len()
         + ocr_rows.len();
-    let mut details_map: HashMap<i64, StepDetailView> = HashMap::with_capacity(total_details);
+
+    let mut descriptions: HashMap<i64, (String, Option<i64>, Option<String>)> =
+        HashMap::with_capacity(total_details);
 
     for r in kp_rows {
-        details_map.insert(r.step_id, StepDetailView::KeyPress(r));
+        descriptions.insert(r.step_id, (format!("Press {}", r.key_combo), None, None));
     }
     for r in wc_rows {
-        details_map.insert(r.step_id, StepDetailView::WindowControl(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_window_control_summary(
+                    &r.action,
+                    &r.match_pattern,
+                    &r.match_type,
+                    r.timeout_ms,
+                ),
+                None,
+                None,
+            ),
+        );
     }
     for r in tt_rows {
-        details_map.insert(r.step_id, StepDetailView::TypeText(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_type_text_summary(&r.text_to_type, r.delay_between_keys_ms),
+                None,
+                None,
+            ),
+        );
     }
     for r in mc_rows {
-        details_map.insert(r.step_id, StepDetailView::MouseClick(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_mouse_click_summary(
+                    r.x,
+                    r.y,
+                    r.x_var_name.as_deref(),
+                    r.y_var_name.as_deref(),
+                    r.region_var_name.as_deref(),
+                    &r.button,
+                    &r.click_type,
+                ),
+                None,
+                None,
+            ),
+        );
     }
     for r in ms_rows {
-        details_map.insert(r.step_id, StepDetailView::MouseScroll(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_mouse_scroll_summary(
+                    &r.direction,
+                    r.scroll_amount,
+                    r.x,
+                    r.y,
+                    r.x_var_name.as_deref(),
+                    r.y_var_name.as_deref(),
+                    r.region_var_name.as_deref(),
+                ),
+                None,
+                None,
+            ),
+        );
     }
     for r in fp_rows {
-        details_map.insert(r.step_id, StepDetailView::FindPixel(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_find_pixel_rgb_summary(r.x, r.y, r.var_name.as_deref()),
+                None,
+                None,
+            ),
+        );
     }
     for r in fb_rows {
-        details_map.insert(r.step_id, StepDetailView::FindBitmap(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_find_bitmap_summary(&r.bitmap_name, r.var_name.as_deref()),
+                r.reference_bitmap_id,
+                r.reference_bitmap_key,
+            ),
+        );
     }
     for r in br_rows {
-        details_map.insert(r.step_id, StepDetailView::Branch(r));
+        let match_target_str = r
+            .on_match_step_id
+            .and_then(|m_id| step_target_map.get(&m_id))
+            .map(String::as_str);
+
+        let no_match_target_str = r
+            .on_no_match_step_id
+            .and_then(|n_id| step_target_map.get(&n_id))
+            .map(String::as_str);
+
+        let summary = generate_branch_summary(
+            &r.condition_type,
+            r.x,
+            r.y,
+            r.expected_r,
+            r.expected_g,
+            r.expected_b,
+            r.tolerance,
+            r.bitmap_name.as_deref(),
+            r.window_match_pattern.as_deref(),
+            r.window_check_type.as_deref(),
+            match_target_str,
+            no_match_target_str,
+        );
+        descriptions.insert(
+            r.step_id,
+            (summary, r.reference_bitmap_id, r.reference_bitmap_key),
+        );
     }
     for r in ocr_rows {
-        details_map.insert(r.step_id, StepDetailView::OcrExtract(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_ocr_extract_summary(
+                    r.search_x,
+                    r.search_y,
+                    r.search_width,
+                    r.search_height,
+                    r.region_var_name.as_deref(),
+                    r.output_var_name.as_deref(),
+                    r.set_as_task_output,
+                ),
+                None,
+                None,
+            ),
+        );
     }
 
     let mut step_screenshot_map: HashMap<i64, String> = HashMap::with_capacity(ss_rows.len());
@@ -1104,117 +1214,9 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         let post_delay_ms = row.post_delay_ms;
         let position = row.position;
 
-        let detail_opt = details_map.remove(&step_id);
-
-        let (description, ref_bitmap_id, ref_bitmap_key) = match detail_opt {
-            Some(StepDetailView::KeyPress(r)) => (format!("Press {}", r.key_combo), None, None),
-            Some(StepDetailView::TypeText(r)) => (
-                generate_type_text_summary(&r.text_to_type, r.delay_between_keys_ms),
-                None,
-                None,
-            ),
-            Some(StepDetailView::MouseScroll(r)) => (
-                generate_mouse_scroll_summary(
-                    &r.direction,
-                    r.scroll_amount,
-                    r.x,
-                    r.y,
-                    r.x_var_name.as_deref(),
-                    r.y_var_name.as_deref(),
-                    r.region_var_name.as_deref(),
-                ),
-                None,
-                None,
-            ),
-            Some(StepDetailView::WindowControl(r)) => (
-                generate_window_control_summary(
-                    &r.action,
-                    &r.match_pattern,
-                    &r.match_type,
-                    r.timeout_ms,
-                ),
-                None,
-                None,
-            ),
-            Some(StepDetailView::MouseClick(r)) => (
-                generate_mouse_click_summary(
-                    r.x,
-                    r.y,
-                    r.x_var_name.as_deref(),
-                    r.y_var_name.as_deref(),
-                    r.region_var_name.as_deref(),
-                    &r.button,
-                    &r.click_type,
-                ),
-                None,
-                None,
-            ),
-            Some(StepDetailView::FindPixel(r)) => (
-                generate_find_pixel_rgb_summary(r.x, r.y, r.var_name.as_deref()),
-                None,
-                None,
-            ),
-            Some(StepDetailView::FindBitmap(r)) => (
-                generate_find_bitmap_summary(&r.bitmap_name, r.var_name.as_deref()),
-                r.reference_bitmap_id,
-                r.reference_bitmap_key,
-            ),
-            Some(StepDetailView::Branch(r)) => {
-                let match_target_str = r
-                    .on_match_step_id
-                    .and_then(|m_id| step_target_map.get(&m_id))
-                    .map(String::as_str);
-
-                let no_match_target_str = r
-                    .on_no_match_step_id
-                    .and_then(|n_id| step_target_map.get(&n_id))
-                    .map(String::as_str);
-
-                let summary = generate_branch_summary(
-                    &r.condition_type,
-                    r.x,
-                    r.y,
-                    r.expected_r,
-                    r.expected_g,
-                    r.expected_b,
-                    r.tolerance,
-                    r.bitmap_name.as_deref(),
-                    r.window_match_pattern.as_deref(),
-                    r.window_check_type.as_deref(),
-                    match_target_str,
-                    no_match_target_str,
-                );
-                (summary, r.reference_bitmap_id, r.reference_bitmap_key)
-            }
-            Some(StepDetailView::OcrExtract(r)) => (
-                generate_ocr_extract_summary(
-                    r.search_x,
-                    r.search_y,
-                    r.search_width,
-                    r.search_height,
-                    r.region_var_name.as_deref(),
-                    r.output_var_name.as_deref(),
-                    r.set_as_task_output,
-                ),
-                None,
-                None,
-            ),
-            None => (
-                match step_type.as_str() {
-                    "key_press" => "Press key".to_string(),
-                    "type_text" => "Type text".to_string(),
-                    "window_control" => "Control window".to_string(),
-                    "mouse_click" => "Click mouse".to_string(),
-                    "mouse_scroll" => "Mouse scroll".to_string(),
-                    "find_pixel_rgb" => "Read pixel at coordinate".to_string(),
-                    "find_bitmap" => "Search for bitmap on screen".to_string(),
-                    "branch" => "BRANCH evaluation".to_string(),
-                    _ => "Unknown step".to_string(),
-                },
-                None,
-                None,
-            ),
-        };
+        let (description, ref_bitmap_id, ref_bitmap_key) = descriptions
+            .remove(&step_id)
+            .unwrap_or_else(|| (default_step_description(&step_type).to_string(), None, None));
 
         let screenshot_key = step_screenshot_map.remove(&step_id);
 
@@ -3016,7 +3018,7 @@ mod tests {
 
     #[test]
     fn test_find_bitmap_query_overrides() {
-        let q = NewFindBitmapQuery {
+        let q = EditStepQuery {
             reference_bitmap_id: Some(42),
             search_x: Some(10),
             search_y: Some(20),
@@ -3355,7 +3357,7 @@ mod tests {
         assert_eq!(sanitize_click_type(None), "single");
 
         // 5. Branch form validation
-        let mut form = MouseClickStepForm {
+        let mut form = StepForm {
             step_type: Some("branch".to_string()),
             label: None,
             post_delay_seconds: None,
