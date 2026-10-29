@@ -867,4 +867,66 @@ mod tests {
             "Expected helper text element to have matching id='reset-user-password-help'"
         );
     }
+
+    #[test]
+    fn test_user_list_item_formatting_and_badge_classes() {
+        use chrono::TimeZone;
+
+        // Arrange
+        let created_at = Utc.with_ymd_and_hms(2025, 3, 10, 14, 30, 0).unwrap();
+        let last_login = Utc.with_ymd_and_hms(2025, 3, 11, 9, 15, 0).unwrap();
+
+        let active_admin = UserListItem {
+            id: 1,
+            username: "admin".to_string(),
+            display_name: "Admin User".to_string(),
+            role: UserRole::Admin,
+            is_active: true,
+            must_change_password: false,
+            created_at,
+            last_login_at: Some(last_login),
+        };
+
+        let inactive_editor = UserListItem {
+            id: 2,
+            username: "editor".to_string(),
+            display_name: "Editor User".to_string(),
+            role: UserRole::Editor,
+            is_active: false,
+            must_change_password: true,
+            created_at,
+            last_login_at: None,
+        };
+
+        let viewer = UserListItem {
+            id: 3,
+            username: "viewer".to_string(),
+            display_name: "Viewer User".to_string(),
+            role: UserRole::Viewer,
+            is_active: true,
+            must_change_password: false,
+            created_at,
+            last_login_at: None,
+        };
+
+        // Act & Assert: Date formatting
+        assert_eq!(
+            active_admin.formatted_created_at(),
+            "2025-03-10 14:30:00 UTC"
+        );
+        assert_eq!(
+            active_admin.formatted_last_login(),
+            "2025-03-11 09:15:00 UTC"
+        );
+        assert_eq!(inactive_editor.formatted_last_login(), "Never");
+
+        // Act & Assert: Status badge classes
+        assert_eq!(active_admin.status_badge_class(), "badge-success");
+        assert_eq!(inactive_editor.status_badge_class(), "badge-danger");
+
+        // Act & Assert: Role badge classes
+        assert_eq!(active_admin.role_badge_class(), "badge-primary");
+        assert_eq!(inactive_editor.role_badge_class(), "badge-neutral");
+        assert_eq!(viewer.role_badge_class(), "badge-neutral");
+    }
 }
