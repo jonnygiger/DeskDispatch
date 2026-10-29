@@ -10,7 +10,7 @@ use axum::{
 use chrono::Utc;
 use deskdispatch::AppState;
 use deskdispatch::auth::{UserRole, generate_csrf_token};
-use deskdispatch::config::Config;
+use deskdispatch::config::{Config, SecretString};
 use deskdispatch::routes::{
     UserListItem, get_edit_user_handler, get_new_user_handler, get_password_handler,
     get_reset_password_handler, get_users_handler, post_create_user_handler,
@@ -49,6 +49,38 @@ impl Drop for UserManagementCleanupGuard {
         })
         .join()
         .unwrap();
+    }
+}
+
+struct AdminRestorationGuard {
+    pool: sqlx::PgPool,
+    deactivated_admin_ids: Vec<i64>,
+}
+
+impl Drop for AdminRestorationGuard {
+    fn drop(&mut self) {
+        if self.deactivated_admin_ids.is_empty() {
+            return;
+        }
+        let pool = self.pool.clone();
+        let ids = self.deactivated_admin_ids.clone();
+
+        let restore = async move {
+            let _ = sqlx::query("UPDATE users SET is_active = true WHERE id = ANY($1)")
+                .bind(&ids)
+                .execute(&pool)
+                .await;
+        };
+
+        let _ = std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                rt.block_on(restore);
+            }
+        })
+        .join();
     }
 }
 
@@ -92,6 +124,36 @@ fn test_user_list_item_helpers() {
     assert_eq!(inactive_editor.status_badge_class(), "badge-danger");
     assert_eq!(inactive_editor.role_badge_class(), "badge-neutral");
     assert_ne!(inactive_editor.formatted_last_login(), "Never");
+}
+
+fn create_test_config() -> Config {
+    Config {
+        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch"
+            .to_string(),
+        public_base_url: "http://localhost:3000".to_string(),
+        s3_endpoint: None,
+        s3_public_endpoint: None,
+        s3_bucket: "deskdispatch-bucket".to_string(),
+        s3_access_key: "test_key".to_string(),
+        s3_secret_key: SecretString::from("test_secret"),
+        s3_region: "us-east-1".to_string(),
+        session_secret: SecretString::from("test_session_secret"),
+        bind_address: "0.0.0.0:3000".to_string(),
+        environment: "development".to_string(),
+        min_agent_version: None,
+        worker_poll_interval_secs: 5,
+        worker_heartbeat_interval_secs: 15,
+        trust_proxy_headers: false,
+        database_max_connections: 5,
+        database_acquire_timeout_secs: 5,
+        worker_long_poll_timeout_secs: 10,
+        session_retention_days: 7,
+        audit_log_retention_days: 90,
+        task_run_step_retention_days: 30,
+        screenshot_retention_days: 30,
+        metrics_bind_address: None,
+        unattended_registration_psk: SecretString::from("test_psk"),
+    }
 }
 
 async fn get_test_pool() -> Option<sqlx::PgPool> {
@@ -159,7 +221,7 @@ async fn test_non_admin_forbidden_from_user_management() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
 
     // Create an editor user
     let editor_username = format!("editor_{}", Uuid::new_v4().simple());
@@ -233,7 +295,7 @@ async fn test_full_user_crud_and_last_admin_protection() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
 
     // Create an initial admin user for the test
     let admin_username = format!("admin_{}", Uuid::new_v4().simple());
@@ -400,13 +462,29 @@ async fn test_full_user_crud_and_last_admin_protection() {
     assert!(!deactivated_is_active);
 
     // 7. Test protection of last active admin:
-    // If we temporarily deactivate all other admin accounts except admin_id
-    let _ = sqlx::query("UPDATE users SET is_active = false WHERE role = 'admin' AND id != $1")
-        .bind(admin_id)
-        .execute(&pool)
-        .await;
+    // Safely query and track all other active admin user IDs so they can be restored upon completion or panic.
+    let other_active_admin_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE role = 'admin' AND is_active = true AND id != $1",
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
 
-    // Attempting to deactivate admin_id should be rejected
+    let restoration_guard = AdminRestorationGuard {
+        pool: pool.clone(),
+        deactivated_admin_ids: other_active_admin_ids.clone(),
+    };
+
+    if !other_active_admin_ids.is_empty() {
+        sqlx::query("UPDATE users SET is_active = false WHERE id = ANY($1)")
+            .bind(&other_active_admin_ids)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // Attempting to deactivate the last remaining active admin_id should be rejected
     let deact_form = format!("csrf_token={}", csrf_token);
     let req = Request::builder()
         .method("POST")
@@ -418,6 +496,26 @@ async fn test_full_user_crud_and_last_admin_protection() {
 
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Drop restoration guard to restore previously active admin users
+    drop(restoration_guard);
+
+    // Confirm that pre-existing admin accounts have been restored to active status
+    if !other_active_admin_ids.is_empty() {
+        let restored_active_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM users WHERE id = ANY($1) AND is_active = true",
+        )
+        .bind(&other_active_admin_ids)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            restored_active_count,
+            other_active_admin_ids.len() as i64,
+            "All previously active admin accounts should be restored"
+        );
+    }
 }
 
 #[tokio::test]
@@ -427,7 +525,7 @@ async fn test_forced_password_change_redirect() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
 
     // Create user with must_change_password = true
     let username = format!("force_pwd_{}", Uuid::new_v4().simple());
