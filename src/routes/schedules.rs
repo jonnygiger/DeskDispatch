@@ -320,6 +320,12 @@ pub struct CronSchedule {
     is_6_fields: bool,
 }
 
+static MONTHS: &[&str; 12] = &[
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+];
+
+static DAYS: &[&str; 7] = &["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
 fn parse_field_val(s: &str, is_dow: bool, is_month: bool) -> Result<u32, ()> {
     let s_trimmed = s.trim();
     if s_trimmed.is_empty() {
@@ -331,33 +337,18 @@ fn parse_field_val(s: &str, is_dow: bool, is_month: bool) -> Result<u32, ()> {
     }
 
     if is_month {
-        match s_trimmed.to_ascii_uppercase().as_str() {
-            "JAN" => return Ok(1),
-            "FEB" => return Ok(2),
-            "MAR" => return Ok(3),
-            "APR" => return Ok(4),
-            "MAY" => return Ok(5),
-            "JUN" => return Ok(6),
-            "JUL" => return Ok(7),
-            "AUG" => return Ok(8),
-            "SEP" => return Ok(9),
-            "OCT" => return Ok(10),
-            "NOV" => return Ok(11),
-            "DEC" => return Ok(12),
-            _ => return Err(()),
+        for (idx, &m) in MONTHS.iter().enumerate() {
+            if s_trimmed.eq_ignore_ascii_case(m) {
+                return Ok((idx + 1) as u32);
+            }
         }
     }
 
     if is_dow {
-        match s_trimmed.to_ascii_uppercase().as_str() {
-            "SUN" => return Ok(0),
-            "MON" => return Ok(1),
-            "TUE" => return Ok(2),
-            "WED" => return Ok(3),
-            "THU" => return Ok(4),
-            "FRI" => return Ok(5),
-            "SAT" => return Ok(6),
-            _ => return Err(()),
+        for (idx, &d) in DAYS.iter().enumerate() {
+            if s_trimmed.eq_ignore_ascii_case(d) {
+                return Ok(idx as u32);
+            }
         }
     }
 
@@ -438,8 +429,19 @@ impl CronSchedule {
             return Err("Empty cron expression".to_string());
         }
 
-        let fields: Vec<&str> = trimmed.split_whitespace().collect();
-        match fields.len() {
+        let mut fields = [""; 6];
+        let mut count = 0;
+        for field in trimmed.split_whitespace() {
+            if count >= 6 {
+                return Err(
+                    "Invalid field count: expected 5 or 6 fields, got 7 or more".to_string()
+                );
+            }
+            fields[count] = field;
+            count += 1;
+        }
+
+        match count {
             5 => {
                 let min_mask = parse_cron_field(fields[0], 0, 59, false, false)?;
                 let hour_mask = parse_cron_field(fields[1], 0, 23, false, false)? as u32;
@@ -476,11 +478,34 @@ impl CronSchedule {
                 })
             }
             _ => Err(format!(
-                "Invalid field count: expected 5 or 6 fields, got {}",
-                fields.len()
+                "Invalid field count: expected 5 or 6 fields, got {count}"
             )),
         }
     }
+}
+
+#[inline]
+fn reset_time_to_start_of_day<Tz: chrono::TimeZone>(dt: DateTime<Tz>) -> DateTime<Tz> {
+    dt.with_hour(0)
+        .and_then(|d| d.with_minute(0))
+        .and_then(|d| d.with_second(0))
+        .and_then(|d| d.with_nanosecond(0))
+        .unwrap_or(dt)
+}
+
+#[inline]
+fn reset_time_to_start_of_hour<Tz: chrono::TimeZone>(dt: DateTime<Tz>) -> DateTime<Tz> {
+    dt.with_minute(0)
+        .and_then(|d| d.with_second(0))
+        .and_then(|d| d.with_nanosecond(0))
+        .unwrap_or(dt)
+}
+
+#[inline]
+fn reset_time_to_start_of_minute<Tz: chrono::TimeZone>(dt: DateTime<Tz>) -> DateTime<Tz> {
+    dt.with_second(0)
+        .and_then(|d| d.with_nanosecond(0))
+        .unwrap_or(dt)
 }
 
 pub fn compute_next_run_at(
@@ -504,12 +529,7 @@ pub fn compute_next_run_at(
     let mut curr = if schedule.is_6_fields {
         local_from + chrono::Duration::seconds(1)
     } else {
-        // Truncate seconds and nanoseconds to 0, then step 1 minute forward
-        local_from
-            .with_second(0)
-            .and_then(|d| d.with_nanosecond(0))
-            .unwrap_or(local_from)
-            + chrono::Duration::minutes(1)
+        reset_time_to_start_of_minute(local_from) + chrono::Duration::minutes(1)
     };
 
     let max_steps = if schedule.is_6_fields {
@@ -537,11 +557,8 @@ pub fn compute_next_run_at(
                 .with_day(1)
                 .and_then(|d| d.with_month(next_m))
                 .and_then(|d| d.with_year(year))
-                .and_then(|d| d.with_hour(0))
-                .and_then(|d| d.with_minute(0))
-                .and_then(|d| d.with_second(0))
             {
-                curr = next_dt;
+                curr = reset_time_to_start_of_day(next_dt);
                 continue;
             }
         }
@@ -556,28 +573,19 @@ pub fn compute_next_run_at(
         };
 
         if !day_matches {
-            curr = (curr + chrono::Duration::days(1))
-                .with_hour(0)
-                .and_then(|d| d.with_minute(0))
-                .and_then(|d| d.with_second(0))
-                .unwrap_or(curr + chrono::Duration::days(1));
+            curr = reset_time_to_start_of_day(curr + chrono::Duration::days(1));
             continue;
         }
 
         let hour = curr.hour();
         if (schedule.hour_mask & (1u32 << hour)) == 0 {
-            curr = (curr + chrono::Duration::hours(1))
-                .with_minute(0)
-                .and_then(|d| d.with_second(0))
-                .unwrap_or(curr + chrono::Duration::hours(1));
+            curr = reset_time_to_start_of_hour(curr + chrono::Duration::hours(1));
             continue;
         }
 
         let min = curr.minute();
         if (schedule.min_mask & (1u64 << min)) == 0 {
-            curr = (curr + chrono::Duration::minutes(1))
-                .with_second(0)
-                .unwrap_or(curr + chrono::Duration::minutes(1));
+            curr = reset_time_to_start_of_minute(curr + chrono::Duration::minutes(1));
             continue;
         }
 
