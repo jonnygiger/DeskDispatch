@@ -307,8 +307,181 @@ async fn validate_schedule_form<'a>(
     })
 }
 
-use cron::Schedule;
-use std::str::FromStr;
+use chrono::{Datelike, Timelike};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CronSchedule {
+    sec_mask: u64,
+    min_mask: u64,
+    hour_mask: u32,
+    dom_mask: u32,
+    month_mask: u16,
+    dow_mask: u8,
+    is_6_fields: bool,
+}
+
+fn parse_field_val(s: &str, is_dow: bool, is_month: bool) -> Result<u32, ()> {
+    let s_trimmed = s.trim();
+    if s_trimmed.is_empty() {
+        return Err(());
+    }
+
+    if let Ok(val) = s_trimmed.parse::<u32>() {
+        return Ok(val);
+    }
+
+    if is_month {
+        match s_trimmed.to_ascii_uppercase().as_str() {
+            "JAN" => return Ok(1),
+            "FEB" => return Ok(2),
+            "MAR" => return Ok(3),
+            "APR" => return Ok(4),
+            "MAY" => return Ok(5),
+            "JUN" => return Ok(6),
+            "JUL" => return Ok(7),
+            "AUG" => return Ok(8),
+            "SEP" => return Ok(9),
+            "OCT" => return Ok(10),
+            "NOV" => return Ok(11),
+            "DEC" => return Ok(12),
+            _ => return Err(()),
+        }
+    }
+
+    if is_dow {
+        match s_trimmed.to_ascii_uppercase().as_str() {
+            "SUN" => return Ok(0),
+            "MON" => return Ok(1),
+            "TUE" => return Ok(2),
+            "WED" => return Ok(3),
+            "THU" => return Ok(4),
+            "FRI" => return Ok(5),
+            "SAT" => return Ok(6),
+            _ => return Err(()),
+        }
+    }
+
+    Err(())
+}
+
+fn parse_cron_field(
+    field_str: &str,
+    min_val: u32,
+    max_val: u32,
+    is_dow: bool,
+    is_month: bool,
+) -> Result<u64, String> {
+    let mut mask = 0u64;
+
+    for part in field_str.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            return Err(format!("Invalid empty component in '{field_str}'"));
+        }
+
+        let (range_str, step) = if let Some((r, s)) = part.split_once('/') {
+            let step_val = s
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| format!("Invalid step in '{part}'"))?;
+            if step_val == 0 {
+                return Err(format!("Step value cannot be zero in '{part}'"));
+            }
+            (r.trim(), step_val)
+        } else {
+            (part, 1u32)
+        };
+
+        let (start, end) = if range_str == "*" {
+            (min_val, max_val)
+        } else if let Some((st, en)) = range_str.split_once('-') {
+            let start = parse_field_val(st, is_dow, is_month)
+                .map_err(|_| format!("Invalid start range in '{part}'"))?;
+            let end = parse_field_val(en, is_dow, is_month)
+                .map_err(|_| format!("Invalid end range in '{part}'"))?;
+            (start, end)
+        } else {
+            let val = parse_field_val(range_str, is_dow, is_month)
+                .map_err(|_| format!("Invalid value in '{part}'"))?;
+            if part.contains('/') {
+                (val, max_val)
+            } else {
+                (val, val)
+            }
+        };
+
+        if start > end || start < min_val || end > max_val {
+            return Err(format!(
+                "Value out of bounds ({min_val}..={max_val}) in '{part}'"
+            ));
+        }
+
+        let mut curr = start;
+        while curr <= end {
+            let bit_idx = if is_dow && curr == 7 { 0 } else { curr };
+            mask |= 1u64 << bit_idx;
+            curr += step;
+        }
+    }
+
+    if mask == 0 {
+        return Err(format!("Field '{field_str}' produced an empty mask"));
+    }
+
+    Ok(mask)
+}
+
+impl CronSchedule {
+    pub fn parse(expr: &str) -> Result<Self, String> {
+        let trimmed = expr.trim();
+        if trimmed.is_empty() {
+            return Err("Empty cron expression".to_string());
+        }
+
+        let fields: Vec<&str> = trimmed.split_whitespace().collect();
+        match fields.len() {
+            5 => {
+                let min_mask = parse_cron_field(fields[0], 0, 59, false, false)?;
+                let hour_mask = parse_cron_field(fields[1], 0, 23, false, false)? as u32;
+                let dom_mask = parse_cron_field(fields[2], 1, 31, false, false)? as u32;
+                let month_mask = parse_cron_field(fields[3], 1, 12, false, true)? as u16;
+                let dow_mask = parse_cron_field(fields[4], 0, 7, true, false)? as u8;
+
+                Ok(Self {
+                    sec_mask: 1u64, // 0th second
+                    min_mask,
+                    hour_mask,
+                    dom_mask,
+                    month_mask,
+                    dow_mask,
+                    is_6_fields: false,
+                })
+            }
+            6 => {
+                let sec_mask = parse_cron_field(fields[0], 0, 59, false, false)?;
+                let min_mask = parse_cron_field(fields[1], 0, 59, false, false)?;
+                let hour_mask = parse_cron_field(fields[2], 0, 23, false, false)? as u32;
+                let dom_mask = parse_cron_field(fields[3], 1, 31, false, false)? as u32;
+                let month_mask = parse_cron_field(fields[4], 1, 12, false, true)? as u16;
+                let dow_mask = parse_cron_field(fields[5], 0, 7, true, false)? as u8;
+
+                Ok(Self {
+                    sec_mask,
+                    min_mask,
+                    hour_mask,
+                    dom_mask,
+                    month_mask,
+                    dow_mask,
+                    is_6_fields: true,
+                })
+            }
+            _ => Err(format!(
+                "Invalid field count: expected 5 or 6 fields, got {}",
+                fields.len()
+            )),
+        }
+    }
+}
 
 pub fn compute_next_run_at(
     cron_expr: &str,
@@ -325,27 +498,99 @@ pub fn compute_next_run_at(
         .parse()
         .map_err(|_| format!("Invalid timezone: '{tz_name}'"))?;
 
-    let trimmed = cron_expr.trim();
-    let fields_count = trimmed.split_whitespace().count();
-
-    // `cron` crate expects standard 6 or 7 fields (sec min hour dom month dow [year]).
-    // Standard 5-field cron format (min hour dom month dow) needs '0 ' prepended for seconds.
-    let full_expr = if fields_count == 5 {
-        format!("0 {trimmed}")
-    } else {
-        trimmed.to_string()
-    };
-
-    let schedule =
-        Schedule::from_str(&full_expr).map_err(|e| format!("Invalid cron expression: {e}"))?;
+    let schedule = CronSchedule::parse(cron_expr)?;
 
     let local_from = from_dt.with_timezone(&tz);
+    let mut curr = if schedule.is_6_fields {
+        local_from + chrono::Duration::seconds(1)
+    } else {
+        // Truncate seconds and nanoseconds to 0, then step 1 minute forward
+        local_from
+            .with_second(0)
+            .and_then(|d| d.with_nanosecond(0))
+            .unwrap_or(local_from)
+            + chrono::Duration::minutes(1)
+    };
 
-    schedule
-        .after(&local_from)
-        .next()
-        .map(|dt| dt.with_timezone(&Utc))
-        .ok_or_else(|| "No matching cron occurrence found".to_string())
+    let max_steps = if schedule.is_6_fields {
+        315_360_000
+    } else {
+        5_256_000
+    };
+    let mut steps = 0;
+
+    let is_dom_restricted = schedule.dom_mask != 0xFFFF_FFFE;
+    let is_dow_restricted = schedule.dow_mask != 0x7F;
+
+    while steps < max_steps {
+        steps += 1;
+
+        let month = curr.month();
+        if (schedule.month_mask & (1u16 << month)) == 0 {
+            let year = if month == 12 {
+                curr.year() + 1
+            } else {
+                curr.year()
+            };
+            let next_m = if month == 12 { 1 } else { month + 1 };
+            if let Some(next_dt) = curr
+                .with_day(1)
+                .and_then(|d| d.with_month(next_m))
+                .and_then(|d| d.with_year(year))
+                .and_then(|d| d.with_hour(0))
+                .and_then(|d| d.with_minute(0))
+                .and_then(|d| d.with_second(0))
+            {
+                curr = next_dt;
+                continue;
+            }
+        }
+
+        let dom = curr.day();
+        let dow = curr.weekday().num_days_from_sunday();
+
+        let day_matches = if is_dom_restricted && is_dow_restricted {
+            (schedule.dom_mask & (1u32 << dom)) != 0 || (schedule.dow_mask & (1u8 << dow)) != 0
+        } else {
+            (schedule.dom_mask & (1u32 << dom)) != 0 && (schedule.dow_mask & (1u8 << dow)) != 0
+        };
+
+        if !day_matches {
+            curr = (curr + chrono::Duration::days(1))
+                .with_hour(0)
+                .and_then(|d| d.with_minute(0))
+                .and_then(|d| d.with_second(0))
+                .unwrap_or(curr + chrono::Duration::days(1));
+            continue;
+        }
+
+        let hour = curr.hour();
+        if (schedule.hour_mask & (1u32 << hour)) == 0 {
+            curr = (curr + chrono::Duration::hours(1))
+                .with_minute(0)
+                .and_then(|d| d.with_second(0))
+                .unwrap_or(curr + chrono::Duration::hours(1));
+            continue;
+        }
+
+        let min = curr.minute();
+        if (schedule.min_mask & (1u64 << min)) == 0 {
+            curr = (curr + chrono::Duration::minutes(1))
+                .with_second(0)
+                .unwrap_or(curr + chrono::Duration::minutes(1));
+            continue;
+        }
+
+        let sec = curr.second();
+        if (schedule.sec_mask & (1u64 << sec)) == 0 {
+            curr += chrono::Duration::seconds(1);
+            continue;
+        }
+
+        return Ok(curr.with_timezone(&Utc));
+    }
+
+    Err("No matching cron occurrence found".to_string())
 }
 
 #[tracing::instrument(skip(state, user))]
@@ -1276,5 +1521,52 @@ mod tests {
             next_year_jan1,
             Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
         );
+    }
+
+    #[test]
+    fn test_month_end_transition() {
+        use chrono::TimeZone;
+        // Jan 31st 2025 23:55:00 UTC
+        let jan_31 = Utc.with_ymd_and_hms(2025, 1, 31, 23, 55, 0).unwrap();
+        // Daily schedule at midnight in Feb
+        let res = compute_next_run_at("0 0 * FEB *", "UTC", &jan_31);
+        assert!(res.is_ok());
+        assert_eq!(
+            res.unwrap(),
+            Utc.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_5_field_cron_second_truncation() {
+        use chrono::TimeZone;
+        // 11:59:30 UTC
+        let t = Utc.with_ymd_and_hms(2025, 1, 15, 11, 59, 30).unwrap();
+        // Schedule: top of every hour
+        let res = compute_next_run_at("0 * * * *", "UTC", &t);
+        assert!(res.is_ok());
+        assert_eq!(
+            res.unwrap(),
+            Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_dow_range_parsing() {
+        use chrono::TimeZone;
+        let base_dt = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        assert!(compute_next_run_at("0 0 * * 1-7", "UTC", &base_dt).is_ok());
+        assert!(compute_next_run_at("0 0 * * 5-7", "UTC", &base_dt).is_ok());
+    }
+
+    #[test]
+    fn test_dom_dow_or_semantics() {
+        use chrono::TimeZone;
+        // Wed Jan 1, 2025
+        let base_dt = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        // Cron: Midnight on 15th OR Mondays
+        // First Monday is Jan 6, 2025
+        let res = compute_next_run_at("0 0 15 * MON", "UTC", &base_dt).unwrap();
+        assert_eq!(res, Utc.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap());
     }
 }
