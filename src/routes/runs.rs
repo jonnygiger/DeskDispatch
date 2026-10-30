@@ -714,16 +714,16 @@ pub async fn get_run_detail_handler(
         });
     }
 
-    let mut parameters = Vec::new();
     let overrides_map = parameter_overrides_json
         .as_ref()
         .and_then(|v| v.as_object());
 
-    if let Some(params_obj) = dispatched_json
+    let parameters = if let Some(params_obj) = dispatched_json
         .as_ref()
         .and_then(|j| j.get("parameters"))
         .and_then(|p| p.as_object())
     {
+        let mut params = Vec::with_capacity(params_obj.len());
         for (k, v) in params_obj {
             let val_str = match v {
                 serde_json::Value::String(s) => s.clone(),
@@ -732,12 +732,13 @@ pub async fn get_run_detail_handler(
                 _ => v.to_string(),
             };
             let is_override = overrides_map.is_some_and(|m| m.contains_key(k));
-            parameters.push(RunParameterItem {
+            params.push(RunParameterItem {
                 name: k.clone(),
                 value: val_str,
                 is_override,
             });
         }
+        params
     } else {
         let param_rows = sqlx::query_as::<_, ParamDefaultRow>(
             "SELECT name, default_value FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC",
@@ -747,6 +748,7 @@ pub async fn get_run_detail_handler(
         .await
         .unwrap_or_default();
 
+        let mut params = Vec::with_capacity(param_rows.len());
         for p in param_rows {
             let (val_str, is_override) = if let Some(override_val) = overrides_map
                 .and_then(|m| m.get(&p.name))
@@ -756,13 +758,14 @@ pub async fn get_run_detail_handler(
             } else {
                 (p.default_value, false)
             };
-            parameters.push(RunParameterItem {
+            params.push(RunParameterItem {
                 name: p.name,
                 value: val_str,
                 is_override,
             });
         }
-    }
+        params
+    };
 
     HtmlTemplate(RunDetailTemplate {
         user,
