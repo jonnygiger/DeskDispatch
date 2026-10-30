@@ -714,16 +714,16 @@ pub async fn get_run_detail_handler(
         });
     }
 
-    let mut parameters = Vec::new();
     let overrides_map = parameter_overrides_json
         .as_ref()
         .and_then(|v| v.as_object());
 
-    if let Some(params_obj) = dispatched_json
+    let parameters = if let Some(params_obj) = dispatched_json
         .as_ref()
         .and_then(|j| j.get("parameters"))
         .and_then(|p| p.as_object())
     {
+        let mut params = Vec::with_capacity(params_obj.len());
         for (k, v) in params_obj {
             let val_str = match v {
                 serde_json::Value::String(s) => s.clone(),
@@ -732,12 +732,13 @@ pub async fn get_run_detail_handler(
                 _ => v.to_string(),
             };
             let is_override = overrides_map.is_some_and(|m| m.contains_key(k));
-            parameters.push(RunParameterItem {
+            params.push(RunParameterItem {
                 name: k.clone(),
                 value: val_str,
                 is_override,
             });
         }
+        params
     } else {
         let param_rows = sqlx::query_as::<_, ParamDefaultRow>(
             "SELECT name, default_value FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC",
@@ -747,6 +748,7 @@ pub async fn get_run_detail_handler(
         .await
         .unwrap_or_default();
 
+        let mut params = Vec::with_capacity(param_rows.len());
         for p in param_rows {
             let (val_str, is_override) = if let Some(override_val) = overrides_map
                 .and_then(|m| m.get(&p.name))
@@ -756,13 +758,14 @@ pub async fn get_run_detail_handler(
             } else {
                 (p.default_value, false)
             };
-            parameters.push(RunParameterItem {
+            params.push(RunParameterItem {
                 name: p.name,
                 value: val_str,
                 is_override,
             });
         }
-    }
+        params
+    };
 
     HtmlTemplate(RunDetailTemplate {
         user,
@@ -789,12 +792,19 @@ pub fn crc32(data: &[u8]) -> u32 {
 #[derive(Default)]
 pub struct ZipWriter {
     buf: Vec<u8>,
-    entries: Vec<(String, u32, u32, u32)>,
+    entries: Vec<(Box<str>, u32, u32, u32)>,
 }
 
 impl ZipWriter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buf: Vec::with_capacity(capacity),
+            entries: Vec::new(),
+        }
     }
 
     pub fn add_file(&mut self, filename: &str, data: &[u8]) {
@@ -804,21 +814,19 @@ impl ZipWriter {
         let filename_bytes = filename.as_bytes();
         let filename_len = filename_bytes.len() as u16;
 
-        self.buf.extend_from_slice(&0x04034b50u32.to_le_bytes());
-        self.buf.extend_from_slice(&20u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&crc.to_le_bytes());
-        self.buf.extend_from_slice(&size.to_le_bytes());
-        self.buf.extend_from_slice(&size.to_le_bytes());
-        self.buf.extend_from_slice(&filename_len.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        let mut header = [0u8; 30];
+        header[0..4].copy_from_slice(&0x04034b50u32.to_le_bytes());
+        header[4..6].copy_from_slice(&20u16.to_le_bytes());
+        header[14..18].copy_from_slice(&crc.to_le_bytes());
+        header[18..22].copy_from_slice(&size.to_le_bytes());
+        header[22..26].copy_from_slice(&size.to_le_bytes());
+        header[26..28].copy_from_slice(&filename_len.to_le_bytes());
+
+        self.buf.extend_from_slice(&header);
         self.buf.extend_from_slice(filename_bytes);
         self.buf.extend_from_slice(data);
 
-        self.entries.push((filename.to_string(), crc, size, offset));
+        self.entries.push((filename.into(), crc, size, offset));
     }
 
     pub fn finish(mut self) -> Vec<u8> {
@@ -828,38 +836,32 @@ impl ZipWriter {
             let filename_bytes = filename.as_bytes();
             let filename_len = filename_bytes.len() as u16;
 
-            self.buf.extend_from_slice(&0x02014b50u32.to_le_bytes());
-            self.buf.extend_from_slice(&20u16.to_le_bytes());
-            self.buf.extend_from_slice(&20u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&crc.to_le_bytes());
-            self.buf.extend_from_slice(&size.to_le_bytes());
-            self.buf.extend_from_slice(&size.to_le_bytes());
-            self.buf.extend_from_slice(&filename_len.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf
-                .extend_from_slice(&(0o100644u32 << 16).to_le_bytes());
-            self.buf.extend_from_slice(&offset.to_le_bytes());
+            let mut cd_header = [0u8; 46];
+            cd_header[0..4].copy_from_slice(&0x02014b50u32.to_le_bytes());
+            cd_header[4..6].copy_from_slice(&20u16.to_le_bytes());
+            cd_header[6..8].copy_from_slice(&20u16.to_le_bytes());
+            cd_header[16..20].copy_from_slice(&crc.to_le_bytes());
+            cd_header[20..24].copy_from_slice(&size.to_le_bytes());
+            cd_header[24..28].copy_from_slice(&size.to_le_bytes());
+            cd_header[28..30].copy_from_slice(&filename_len.to_le_bytes());
+            cd_header[38..42].copy_from_slice(&(0o100644u32 << 16).to_le_bytes());
+            cd_header[42..46].copy_from_slice(&offset.to_le_bytes());
+
+            self.buf.extend_from_slice(&cd_header);
             self.buf.extend_from_slice(filename_bytes);
         }
 
         let cd_size = (self.buf.len() as u32) - cd_offset;
         let num_entries = self.entries.len() as u16;
 
-        self.buf.extend_from_slice(&0x06054b50u32.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&num_entries.to_le_bytes());
-        self.buf.extend_from_slice(&num_entries.to_le_bytes());
-        self.buf.extend_from_slice(&cd_size.to_le_bytes());
-        self.buf.extend_from_slice(&cd_offset.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
+        let mut eocd = [0u8; 22];
+        eocd[0..4].copy_from_slice(&0x06054b50u32.to_le_bytes());
+        eocd[8..10].copy_from_slice(&num_entries.to_le_bytes());
+        eocd[10..12].copy_from_slice(&num_entries.to_le_bytes());
+        eocd[12..16].copy_from_slice(&cd_size.to_le_bytes());
+        eocd[16..20].copy_from_slice(&cd_offset.to_le_bytes());
+
+        self.buf.extend_from_slice(&eocd);
 
         self.buf
     }
@@ -909,7 +911,7 @@ pub async fn get_run_screenshots_zip_handler(
         }
     };
 
-    let mut zip_writer = ZipWriter::new();
+    let mut zip_writer = ZipWriter::with_capacity(step_rows.len() * 1024);
     let storage = state.storage_service();
     let mut count = 0;
 
