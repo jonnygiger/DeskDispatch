@@ -273,8 +273,7 @@ async fn test_full_user_crud_and_last_admin_protection() {
 
     // Directly seed admin user and session without slow Argon2 password hashing or HTTP login roundtrips
     let admin_username = format!("admin_{}", Uuid::new_v4().simple());
-    let (admin_id, cookie_header) =
-        create_test_user(&pool, &admin_username, "admin", false).await;
+    let (admin_id, cookie_header) = create_test_user(&pool, &admin_username, "admin", false).await;
 
     let mut cleanup_guard = UserManagementCleanupGuard {
         pool: pool.clone(),
@@ -406,12 +405,11 @@ async fn test_full_user_crud_and_last_admin_protection() {
 
     // 7. Test protection of last active admin:
     // Check current active admin count in database
-    let total_active_admins: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = true",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let total_active_admins: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = true")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     if total_active_admins > 1 {
         // Query other active admin IDs and temporarily deactivate them on pool so Axum handlers see active_admins == 1
