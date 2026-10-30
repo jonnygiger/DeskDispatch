@@ -78,3 +78,7 @@ Action: Test worker authentication during key rotation with non-expired vs expir
 ## 2025-03-28 Security Headers CSP S3 Fallback & Whitespace Endpoint Coverage
 Learning: Security headers middleware (`security_headers_middleware`) builds Content-Security-Policy `form-action` and `img-src` directives by prioritizing `s3_public_endpoint`, falling back to `s3_endpoint`, and filtering out whitespace-only string options (`!endpoint.trim().is_empty()`).
 Action: Test S3 public endpoint fallback and whitespace-only/None endpoint options using `axum::Router`, `tower::ServiceExt::oneshot`, and `security_headers_middleware` assertions in `src/auth/security_headers.rs`.
+
+## 2025-03-29 Remaining Domain Status Enums Display, FromStr & Serde Edge Cases Coverage
+Learning: Domain status enums (`AutomationStatus`, `RecordingSessionStatus`, `ScheduleStatus`, `UserSessionStatus`, `WpsModeStatus`) implement `Display`, custom `FromStr` parsing (including trimming surrounding whitespace, case-insensitivity, and boolean string aliases like `"true"`/`"false"` for Schedule and WPS mode statuses), and Serde JSON serialization/deserialization.
+Action: Test `Display`, case/whitespace-tolerant `FromStr` parsing, invalid string parsing error message outputs, and Serde JSON roundtrips for all domain status enums in `src/domain.rs` unit tests without database dependencies.

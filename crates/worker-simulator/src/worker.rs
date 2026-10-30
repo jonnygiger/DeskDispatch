@@ -50,6 +50,168 @@ fn extract_host_port(url: &str) -> Option<&str> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StepExecutionOutcome {
+    pub result_str: &'static str,
+    pub captured_r: Option<i16>,
+    pub captured_g: Option<i16>,
+    pub captured_b: Option<i16>,
+    pub captured_x: Option<i32>,
+    pub captured_y: Option<i32>,
+    pub found: Option<bool>,
+}
+
+impl StepExecutionOutcome {
+    #[inline]
+    pub fn evaluate(profile: WorkerProfile, step_type: &str) -> Self {
+        if profile == WorkerProfile::Flaky && random_bool(0.3) {
+            return Self {
+                result_str: "failed",
+                captured_r: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                captured_g: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                captured_b: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                captured_x: Some(random_range_i32(0, 1920)),
+                captured_y: Some(random_range_i32(0, 1080)),
+                found: Some(false),
+            };
+        }
+
+        match step_type {
+            "branch" => {
+                let matched = random_flag();
+                Self {
+                    result_str: if matched {
+                        "branch_matched"
+                    } else {
+                        "branch_not_matched"
+                    },
+                    captured_r: Some(120),
+                    captured_g: Some(180),
+                    captured_b: Some(200),
+                    captured_x: Some(400),
+                    captured_y: Some(300),
+                    found: Some(matched),
+                }
+            }
+            "mouse_scroll" | "window_control" | "clipboard_control" => Self {
+                result_str: "success",
+                captured_r: Some(100),
+                captured_g: Some(150),
+                captured_b: Some(200),
+                captured_x: Some(0),
+                captured_y: Some(0),
+                found: Some(true),
+            },
+            _ => Self {
+                result_str: "success",
+                captured_r: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                captured_g: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                captured_b: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
+                captured_x: Some(random_range_i32(0, 1920)),
+                captured_y: Some(random_range_i32(0, 1080)),
+                found: Some(true),
+            },
+        }
+    }
+}
+
+fn extract_variable_updates(
+    step: &StepPayload,
+    outcome: &StepExecutionOutcome,
+    task_output_type: &mut Option<String>,
+    task_output_value: &mut Option<String>,
+) -> Vec<VariableUpdateItem> {
+    let mut var_updates = Vec::new();
+
+    match step {
+        StepPayload::FindPixelRgb {
+            output_variable_id: Some(vid),
+            ..
+        } => {
+            var_updates.push(VariableUpdateItem {
+                variable_id: *vid,
+                value: serde_json::json!([
+                    outcome.captured_r.unwrap_or(200),
+                    outcome.captured_g.unwrap_or(150),
+                    outcome.captured_b.unwrap_or(100)
+                ]),
+            });
+        }
+        StepPayload::OcrExtract {
+            output_variable_id,
+            set_as_task_output,
+            ..
+        } => {
+            if let Some(vid) = output_variable_id {
+                var_updates.push(VariableUpdateItem {
+                    variable_id: *vid,
+                    value: serde_json::json!("SIMULATED_OCR_TEXT"),
+                });
+            }
+            if *set_as_task_output {
+                *task_output_type = Some("ocr_text".to_string());
+                *task_output_value = Some("SIMULATED_OCR_TEXT".to_string());
+            }
+        }
+        StepPayload::ClipboardControl {
+            output_variable_id,
+            set_as_task_output,
+            ..
+        } => {
+            if let Some(vid) = output_variable_id {
+                var_updates.push(VariableUpdateItem {
+                    variable_id: *vid,
+                    value: serde_json::json!("SIMULATED_CLIPBOARD_TEXT"),
+                });
+            }
+            if *set_as_task_output {
+                *task_output_type = Some("string".to_string());
+                *task_output_value = Some("SIMULATED_CLIPBOARD_TEXT".to_string());
+            }
+        }
+        StepPayload::FindBitmap {
+            output_found_variable_id,
+            output_x_variable_id,
+            output_y_variable_id,
+            output_region_variable_id,
+            ..
+        } => {
+            if let Some(vid) = output_found_variable_id {
+                var_updates.push(VariableUpdateItem {
+                    variable_id: *vid,
+                    value: serde_json::json!(outcome.found.unwrap_or(true)),
+                });
+            }
+            if let Some(vid) = output_x_variable_id {
+                var_updates.push(VariableUpdateItem {
+                    variable_id: *vid,
+                    value: serde_json::json!(outcome.captured_x.unwrap_or(400)),
+                });
+            }
+            if let Some(vid) = output_y_variable_id {
+                var_updates.push(VariableUpdateItem {
+                    variable_id: *vid,
+                    value: serde_json::json!(outcome.captured_y.unwrap_or(300)),
+                });
+            }
+            if let Some(vid) = output_region_variable_id {
+                let x = outcome.captured_x.unwrap_or(400);
+                let y = outcome.captured_y.unwrap_or(300);
+                var_updates.push(VariableUpdateItem {
+                    variable_id: *vid,
+                    value: serde_json::json!({
+                        "top_left": [x, y],
+                        "bottom_right": [x + 120, y + 80]
+                    }),
+                });
+            }
+        }
+        _ => {}
+    }
+
+    var_updates
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     pub worker_index: usize,
@@ -91,6 +253,12 @@ impl SimulatedWorker {
         }
     }
 
+    #[inline]
+    pub fn set_api_key(&mut self, api_key: String) {
+        self.auth_header = Some(format!("Bearer {}", api_key));
+        self.api_key = Some(api_key);
+    }
+
     /// Primary execution loop for a simulated worker.
     pub async fn run(mut self, stop_signal: Arc<AtomicBool>) {
         info!(
@@ -110,8 +278,7 @@ impl SimulatedWorker {
                             worker_idx = self.config.worker_index,
                             "Unattended worker registered successfully via PSK"
                         );
-                        self.auth_header = Some(format!("Bearer {}", key));
-                        self.api_key = Some(key);
+                        self.set_api_key(key);
                         registered = true;
                     }
                     Err(e) => {
@@ -132,8 +299,7 @@ impl SimulatedWorker {
                                 worker_idx = self.config.worker_index,
                                 "Registered successfully with API key"
                             );
-                            self.auth_header = Some(format!("Bearer {}", key));
-                            self.api_key = Some(key);
+                            self.set_api_key(key);
                         }
                         Err(e) => {
                             error!(
@@ -153,15 +319,14 @@ impl SimulatedWorker {
             }
         }
 
-        let auth_header = match self.auth_header.clone() {
-            Some(h) => h,
-            None => return,
+        let Some(auth_header) = self.auth_header.as_deref() else {
+            return;
         };
 
         // Step 2: Spawn background heartbeat loop
         let hb_worker_idx = self.config.worker_index;
         let hb_client = self.client.clone();
-        let hb_auth_header = auth_header.clone();
+        let hb_auth_header = auth_header.to_string();
         let hb_server_url = self.config.server_url.clone();
         let hb_profile = self.config.profile;
         let hb_cancel_flag = self.cancel_flag.clone();
@@ -266,73 +431,15 @@ impl SimulatedWorker {
             }
 
             let next_url = format!("{}/api/v1/workers/next-assignment", self.config.server_url);
-            let poll_res = self
+            match self
                 .client
                 .get(&next_url)
-                .header("Authorization", &auth_header)
+                .header("Authorization", auth_header)
                 .send()
-                .await;
-
-            match poll_res {
+                .await
+            {
                 Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<NextAssignmentResponse>().await {
-                        Ok(NextAssignmentResponse::None) => {
-                            tokio::time::sleep(Duration::from_secs(2)).await;
-                        }
-                        Ok(NextAssignmentResponse::ExecuteAutomation {
-                            task_run_id,
-                            automation,
-                        }) => {
-                            info!(
-                                worker_idx = self.config.worker_index,
-                                task_run_id = task_run_id,
-                                "Received automation task execution assignment"
-                            );
-                            *self.current_task_run_id.lock().await = Some(task_run_id);
-                            self.cancel_flag.store(false, Ordering::Relaxed);
-
-                            let exec_res = self
-                                .execute_automation(task_run_id, &automation, &auth_header)
-                                .await;
-                            *self.current_task_run_id.lock().await = None;
-
-                            if let Err(e) = exec_res {
-                                error!(
-                                    worker_idx = self.config.worker_index,
-                                    task_run_id = task_run_id,
-                                    "Error executing automation: {}",
-                                    e
-                                );
-                            }
-                        }
-                        Ok(NextAssignmentResponse::StartRecording {
-                            recording_session_id,
-                        }) => {
-                            info!(
-                                worker_idx = self.config.worker_index,
-                                recording_session_id = recording_session_id,
-                                "Received start recording assignment"
-                            );
-                            let rec_res = self
-                                .execute_recording(recording_session_id, &auth_header)
-                                .await;
-                            if let Err(e) = rec_res {
-                                error!(
-                                    worker_idx = self.config.worker_index,
-                                    recording_session_id = recording_session_id,
-                                    "Error executing recording: {}",
-                                    e
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            error!(
-                                worker_idx = self.config.worker_index,
-                                "Failed to parse NextAssignmentResponse: {}", e
-                            );
-                            tokio::time::sleep(Duration::from_secs(3)).await;
-                        }
-                    }
+                    self.handle_poll_response(resp, auth_header).await;
                 }
                 Ok(resp) => {
                     warn!(
@@ -349,6 +456,67 @@ impl SimulatedWorker {
                     );
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
+            }
+        }
+    }
+
+    async fn handle_poll_response(&self, resp: reqwest::Response, auth_header: &str) {
+        match resp.json::<NextAssignmentResponse>().await {
+            Ok(NextAssignmentResponse::None) => {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Ok(NextAssignmentResponse::ExecuteAutomation {
+                task_run_id,
+                automation,
+            }) => {
+                info!(
+                    worker_idx = self.config.worker_index,
+                    task_run_id = task_run_id,
+                    "Received automation task execution assignment"
+                );
+                *self.current_task_run_id.lock().await = Some(task_run_id);
+                self.cancel_flag.store(false, Ordering::Relaxed);
+
+                let exec_res = self
+                    .execute_automation(task_run_id, &automation, auth_header)
+                    .await;
+                *self.current_task_run_id.lock().await = None;
+
+                if let Err(e) = exec_res {
+                    error!(
+                        worker_idx = self.config.worker_index,
+                        task_run_id = task_run_id,
+                        "Error executing automation: {}",
+                        e
+                    );
+                }
+            }
+            Ok(NextAssignmentResponse::StartRecording {
+                recording_session_id,
+            }) => {
+                info!(
+                    worker_idx = self.config.worker_index,
+                    recording_session_id = recording_session_id,
+                    "Received start recording assignment"
+                );
+                let rec_res = self
+                    .execute_recording(recording_session_id, auth_header)
+                    .await;
+                if let Err(e) = rec_res {
+                    error!(
+                        worker_idx = self.config.worker_index,
+                        recording_session_id = recording_session_id,
+                        "Error executing recording: {}",
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                error!(
+                    worker_idx = self.config.worker_index,
+                    "Failed to parse NextAssignmentResponse: {}", e
+                );
+                tokio::time::sleep(Duration::from_secs(3)).await;
             }
         }
     }
@@ -475,58 +643,9 @@ impl SimulatedWorker {
             ))
             .await;
 
-            // Determine step result based on profile
-            let (result_str, captured_r, captured_g, captured_b, captured_x, captured_y, found) =
-                match self.config.profile {
-                    WorkerProfile::Flaky if random_bool(0.3) => (
-                        "failed",
-                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
-                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
-                        Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
-                        Some(random_range_i32(0, 1920)),
-                        Some(random_range_i32(0, 1080)),
-                        Some(false),
-                    ),
-                    _ => match step_type {
-                        "branch" => {
-                            let matched = random_flag();
-                            let res = if matched {
-                                "branch_matched"
-                            } else {
-                                "branch_not_matched"
-                            };
-                            (
-                                res,
-                                Some(120),
-                                Some(180),
-                                Some(200),
-                                Some(400),
-                                Some(300),
-                                Some(matched),
-                            )
-                        }
-                        "mouse_scroll" | "window_control" | "clipboard_control" => (
-                            "success",
-                            Some(100),
-                            Some(150),
-                            Some(200),
-                            Some(0),
-                            Some(0),
-                            Some(true),
-                        ),
-                        _ => (
-                            "success",
-                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
-                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
-                            Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
-                            Some(random_range_i32(0, 1920)),
-                            Some(random_range_i32(0, 1080)),
-                            Some(true),
-                        ),
-                    },
-                };
+            let outcome = StepExecutionOutcome::evaluate(self.config.profile, step_type);
 
-            if result_str == "failed" {
+            if outcome.result_str == "failed" {
                 overall_success = false;
             }
 
@@ -556,94 +675,12 @@ impl SimulatedWorker {
                     .await;
             }
 
-            // Rich variable updates covering region, color, coordinate, and status variable types
-            let mut var_updates = Vec::new();
-
-            match step {
-                StepPayload::FindPixelRgb {
-                    output_variable_id: Some(vid),
-                    ..
-                } => {
-                    var_updates.push(VariableUpdateItem {
-                        variable_id: *vid,
-                        value: serde_json::json!([
-                            captured_r.unwrap_or(200),
-                            captured_g.unwrap_or(150),
-                            captured_b.unwrap_or(100)
-                        ]),
-                    });
-                }
-                StepPayload::OcrExtract {
-                    output_variable_id,
-                    set_as_task_output,
-                    ..
-                } => {
-                    if let Some(vid) = output_variable_id {
-                        var_updates.push(VariableUpdateItem {
-                            variable_id: *vid,
-                            value: serde_json::json!("SIMULATED_OCR_TEXT"),
-                        });
-                    }
-                    if *set_as_task_output {
-                        task_output_type = Some("ocr_text".to_string());
-                        task_output_value = Some("SIMULATED_OCR_TEXT".to_string());
-                    }
-                }
-                StepPayload::ClipboardControl {
-                    output_variable_id,
-                    set_as_task_output,
-                    ..
-                } => {
-                    if let Some(vid) = output_variable_id {
-                        var_updates.push(VariableUpdateItem {
-                            variable_id: *vid,
-                            value: serde_json::json!("SIMULATED_CLIPBOARD_TEXT"),
-                        });
-                    }
-                    if *set_as_task_output {
-                        task_output_type = Some("string".to_string());
-                        task_output_value = Some("SIMULATED_CLIPBOARD_TEXT".to_string());
-                    }
-                }
-                StepPayload::FindBitmap {
-                    output_found_variable_id,
-                    output_x_variable_id,
-                    output_y_variable_id,
-                    output_region_variable_id,
-                    ..
-                } => {
-                    if let Some(vid) = output_found_variable_id {
-                        var_updates.push(VariableUpdateItem {
-                            variable_id: *vid,
-                            value: serde_json::json!(found.unwrap_or(true)),
-                        });
-                    }
-                    if let Some(vid) = output_x_variable_id {
-                        var_updates.push(VariableUpdateItem {
-                            variable_id: *vid,
-                            value: serde_json::json!(captured_x.unwrap_or(400)),
-                        });
-                    }
-                    if let Some(vid) = output_y_variable_id {
-                        var_updates.push(VariableUpdateItem {
-                            variable_id: *vid,
-                            value: serde_json::json!(captured_y.unwrap_or(300)),
-                        });
-                    }
-                    if let Some(vid) = output_region_variable_id {
-                        let x = captured_x.unwrap_or(400);
-                        let y = captured_y.unwrap_or(300);
-                        var_updates.push(VariableUpdateItem {
-                            variable_id: *vid,
-                            value: serde_json::json!({
-                                "top_left": [x, y],
-                                "bottom_right": [x + 120, y + 80]
-                            }),
-                        });
-                    }
-                }
-                _ => {}
-            }
+            let var_updates = extract_variable_updates(
+                step,
+                &outcome,
+                &mut task_output_type,
+                &mut task_output_value,
+            );
 
             let variable_updates = if var_updates.is_empty() {
                 None
@@ -657,14 +694,14 @@ impl SimulatedWorker {
             let step_req = StepResultRequest {
                 seq: Some(seq),
                 step_id,
-                result: result_str.to_string(),
-                captured_r,
-                captured_g,
-                captured_b,
+                result: outcome.result_str.to_string(),
+                captured_r: outcome.captured_r,
+                captured_g: outcome.captured_g,
+                captured_b: outcome.captured_b,
                 captured_rgb: None,
-                captured_found: found,
-                captured_x,
-                captured_y,
+                captured_found: outcome.found,
+                captured_x: outcome.captured_x,
+                captured_y: outcome.captured_y,
                 captured_xy: None,
                 screenshot_object_key,
                 started_at: Some(started_at),
@@ -692,7 +729,7 @@ impl SimulatedWorker {
                         worker_idx = self.config.worker_index,
                         task_run_id = task_run_id,
                         step_id = step_id,
-                        result = result_str,
+                        result = outcome.result_str,
                         "Successfully reported step result"
                     );
                 }
@@ -849,7 +886,7 @@ impl SimulatedWorker {
 
     /// Streamlined helper that fetches a presigned upload URL, generates a PNG screenshot,
     /// and PUTs the PNG data to the storage endpoint.
-    async fn get_and_put_upload_url(
+    async fn upload_image(
         &self,
         url: &str,
         auth_header: &str,
@@ -861,12 +898,11 @@ impl SimulatedWorker {
             .header("Authorization", auth_header)
             .send()
             .await
-            .map_err(|e| format!("Failed to get {} upload URL: {}", err_context, e))?;
+            .map_err(|e| format!("Failed to get {err_context} upload URL: {e}"))?;
 
         if !resp.status().is_success() {
             return Err(format!(
-                "{} upload URL returned status {}",
-                err_context,
+                "{err_context} upload URL returned status {}",
                 resp.status()
             ));
         }
@@ -874,7 +910,7 @@ impl SimulatedWorker {
         let upload_info = resp
             .json::<ScreenshotUploadUrlResponse>()
             .await
-            .map_err(|e| format!("Failed to parse upload URL response: {}", e))?;
+            .map_err(|e| format!("Failed to parse {err_context} upload URL response: {e}"))?;
 
         let png_bytes = generate_random_screenshot();
         self.put_image_with_failsafes(&upload_info.upload_url, &png_bytes)
@@ -894,9 +930,7 @@ impl SimulatedWorker {
             self.config.server_url
         );
 
-        let upload_info = self
-            .get_and_put_upload_url(&url, auth_header, "bitmap")
-            .await?;
+        let upload_info = self.upload_image(&url, auth_header, "bitmap").await?;
 
         let commit_url = format!("{}/api/v1/workers/bitmaps/commit", self.config.server_url);
 
@@ -943,9 +977,7 @@ impl SimulatedWorker {
             self.config.server_url, task_run_id
         );
 
-        let upload_info = self
-            .get_and_put_upload_url(&url, auth_header, "screenshot")
-            .await?;
+        let upload_info = self.upload_image(&url, auth_header, "screenshot").await?;
 
         let commit_url = format!(
             "{}/api/v1/workers/task-runs/{}/screenshots/commit",
@@ -1002,7 +1034,7 @@ impl SimulatedWorker {
         );
 
         let upload_info = self
-            .get_and_put_upload_url(&url, auth_header, "recording screenshot")
+            .upload_image(&url, auth_header, "recording screenshot")
             .await?;
 
         Ok(upload_info.object_key)

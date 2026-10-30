@@ -779,94 +779,6 @@ pub async fn get_run_detail_handler(
     .into_response()
 }
 
-/// Calculates standard ISO 3309 CRC32 checksum over a byte slice using `crc32fast`.
-pub fn crc32(data: &[u8]) -> u32 {
-    crc32fast::hash(data)
-}
-
-/// Zero-dependency ZIP STORE writer.
-///
-/// Designed specifically for screenshot download archives. Screenshots in DeskDispatch are pre-compressed PNG files.
-/// Storing PNG files in uncompressed STORE format avoids redundant double DEFLATE re-compression, significantly
-/// reducing CPU overhead during download generation while maintaining standard ZIP archive compatibility.
-#[derive(Default)]
-pub struct ZipWriter {
-    buf: Vec<u8>,
-    entries: Vec<(Box<str>, u32, u32, u32)>,
-}
-
-impl ZipWriter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            buf: Vec::with_capacity(capacity),
-            entries: Vec::new(),
-        }
-    }
-
-    pub fn add_file(&mut self, filename: &str, data: &[u8]) {
-        let offset = self.buf.len() as u32;
-        let crc = crc32(data);
-        let size = data.len() as u32;
-        let filename_bytes = filename.as_bytes();
-        let filename_len = filename_bytes.len() as u16;
-
-        let mut header = [0u8; 30];
-        header[0..4].copy_from_slice(&0x04034b50u32.to_le_bytes());
-        header[4..6].copy_from_slice(&20u16.to_le_bytes());
-        header[14..18].copy_from_slice(&crc.to_le_bytes());
-        header[18..22].copy_from_slice(&size.to_le_bytes());
-        header[22..26].copy_from_slice(&size.to_le_bytes());
-        header[26..28].copy_from_slice(&filename_len.to_le_bytes());
-
-        self.buf.extend_from_slice(&header);
-        self.buf.extend_from_slice(filename_bytes);
-        self.buf.extend_from_slice(data);
-
-        self.entries.push((filename.into(), crc, size, offset));
-    }
-
-    pub fn finish(mut self) -> Vec<u8> {
-        let cd_offset = self.buf.len() as u32;
-
-        for (filename, crc, size, offset) in &self.entries {
-            let filename_bytes = filename.as_bytes();
-            let filename_len = filename_bytes.len() as u16;
-
-            let mut cd_header = [0u8; 46];
-            cd_header[0..4].copy_from_slice(&0x02014b50u32.to_le_bytes());
-            cd_header[4..6].copy_from_slice(&20u16.to_le_bytes());
-            cd_header[6..8].copy_from_slice(&20u16.to_le_bytes());
-            cd_header[16..20].copy_from_slice(&crc.to_le_bytes());
-            cd_header[20..24].copy_from_slice(&size.to_le_bytes());
-            cd_header[24..28].copy_from_slice(&size.to_le_bytes());
-            cd_header[28..30].copy_from_slice(&filename_len.to_le_bytes());
-            cd_header[38..42].copy_from_slice(&(0o100644u32 << 16).to_le_bytes());
-            cd_header[42..46].copy_from_slice(&offset.to_le_bytes());
-
-            self.buf.extend_from_slice(&cd_header);
-            self.buf.extend_from_slice(filename_bytes);
-        }
-
-        let cd_size = (self.buf.len() as u32) - cd_offset;
-        let num_entries = self.entries.len() as u16;
-
-        let mut eocd = [0u8; 22];
-        eocd[0..4].copy_from_slice(&0x06054b50u32.to_le_bytes());
-        eocd[8..10].copy_from_slice(&num_entries.to_le_bytes());
-        eocd[10..12].copy_from_slice(&num_entries.to_le_bytes());
-        eocd[12..16].copy_from_slice(&cd_size.to_le_bytes());
-        eocd[16..20].copy_from_slice(&cd_offset.to_le_bytes());
-
-        self.buf.extend_from_slice(&eocd);
-
-        self.buf
-    }
-}
-
 #[tracing::instrument(skip(state, _user))]
 pub async fn get_run_screenshots_zip_handler(
     State(state): State<AppState>,
@@ -911,7 +823,9 @@ pub async fn get_run_screenshots_zip_handler(
         }
     };
 
-    let mut zip_writer = ZipWriter::with_capacity(step_rows.len() * 1024);
+    let mut zip_builder = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let zip_options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored);
     let storage = state.storage_service();
     let mut count = 0;
 
@@ -928,8 +842,11 @@ pub async fn get_run_screenshots_zip_handler(
                 row.step_id
             );
 
-            zip_writer.add_file(&filename, &bytes);
-            count += 1;
+            if zip_builder.start_file(&filename, zip_options).is_ok()
+                && std::io::Write::write_all(&mut zip_builder, &bytes).is_ok()
+            {
+                count += 1;
+            }
         }
     }
 
@@ -941,7 +858,16 @@ pub async fn get_run_screenshots_zip_handler(
             .into_response();
     }
 
-    let buf = zip_writer.finish();
+    let buf = match zip_builder.finish() {
+        Ok(cursor) => cursor.into_inner(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to finalize ZIP archive",
+            )
+                .into_response();
+        }
+    };
     let filename = format!("run-{}-screenshots.zip", id);
     (
         [
@@ -1068,19 +994,21 @@ mod tests {
     }
 
     #[test]
-    fn test_crc32_and_zip_writer() {
-        // Standard ASCII string CRC32 check
-        let data = b"123456789";
-        assert_eq!(crc32(data), 0xCBF43926);
+    fn test_zip_writer() {
+        let mut zip_builder = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
 
-        let mut writer = ZipWriter::new();
-        writer.add_file("hello.txt", b"Hello World!");
-        writer.add_file(
-            "test.png",
+        zip_builder.start_file("hello.txt", options).unwrap();
+        std::io::Write::write_all(&mut zip_builder, b"Hello World!").unwrap();
+        zip_builder.start_file("test.png", options).unwrap();
+        std::io::Write::write_all(
+            &mut zip_builder,
             &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
-        );
+        )
+        .unwrap();
 
-        let zip_bytes = writer.finish();
+        let zip_bytes = zip_builder.finish().unwrap().into_inner();
         assert!(!zip_bytes.is_empty());
         // Verify Local File Header Signature
         assert_eq!(&zip_bytes[0..4], &[0x50, 0x4B, 0x03, 0x04]);

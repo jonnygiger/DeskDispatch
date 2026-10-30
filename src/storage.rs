@@ -1,3 +1,4 @@
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use std::fmt::{self, Write};
@@ -30,83 +31,12 @@ pub fn encode_hex_32(bytes: &[u8; 32]) -> [u8; 64] {
     buf
 }
 
-const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 pub fn encode_base64(bytes: &[u8]) -> String {
-    let cap = bytes.len().saturating_add(2) / 3 * 4;
-    let mut buf = Vec::with_capacity(cap);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).map_or(0, |&b| b as u32);
-        let b2 = chunk.get(2).map_or(0, |&b| b as u32);
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-
-        let c0 = BASE64_CHARS[((triple >> 18) & 0x3f) as usize];
-        let c1 = BASE64_CHARS[((triple >> 12) & 0x3f) as usize];
-        let c2 = if chunk.len() > 1 {
-            BASE64_CHARS[((triple >> 6) & 0x3f) as usize]
-        } else {
-            b'='
-        };
-        let c3 = if chunk.len() > 2 {
-            BASE64_CHARS[(triple & 0x3f) as usize]
-        } else {
-            b'='
-        };
-
-        buf.extend_from_slice(&[c0, c1, c2, c3]);
-    }
-    String::from_utf8(buf).expect("base64 characters are valid utf8")
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
-    let trimmed = input.trim_end_matches('=');
-    let padding_len = input.len() - trimmed.len();
-    if padding_len > 2 {
-        return None;
-    }
-    if trimmed.is_empty() {
-        return Some(Vec::new());
-    }
-
-    fn decode_char(c: u8) -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-
-    let bytes = trimmed.as_bytes();
-    if bytes.len() % 4 == 1 {
-        return None;
-    }
-
-    let mut decoded = Vec::with_capacity(bytes.len() * 3 / 4);
-
-    for chunk in bytes.chunks(4) {
-        let mut buf = [0u8; 4];
-        let mut count = 0;
-        for &b in chunk {
-            buf[count] = decode_char(b)?;
-            count += 1;
-        }
-
-        if count >= 2 {
-            decoded.push((buf[0] << 2) | (buf[1] >> 4));
-        }
-        if count >= 3 {
-            decoded.push(((buf[1] & 0x0f) << 4) | (buf[2] >> 2));
-        }
-        if count >= 4 {
-            decoded.push(((buf[2] & 0x03) << 6) | buf[3]);
-        }
-    }
-
-    Some(decoded)
+    base64::engine::general_purpose::STANDARD.decode(input).ok()
 }
 
 /// Zero-dependency HMAC-SHA256 calculation according to RFC 2104 / RFC 4231 using `sha2::Sha256`.
@@ -377,20 +307,11 @@ pub fn generate_presigned_url_with_query(
 ) -> Result<String, StorageError> {
     let now = Utc::now();
 
-    let mut date_str = String::with_capacity(8);
-    let _ = write!(date_str, "{}", now.format("%Y%m%d"));
-
-    let mut amz_date = String::with_capacity(16);
-    let _ = write!(amz_date, "{}", now.format("%Y%m%dT%H%M%SZ"));
-
-    let mut expires_secs = String::with_capacity(10);
-    let _ = write!(expires_secs, "{}", expires_in.as_secs());
-
-    let mut credential_scope = String::with_capacity(date_str.len() + region.len() + 16);
-    let _ = write!(credential_scope, "{}/{}/s3/aws4_request", date_str, region);
-
-    let mut credential = String::with_capacity(access_key.len() + credential_scope.len() + 1);
-    let _ = write!(credential, "{}/{}", access_key, credential_scope);
+    let date_str = now.format("%Y%m%d").to_string();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let expires_secs = expires_in.as_secs().to_string();
+    let credential_scope = format!("{date_str}/{region}/s3/aws4_request");
+    let credential = format!("{access_key}/{credential_scope}");
 
     let clean_key = object_key.trim_start_matches('/');
 
@@ -595,24 +516,11 @@ pub fn generate_presigned_post_policy(
         .map_err(|e| StorageError::PostPolicy(format!("Invalid expiration duration: {}", e)))?;
     let expiration_dt = now + duration;
 
-    let mut date_str = String::with_capacity(8);
-    let _ = write!(date_str, "{}", now.format("%Y%m%d"));
-
-    let mut amz_date = String::with_capacity(16);
-    let _ = write!(amz_date, "{}", now.format("%Y%m%dT%H%M%SZ"));
-
-    let mut expiration_iso = String::with_capacity(20);
-    let _ = write!(
-        expiration_iso,
-        "{}",
-        expiration_dt.format("%Y-%m-%dT%H:%M:%SZ")
-    );
-
-    let mut credential_scope = String::with_capacity(date_str.len() + region.len() + 16);
-    let _ = write!(credential_scope, "{}/{}/s3/aws4_request", date_str, region);
-
-    let mut credential = String::with_capacity(access_key.len() + credential_scope.len() + 1);
-    let _ = write!(credential, "{}/{}", access_key, credential_scope);
+    let date_str = now.format("%Y%m%d").to_string();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let expiration_iso = expiration_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let credential_scope = format!("{date_str}/{region}/s3/aws4_request");
+    let credential = format!("{access_key}/{credential_scope}");
 
     let mut conditions = Vec::with_capacity(7);
     conditions.push(PolicyCondition::Eq("bucket", bucket));
@@ -1043,28 +951,16 @@ pub fn parse_list_objects_v2_xml(xml: &str) -> Vec<StorageObject> {
 }
 
 fn extract_xml_tag_slice<'a>(xml_block: &'a str, tag_name: &str) -> Option<&'a str> {
-    let open_tag_len = tag_name.len() + 2;
     let mut search = xml_block;
     while let Some(open_idx) = search.find('<') {
         let after_open = &search[open_idx + 1..];
         if after_open.starts_with(tag_name)
             && after_open.as_bytes().get(tag_name.len()) == Some(&b'>')
         {
-            let val_start = open_idx + open_tag_len;
-            let val_block = &search[val_start..];
-            let mut close_search = val_block;
-            let mut offset = 0;
-            while let Some(close_idx) = close_search.find("</") {
-                let after_close = &close_search[close_idx + 2..];
-                if after_close.starts_with(tag_name)
-                    && after_close.as_bytes().get(tag_name.len()) == Some(&b'>')
-                {
-                    return Some(&val_block[..offset + close_idx]);
-                }
-                offset += close_idx + 2;
-                close_search = &val_block[offset..];
-            }
-            return None;
+            let val_block = &after_open[tag_name.len() + 1..];
+            let close_tag = format!("</{tag_name}>");
+            let close_idx = val_block.find(&close_tag)?;
+            return Some(&val_block[..close_idx]);
         }
         search = &search[open_idx + 1..];
     }

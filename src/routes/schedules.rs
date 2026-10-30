@@ -274,9 +274,9 @@ async fn validate_schedule_form<'a>(
     }
 
     let now = Utc::now();
-    let parsed_next_run_at = match compute_next_run_at(cron_expression, timezone, &now) {
-        Ok(next_dt) => next_dt,
-        Err(err_msg) => {
+    let parsed_dt = match compute_next_run_at(cron_expression, timezone, &now) {
+        Ok(dt) => dt,
+        Err(msg) => {
             let (automations, worker_groups) = fetch_schedule_options(db).await;
             let err_template = ScheduleFormTemplate::build_error(
                 user,
@@ -284,7 +284,7 @@ async fn validate_schedule_form<'a>(
                 form,
                 automations,
                 worker_groups,
-                err_msg,
+                msg,
             );
             return Err(ScheduleValidationError(Box::new(HtmlTemplate(
                 err_template,
@@ -293,7 +293,7 @@ async fn validate_schedule_form<'a>(
     };
 
     let next_run_at = if form.is_enabled {
-        Some(parsed_next_run_at)
+        Some(parsed_dt)
     } else {
         None
     };
@@ -357,22 +357,22 @@ fn parse_cron_field(
     max_val: u32,
     is_dow: bool,
     is_month: bool,
-) -> Result<u64, String> {
+) -> Result<u64, &'static str> {
     let mut mask = 0u64;
 
     for part in field_str.split(',') {
         let part = part.trim();
         if part.is_empty() {
-            return Err(format!("Invalid empty component in '{field_str}'"));
+            return Err("Invalid empty component in cron field");
         }
 
         let (range_str, step) = if let Some((r, s)) = part.split_once('/') {
             let step_val = s
                 .trim()
                 .parse::<u32>()
-                .map_err(|_| format!("Invalid step in '{part}'"))?;
+                .map_err(|_| "Invalid step in cron field")?;
             if step_val == 0 {
-                return Err(format!("Step value cannot be zero in '{part}'"));
+                return Err("Step value cannot be zero in cron field");
             }
             (r.trim(), step_val)
         } else {
@@ -383,13 +383,13 @@ fn parse_cron_field(
             (min_val, max_val)
         } else if let Some((st, en)) = range_str.split_once('-') {
             let start = parse_field_val(st, is_dow, is_month)
-                .map_err(|_| format!("Invalid start range in '{part}'"))?;
+                .map_err(|_| "Invalid start range in cron field")?;
             let end = parse_field_val(en, is_dow, is_month)
-                .map_err(|_| format!("Invalid end range in '{part}'"))?;
+                .map_err(|_| "Invalid end range in cron field")?;
             (start, end)
         } else {
             let val = parse_field_val(range_str, is_dow, is_month)
-                .map_err(|_| format!("Invalid value in '{part}'"))?;
+                .map_err(|_| "Invalid value in cron field")?;
             if part.contains('/') {
                 (val, max_val)
             } else {
@@ -398,9 +398,7 @@ fn parse_cron_field(
         };
 
         if start > end || start < min_val || end > max_val {
-            return Err(format!(
-                "Value out of bounds ({min_val}..={max_val}) in '{part}'"
-            ));
+            return Err("Value out of bounds in cron field");
         }
 
         let mut curr = start;
@@ -412,17 +410,17 @@ fn parse_cron_field(
     }
 
     if mask == 0 {
-        return Err(format!("Field '{field_str}' produced an empty mask"));
+        return Err("Cron field produced an empty mask");
     }
 
     Ok(mask)
 }
 
 impl CronSchedule {
-    pub fn parse(expr: &str) -> Result<Self, String> {
+    pub fn parse(expr: &str) -> Result<Self, &'static str> {
         let trimmed = expr.trim();
         if trimmed.is_empty() {
-            return Err("Empty cron expression".to_string());
+            return Err("Empty cron expression");
         }
 
         let mut fields = [""; 6];
@@ -470,10 +468,7 @@ impl CronSchedule {
                     is_6_fields: true,
                 })
             }
-            _ => Err(format!(
-                "Invalid field count: expected 5 or 6 fields, got {}",
-                count
-            )),
+            _ => Err("Invalid field count: expected 5 or 6 fields"),
         }
     }
 }
@@ -523,18 +518,13 @@ pub fn compute_next_run_at(
         .parse()
         .map_err(|_| format!("Invalid timezone: '{tz_name}'"))?;
 
-    let schedule = CronSchedule::parse(cron_expr)?;
+    let schedule = CronSchedule::parse(cron_expr).map_err(|e| e.to_string())?;
 
     let local_from = from_dt.with_timezone(&tz);
     let mut curr = if schedule.is_6_fields {
         local_from + chrono::Duration::seconds(1)
     } else {
-        // Truncate seconds and nanoseconds to 0, then step 1 minute forward
-        local_from
-            .with_second(0)
-            .and_then(|d| d.with_nanosecond(0))
-            .unwrap_or(local_from)
-            + chrono::Duration::minutes(1)
+        reset_time_to_start_of_minute(local_from) + chrono::Duration::minutes(1)
     };
 
     let max_steps = if schedule.is_6_fields {
@@ -1142,13 +1132,15 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     };
 
     let now = Utc::now();
-    let mut queued_count = 0u64;
+    let num_due = due_schedules.len();
 
-    let mut queued_sched_ids = Vec::new();
-    let mut queued_next_runs = Vec::new();
+    let mut new_auto_ids = Vec::with_capacity(num_due);
+    let mut new_sched_ids = Vec::with_capacity(num_due);
+    let mut new_target_wg_ids = Vec::with_capacity(num_due);
 
-    let mut skipped_sched_ids = Vec::new();
-    let mut skipped_next_runs = Vec::new();
+    let mut update_sched_ids = Vec::with_capacity(num_due);
+    let mut update_next_runs = Vec::with_capacity(num_due);
+    let mut update_was_queued = Vec::with_capacity(num_due);
 
     for sched in due_schedules {
         let mut should_queue = true;
@@ -1177,19 +1169,9 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
         }
 
         if should_queue {
-            sqlx::query(
-                r#"
-                INSERT INTO task_runs (automation_id, schedule_id, target_worker_group_id, status, queued_at)
-                VALUES ($1, $2, $3, 'queued', now())
-                "#,
-            )
-            .bind(sched.automation_id)
-            .bind(sched.id)
-            .bind(sched.worker_group_id)
-            .execute(&mut *tx)
-            .await?;
-
-            queued_count += 1;
+            new_auto_ids.push(sched.automation_id);
+            new_sched_ids.push(sched.id);
+            new_target_wg_ids.push(sched.worker_group_id);
         }
 
         // Recompute next run time loudly on failure
@@ -1207,44 +1189,43 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
             }
         };
 
-        if should_queue {
-            queued_sched_ids.push(sched.id);
-            queued_next_runs.push(next_run);
-        } else {
-            skipped_sched_ids.push(sched.id);
-            skipped_next_runs.push(next_run);
-        }
+        update_sched_ids.push(sched.id);
+        update_next_runs.push(next_run);
+        update_was_queued.push(should_queue);
     }
 
-    // Batch update schedules with queued task runs
-    if !queued_sched_ids.is_empty() {
+    let queued_count = new_sched_ids.len() as u64;
+
+    // Batch insert all queued task runs in a single statement
+    if !new_sched_ids.is_empty() {
         sqlx::query(
             r#"
-            UPDATE schedules AS s
-            SET last_run_at = now(),
-                next_run_at = u.next_run
-            FROM UNNEST($1::BIGINT[], $2::TIMESTAMPTZ[]) AS u(id, next_run)
-            WHERE s.id = u.id
+            INSERT INTO task_runs (automation_id, schedule_id, target_worker_group_id, status, queued_at)
+            SELECT u.auto_id, u.sched_id, u.target_wg_id, 'queued', now()
+            FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::BIGINT[]) AS u(auto_id, sched_id, target_wg_id)
             "#,
         )
-        .bind(&queued_sched_ids)
-        .bind(&queued_next_runs)
+        .bind(&new_auto_ids)
+        .bind(&new_sched_ids)
+        .bind(&new_target_wg_ids)
         .execute(&mut *tx)
         .await?;
     }
 
-    // Batch update schedules with skipped task runs
-    if !skipped_sched_ids.is_empty() {
+    // Single unified batch update for all processed schedules
+    if !update_sched_ids.is_empty() {
         sqlx::query(
             r#"
             UPDATE schedules AS s
-            SET next_run_at = u.next_run
-            FROM UNNEST($1::BIGINT[], $2::TIMESTAMPTZ[]) AS u(id, next_run)
+            SET last_run_at = CASE WHEN u.was_queued THEN now() ELSE s.last_run_at END,
+                next_run_at = u.next_run
+            FROM UNNEST($1::BIGINT[], $2::TIMESTAMPTZ[], $3::BOOLEAN[]) AS u(id, next_run, was_queued)
             WHERE s.id = u.id
             "#,
         )
-        .bind(&skipped_sched_ids)
-        .bind(&skipped_next_runs)
+        .bind(&update_sched_ids)
+        .bind(&update_next_runs)
+        .bind(&update_was_queued)
         .execute(&mut *tx)
         .await?;
     }
