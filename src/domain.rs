@@ -536,4 +536,124 @@ mod tests {
         let err = StepResultStatus::from_str("passed").unwrap_err();
         assert_eq!(err, "Invalid step result status 'passed'");
     }
+
+    #[test]
+    fn test_remaining_domain_statuses_display_from_str_and_serde() {
+        // AutomationStatus
+        let auto_statuses = [
+            (AutomationStatus::Draft, "draft"),
+            (AutomationStatus::Active, "active"),
+            (AutomationStatus::Archived, "archived"),
+        ];
+        for (status, expected_str) in auto_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("  {}  ", expected_str.to_uppercase());
+            assert_eq!(AutomationStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<AutomationStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            AutomationStatus::from_str("invalid_status").unwrap_err(),
+            "Invalid automation status 'invalid_status'"
+        );
+
+        // RecordingSessionStatus
+        let rec_statuses = [
+            (RecordingSessionStatus::Recording, "recording"),
+            (RecordingSessionStatus::Completed, "completed"),
+            (RecordingSessionStatus::Imported, "imported"),
+            (RecordingSessionStatus::Discarded, "discarded"),
+        ];
+        for (status, expected_str) in rec_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("\t{}\n", expected_str.to_uppercase());
+            assert_eq!(RecordingSessionStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<RecordingSessionStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            RecordingSessionStatus::from_str("paused").unwrap_err(),
+            "Invalid recording session status 'paused'"
+        );
+
+        // ScheduleStatus (supports "disabled"/"false", "enabled"/"true")
+        let sched_statuses = [
+            (ScheduleStatus::Disabled, "disabled"),
+            (ScheduleStatus::Enabled, "enabled"),
+        ];
+        for (status, expected_str) in sched_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("  {}  ", expected_str.to_uppercase());
+            assert_eq!(ScheduleStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ScheduleStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            ScheduleStatus::from_str(" false ").unwrap(),
+            ScheduleStatus::Disabled
+        );
+        assert_eq!(
+            ScheduleStatus::from_str(" TRUE ").unwrap(),
+            ScheduleStatus::Enabled
+        );
+        assert_eq!(
+            ScheduleStatus::from_str("unknown").unwrap_err(),
+            "Invalid schedule status 'unknown'"
+        );
+
+        // UserSessionStatus
+        let session_statuses = [
+            (UserSessionStatus::Active, "active"),
+            (UserSessionStatus::Expired, "expired"),
+            (UserSessionStatus::Revoked, "revoked"),
+        ];
+        for (status, expected_str) in session_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("  {}  ", expected_str.to_uppercase());
+            assert_eq!(UserSessionStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<UserSessionStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            UserSessionStatus::from_str("terminated").unwrap_err(),
+            "Invalid user session status 'terminated'"
+        );
+
+        // WpsModeStatus (supports "disabled"/"false", "enabled"/"true")
+        let wps_statuses = [
+            (WpsModeStatus::Disabled, "disabled"),
+            (WpsModeStatus::Enabled, "enabled"),
+        ];
+        for (status, expected_str) in wps_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("  {}  ", expected_str.to_uppercase());
+            assert_eq!(WpsModeStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(serde_json::from_str::<WpsModeStatus>(&json).unwrap(), status);
+        }
+        assert_eq!(
+            WpsModeStatus::from_str(" FALSE ").unwrap(),
+            WpsModeStatus::Disabled
+        );
+        assert_eq!(
+            WpsModeStatus::from_str(" true ").unwrap(),
+            WpsModeStatus::Enabled
+        );
+        assert_eq!(
+            WpsModeStatus::from_str("invalid").unwrap_err(),
+            "Invalid WPS mode status 'invalid'"
+        );
+    }
 }
