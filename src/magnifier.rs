@@ -187,10 +187,14 @@ impl ImageMagnifier {
 
     /// Background style for normal panel (1x scale, viewport 600x340 or calculated fit)
     pub fn normal_style(&self) -> String {
-        format!(
+        let url = self.escaped_url();
+        let mut style = String::with_capacity(url.len() + 72);
+        let _ = write!(
+            style,
             "background-image: url('{}'); background-size: contain; background-position: center;",
-            self.escaped_url()
-        )
+            url
+        );
+        style
     }
 
     /// Marker style for normal panel (returns static borrowed empty string when marker is disabled)
@@ -215,14 +219,14 @@ impl ImageMagnifier {
         } else {
             (0.0, 0.0)
         };
-        format!(
+        let url = self.escaped_url();
+        let mut style = String::with_capacity(url.len() + 100);
+        let _ = write!(
+            style,
             "background-image: url('{}'); background-size: {}px {}px; background-position: {:.2}px {:.2}px;",
-            self.escaped_url(),
-            bg_w,
-            bg_h,
-            pan_x,
-            pan_y
-        )
+            url, bg_w, bg_h, pan_x, pan_y
+        );
+        style
     }
 
     /// Marker style for 400% (4x) zoom panel (viewport 320x320)
@@ -244,14 +248,14 @@ impl ImageMagnifier {
         } else {
             (0.0, 0.0)
         };
-        format!(
+        let url = self.escaped_url();
+        let mut style = String::with_capacity(url.len() + 110);
+        let _ = write!(
+            style,
             "--grid-bg-url: url('{}'); --grid-bg-w: {}px; --grid-bg-h: {}px; --grid-pan-x: {:.2}px; --grid-pan-y: {:.2}px;",
-            self.escaped_url(),
-            bg_w,
-            bg_h,
-            pan_x,
-            pan_y
-        )
+            url, bg_w, bg_h, pan_x, pan_y
+        );
+        style
     }
 
     /// Marker style for 20x pixel grid panel (viewport 320x320)

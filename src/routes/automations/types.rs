@@ -545,8 +545,6 @@ impl StepOption {
     }
 }
 
-pub type NewMouseClickQuery = EditStepQuery;
-
 #[derive(Template)]
 #[template(path = "automations/step_mouse_click.html")]
 pub struct StepMouseClickTemplate {
@@ -662,16 +660,6 @@ pub struct StepTypeTextTemplate {
     pub is_edit: bool,
 }
 
-#[derive(Deserialize)]
-pub struct KeyPressStepForm {
-    pub label: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_option_number")]
-    pub post_delay_seconds: Option<f64>,
-    pub key_combo: String,
-}
-
-pub type NewFindPixelRgbQuery = EditStepQuery;
-
 #[derive(Template)]
 #[template(path = "automations/step_find_pixel_rgb.html")]
 pub struct StepFindPixelRgbTemplate {
@@ -689,8 +677,6 @@ pub struct StepFindPixelRgbTemplate {
     pub is_edit: bool,
 }
 
-pub type NewFindBitmapQuery = EditStepQuery;
-
 #[derive(Debug, Default, Deserialize)]
 pub struct EditStepQuery {
     pub reference_bitmap_id: Option<i64>,
@@ -702,8 +688,6 @@ pub struct EditStepQuery {
     pub x: Option<i32>,
     pub y: Option<i32>,
 }
-
-pub type NewBranchQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_branch.html")]
@@ -762,8 +746,6 @@ pub struct StepFindBitmapTemplate {
     pub error: Option<String>,
     pub is_edit: bool,
 }
-
-pub type NewOcrExtractQuery = EditStepQuery;
 
 #[derive(Template)]
 #[template(path = "automations/step_ocr_extract.html")]
@@ -879,8 +861,6 @@ impl StepForm {
         }
     }
 }
-
-pub type MouseClickStepForm = StepForm;
 
 #[cfg(test)]
 mod tests {

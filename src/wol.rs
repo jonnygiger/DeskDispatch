@@ -1,46 +1,13 @@
 use std::net::SocketAddr;
+use std::str::FromStr;
 use tokio::net::UdpSocket;
 
-/// Parses a MAC address string into a 6-byte array using standard library string slice parsing.
+/// Parses a MAC address string into a 6-byte array using `macaddr::MacAddr6`.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    let s = mac_str.trim();
-    if !s.is_ascii() {
-        return Err(format!("Invalid MAC address '{mac_str}'"));
-    }
-
-    let bytes = s.as_bytes();
-    let mut mac = [0u8; 6];
-
-    if s.len() == 17 {
-        let delim = bytes[2];
-        if (delim != b':' && delim != b'-')
-            || bytes[5] != delim
-            || bytes[8] != delim
-            || bytes[11] != delim
-            || bytes[14] != delim
-        {
-            return Err(format!("Invalid MAC address '{mac_str}'"));
-        }
-
-        for (i, slot) in mac.iter_mut().enumerate() {
-            let offset = i * 3;
-            let chunk = &s[offset..offset + 2];
-            *slot = u8::from_str_radix(chunk, 16)
-                .map_err(|_| format!("Invalid MAC address '{mac_str}'"))?;
-        }
-        Ok(mac)
-    } else if s.len() == 12 {
-        for (i, slot) in mac.iter_mut().enumerate() {
-            let offset = i * 2;
-            let chunk = &s[offset..offset + 2];
-            *slot = u8::from_str_radix(chunk, 16)
-                .map_err(|_| format!("Invalid MAC address '{mac_str}'"))?;
-        }
-        Ok(mac)
-    } else {
-        Err(format!("Invalid MAC address '{mac_str}'"))
-    }
+    MacAddr6::from_str(mac_str.trim())
+        .map(|mac| mac.into_array())
+        .map_err(|_| format!("Invalid MAC address '{mac_str}'"))
 }
 
 /// Constructs a 102-byte Wake-on-LAN Magic Packet for the given 6-byte MAC address.
@@ -110,6 +77,7 @@ mod tests {
         assert!(parse_mac_address("00:11:22:33:44").is_err());
         assert!(parse_mac_address("00:11:22:33:44:55:66").is_err());
         assert!(parse_mac_address("00:11:22:33:44:ZZ").is_err());
+        assert!(parse_mac_address("café12345678").is_err());
     }
 
     #[test]

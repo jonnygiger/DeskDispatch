@@ -202,6 +202,21 @@ pub fn sanitize_label(label: Option<&str>) -> Option<&str> {
     label.map(str::trim).filter(|s| !s.is_empty())
 }
 
+#[inline]
+fn collect_var_ids<const N: usize>(ids: &[Option<i64>]) -> ([i64; N], usize) {
+    let mut arr = [0i64; N];
+    let mut count = 0;
+    for &id_opt in ids {
+        if let Some(id) = id_opt {
+            if id > 0 {
+                arr[count] = id;
+                count += 1;
+            }
+        }
+    }
+    (arr, count)
+}
+
 pub fn validate_literal_or_reference<T>(
     mode: Option<&str>,
     literal: Option<T>,
@@ -397,6 +412,30 @@ pub async fn fetch_step_options_bundle(
     }
 }
 
+pub enum StepFormOptions {
+    Bundle(StepOptionsBundle),
+    Variables(Vec<VariableOption>),
+    None,
+}
+
+impl StepFormOptions {
+    pub async fn fetch(
+        db: &PgPool,
+        automation_id: i64,
+        step_id: Option<i64>,
+        step_type: &str,
+    ) -> Self {
+        match step_type {
+            "branch" | "find_bitmap" => {
+                Self::Bundle(fetch_step_options_bundle(db, automation_id, step_id).await)
+            }
+            "clipboard_control" | "mouse_scroll" | "mouse_click" | "find_pixel_rgb"
+            | "ocr_extract" => Self::Variables(fetch_automation_variables(db, automation_id).await),
+            _ => Self::None,
+        }
+    }
+}
+
 /// Slices a string slice `s` up to `max_chars` UTF-8 characters without allocation.
 /// Returns `(prefix_slice, suffix_ellipsis)` where `suffix_ellipsis` is `"..."` if truncated or `""` if not.
 #[inline]
@@ -420,6 +459,37 @@ pub fn is_form_flag_enabled(val: Option<&str>) -> bool {
     matches!(val, Some("on" | "true" | "1"))
 }
 
+#[inline]
+fn default_step_description(step_type: &str) -> &'static str {
+    match step_type {
+        "key_press" => "Press key",
+        "type_text" => "Type text",
+        "window_control" => "Control window",
+        "mouse_click" => "Click mouse",
+        "mouse_scroll" => "Mouse scroll",
+        "find_pixel_rgb" => "Read pixel at coordinate",
+        "find_bitmap" => "Search for bitmap on screen",
+        "branch" => "BRANCH evaluation",
+        _ => "Unknown step",
+    }
+}
+
+#[inline]
+fn fmt_coord_param<W: std::fmt::Write>(
+    buf: &mut W,
+    val: Option<i32>,
+    var_name: Option<&str>,
+    fallback: &str,
+) {
+    if let Some(name) = var_name.map(str::trim).filter(|s| !s.is_empty()) {
+        let _ = write!(buf, "«{name}»");
+    } else if let Some(v) = val {
+        let _ = write!(buf, "{v}");
+    } else {
+        let _ = write!(buf, "{fallback}");
+    }
+}
+
 pub fn generate_mouse_scroll_summary(
     direction: &str,
     scroll_amount: i32,
@@ -439,24 +509,10 @@ pub fn generate_mouse_scroll_summary(
     }
 
     if x.is_some() || y.is_some() || x_var_name.is_some() || y_var_name.is_some() {
-        buf.push_str(" at (");
-        if let Some(name) = x_var_name.map(str::trim).filter(|s| !s.is_empty()) {
-            let _ = write!(buf, "«{name}»");
-        } else if let Some(val) = x {
-            let _ = write!(buf, "{val}");
-        } else {
-            buf.push('0');
-        }
-
-        buf.push_str(", ");
-        if let Some(name) = y_var_name.map(str::trim).filter(|s| !s.is_empty()) {
-            let _ = write!(buf, "«{name}»");
-        } else if let Some(val) = y {
-            let _ = write!(buf, "{val}");
-        } else {
-            buf.push('0');
-        }
-
+        let _ = write!(buf, " at (");
+        fmt_coord_param(&mut buf, x, x_var_name, "0");
+        let _ = write!(buf, ", ");
+        fmt_coord_param(&mut buf, y, y_var_name, "0");
         buf.push(')');
     }
 
@@ -482,24 +538,10 @@ pub fn generate_mouse_click_summary(
         return buf;
     }
 
-    buf.push_str("Click (");
-    if let Some(name) = x_var_name.map(str::trim).filter(|s| !s.is_empty()) {
-        let _ = write!(buf, "«{name}»");
-    } else if let Some(val) = x {
-        let _ = write!(buf, "{val}");
-    } else {
-        buf.push_str("variable");
-    }
-
-    buf.push_str(", ");
-    if let Some(name) = y_var_name.map(str::trim).filter(|s| !s.is_empty()) {
-        let _ = write!(buf, "«{name}»");
-    } else if let Some(val) = y {
-        let _ = write!(buf, "{val}");
-    } else {
-        buf.push_str("variable");
-    }
-
+    let _ = write!(buf, "Click (");
+    fmt_coord_param(&mut buf, x, x_var_name, "variable");
+    let _ = write!(buf, ", ");
+    fmt_coord_param(&mut buf, y, y_var_name, "variable");
     let _ = write!(buf, ") [{button}, {click_type}]");
     buf
 }
@@ -982,26 +1024,18 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     let ocr_rows = ocr_res.unwrap_or_default();
     let ss_rows = ss_res.unwrap_or_default();
 
-    enum StepDetailView {
-        KeyPress(KeyPressViewRow),
-        TypeText(TypeTextViewRow),
-        WindowControl(WindowControlViewRow),
-        MouseClick(MouseClickViewRow),
-        MouseScroll(MouseScrollViewRow),
-        FindPixel(FindPixelViewRow),
-        FindBitmap(FindBitmapViewRow),
-        Branch(BranchViewRow),
-        OcrExtract(OcrExtractViewRow),
-    }
-
     use std::collections::HashMap;
 
     let step_target_map = if !br_rows.is_empty() {
-        let target_ids: std::collections::HashSet<i64> = br_rows
-            .iter()
-            .flat_map(|r| [r.on_match_step_id, r.on_no_match_step_id])
-            .flatten()
-            .collect();
+        let mut target_ids = std::collections::HashSet::with_capacity(br_rows.len() * 2);
+        for r in &br_rows {
+            if let Some(id) = r.on_match_step_id {
+                target_ids.insert(id);
+            }
+            if let Some(id) = r.on_no_match_step_id {
+                target_ids.insert(id);
+            }
+        }
 
         let mut target_map = HashMap::with_capacity(target_ids.len());
         for (idx, row) in raw_steps.iter().enumerate() {
@@ -1021,34 +1055,150 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         HashMap::new()
     };
 
-    let mut details_map: HashMap<i64, StepDetailView> = HashMap::with_capacity(raw_steps.len());
+    let total_details = kp_rows.len()
+        + wc_rows.len()
+        + tt_rows.len()
+        + mc_rows.len()
+        + ms_rows.len()
+        + fp_rows.len()
+        + fb_rows.len()
+        + br_rows.len()
+        + ocr_rows.len();
+
+    let mut descriptions: HashMap<i64, (String, Option<i64>, Option<String>)> =
+        HashMap::with_capacity(total_details);
 
     for r in kp_rows {
-        details_map.insert(r.step_id, StepDetailView::KeyPress(r));
+        descriptions.insert(r.step_id, (format!("Press {}", r.key_combo), None, None));
     }
     for r in wc_rows {
-        details_map.insert(r.step_id, StepDetailView::WindowControl(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_window_control_summary(
+                    &r.action,
+                    &r.match_pattern,
+                    &r.match_type,
+                    r.timeout_ms,
+                ),
+                None,
+                None,
+            ),
+        );
     }
     for r in tt_rows {
-        details_map.insert(r.step_id, StepDetailView::TypeText(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_type_text_summary(&r.text_to_type, r.delay_between_keys_ms),
+                None,
+                None,
+            ),
+        );
     }
     for r in mc_rows {
-        details_map.insert(r.step_id, StepDetailView::MouseClick(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_mouse_click_summary(
+                    r.x,
+                    r.y,
+                    r.x_var_name.as_deref(),
+                    r.y_var_name.as_deref(),
+                    r.region_var_name.as_deref(),
+                    &r.button,
+                    &r.click_type,
+                ),
+                None,
+                None,
+            ),
+        );
     }
     for r in ms_rows {
-        details_map.insert(r.step_id, StepDetailView::MouseScroll(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_mouse_scroll_summary(
+                    &r.direction,
+                    r.scroll_amount,
+                    r.x,
+                    r.y,
+                    r.x_var_name.as_deref(),
+                    r.y_var_name.as_deref(),
+                    r.region_var_name.as_deref(),
+                ),
+                None,
+                None,
+            ),
+        );
     }
     for r in fp_rows {
-        details_map.insert(r.step_id, StepDetailView::FindPixel(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_find_pixel_rgb_summary(r.x, r.y, r.var_name.as_deref()),
+                None,
+                None,
+            ),
+        );
     }
     for r in fb_rows {
-        details_map.insert(r.step_id, StepDetailView::FindBitmap(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_find_bitmap_summary(&r.bitmap_name, r.var_name.as_deref()),
+                r.reference_bitmap_id,
+                r.reference_bitmap_key,
+            ),
+        );
     }
     for r in br_rows {
-        details_map.insert(r.step_id, StepDetailView::Branch(r));
+        let match_target_str = r
+            .on_match_step_id
+            .and_then(|m_id| step_target_map.get(&m_id))
+            .map(String::as_str);
+
+        let no_match_target_str = r
+            .on_no_match_step_id
+            .and_then(|n_id| step_target_map.get(&n_id))
+            .map(String::as_str);
+
+        let summary = generate_branch_summary(
+            &r.condition_type,
+            r.x,
+            r.y,
+            r.expected_r,
+            r.expected_g,
+            r.expected_b,
+            r.tolerance,
+            r.bitmap_name.as_deref(),
+            r.window_match_pattern.as_deref(),
+            r.window_check_type.as_deref(),
+            match_target_str,
+            no_match_target_str,
+        );
+        descriptions.insert(
+            r.step_id,
+            (summary, r.reference_bitmap_id, r.reference_bitmap_key),
+        );
     }
     for r in ocr_rows {
-        details_map.insert(r.step_id, StepDetailView::OcrExtract(r));
+        descriptions.insert(
+            r.step_id,
+            (
+                generate_ocr_extract_summary(
+                    r.search_x,
+                    r.search_y,
+                    r.search_width,
+                    r.search_height,
+                    r.region_var_name.as_deref(),
+                    r.output_var_name.as_deref(),
+                    r.set_as_task_output,
+                ),
+                None,
+                None,
+            ),
+        );
     }
 
     let mut step_screenshot_map: HashMap<i64, String> = HashMap::with_capacity(ss_rows.len());
@@ -1064,117 +1214,9 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         let post_delay_ms = row.post_delay_ms;
         let position = row.position;
 
-        let detail_opt = details_map.remove(&step_id);
-
-        let (description, ref_bitmap_id, ref_bitmap_key) = match detail_opt {
-            Some(StepDetailView::KeyPress(r)) => (format!("Press {}", r.key_combo), None, None),
-            Some(StepDetailView::TypeText(r)) => (
-                generate_type_text_summary(&r.text_to_type, r.delay_between_keys_ms),
-                None,
-                None,
-            ),
-            Some(StepDetailView::MouseScroll(r)) => (
-                generate_mouse_scroll_summary(
-                    &r.direction,
-                    r.scroll_amount,
-                    r.x,
-                    r.y,
-                    r.x_var_name.as_deref(),
-                    r.y_var_name.as_deref(),
-                    r.region_var_name.as_deref(),
-                ),
-                None,
-                None,
-            ),
-            Some(StepDetailView::WindowControl(r)) => (
-                generate_window_control_summary(
-                    &r.action,
-                    &r.match_pattern,
-                    &r.match_type,
-                    r.timeout_ms,
-                ),
-                None,
-                None,
-            ),
-            Some(StepDetailView::MouseClick(r)) => (
-                generate_mouse_click_summary(
-                    r.x,
-                    r.y,
-                    r.x_var_name.as_deref(),
-                    r.y_var_name.as_deref(),
-                    r.region_var_name.as_deref(),
-                    &r.button,
-                    &r.click_type,
-                ),
-                None,
-                None,
-            ),
-            Some(StepDetailView::FindPixel(r)) => (
-                generate_find_pixel_rgb_summary(r.x, r.y, r.var_name.as_deref()),
-                None,
-                None,
-            ),
-            Some(StepDetailView::FindBitmap(r)) => (
-                generate_find_bitmap_summary(&r.bitmap_name, r.var_name.as_deref()),
-                r.reference_bitmap_id,
-                r.reference_bitmap_key,
-            ),
-            Some(StepDetailView::Branch(r)) => {
-                let match_target_str = r
-                    .on_match_step_id
-                    .and_then(|m_id| step_target_map.get(&m_id))
-                    .map(String::as_str);
-
-                let no_match_target_str = r
-                    .on_no_match_step_id
-                    .and_then(|n_id| step_target_map.get(&n_id))
-                    .map(String::as_str);
-
-                let summary = generate_branch_summary(
-                    &r.condition_type,
-                    r.x,
-                    r.y,
-                    r.expected_r,
-                    r.expected_g,
-                    r.expected_b,
-                    r.tolerance,
-                    r.bitmap_name.as_deref(),
-                    r.window_match_pattern.as_deref(),
-                    r.window_check_type.as_deref(),
-                    match_target_str,
-                    no_match_target_str,
-                );
-                (summary, r.reference_bitmap_id, r.reference_bitmap_key)
-            }
-            Some(StepDetailView::OcrExtract(r)) => (
-                generate_ocr_extract_summary(
-                    r.search_x,
-                    r.search_y,
-                    r.search_width,
-                    r.search_height,
-                    r.region_var_name.as_deref(),
-                    r.output_var_name.as_deref(),
-                    r.set_as_task_output,
-                ),
-                None,
-                None,
-            ),
-            None => (
-                match step_type.as_str() {
-                    "key_press" => "Press key".to_string(),
-                    "type_text" => "Type text".to_string(),
-                    "window_control" => "Control window".to_string(),
-                    "mouse_click" => "Click mouse".to_string(),
-                    "mouse_scroll" => "Mouse scroll".to_string(),
-                    "find_pixel_rgb" => "Read pixel at coordinate".to_string(),
-                    "find_bitmap" => "Search for bitmap on screen".to_string(),
-                    "branch" => "BRANCH evaluation".to_string(),
-                    _ => "Unknown step".to_string(),
-                },
-                None,
-                None,
-            ),
-        };
+        let (description, ref_bitmap_id, ref_bitmap_key) = descriptions
+            .remove(&step_id)
+            .unwrap_or_else(|| (default_step_description(&step_type).to_string(), None, None));
 
         let screenshot_key = step_screenshot_map.remove(&step_id);
 
@@ -1261,6 +1303,48 @@ async fn save_step_details(
     step_type: &str,
     form: &StepForm,
 ) -> Result<(), sqlx::Error> {
+    struct CoordVars {
+        x: Option<i32>,
+        y: Option<i32>,
+        x_var_id: Option<i64>,
+        y_var_id: Option<i64>,
+        region_var_id: Option<i64>,
+    }
+
+    fn extract_coord_and_vars(form: &StepForm) -> CoordVars {
+        if form.click_mode.as_deref() == Some("region")
+            || (form.click_mode.is_none() && form.region_variable_id.is_some())
+        {
+            CoordVars {
+                x: None,
+                y: None,
+                x_var_id: None,
+                y_var_id: None,
+                region_var_id: form.region_variable_id,
+            }
+        } else {
+            let x_mode = form.x_mode.as_deref().unwrap_or("fixed");
+            let y_mode = form.y_mode.as_deref().unwrap_or("fixed");
+            let (x, x_var) = if x_mode == "variable" {
+                (None, form.x_variable_id)
+            } else {
+                (form.x, None)
+            };
+            let (y, y_var) = if y_mode == "variable" {
+                (None, form.y_variable_id)
+            } else {
+                (form.y, None)
+            };
+            CoordVars {
+                x,
+                y,
+                x_var_id: x_var,
+                y_var_id: y_var,
+                region_var_id: None,
+            }
+        }
+    }
+
     match step_type {
         "branch" => {
             let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb");
@@ -1312,24 +1396,12 @@ async fn save_step_details(
                      on_match_step_id, on_no_match_step_id)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    condition_type = EXCLUDED.condition_type,
-                    x = EXCLUDED.x,
-                    y = EXCLUDED.y,
-                    expected_r = EXCLUDED.expected_r,
-                    expected_g = EXCLUDED.expected_g,
-                    expected_b = EXCLUDED.expected_b,
-                    tolerance = EXCLUDED.tolerance,
-                    reference_bitmap_id = EXCLUDED.reference_bitmap_id,
-                    search_x = EXCLUDED.search_x,
-                    search_y = EXCLUDED.search_y,
-                    search_width = EXCLUDED.search_width,
-                    search_height = EXCLUDED.search_height,
-                    match_threshold = EXCLUDED.match_threshold,
-                    window_match_pattern = EXCLUDED.window_match_pattern,
-                    window_match_type = EXCLUDED.window_match_type,
-                    window_check_type = EXCLUDED.window_check_type,
-                    on_match_step_id = EXCLUDED.on_match_step_id,
-                    on_no_match_step_id = EXCLUDED.on_no_match_step_id
+                    condition_type = EXCLUDED.condition_type, x = EXCLUDED.x, y = EXCLUDED.y,
+                    expected_r = EXCLUDED.expected_r, expected_g = EXCLUDED.expected_g, expected_b = EXCLUDED.expected_b, tolerance = EXCLUDED.tolerance,
+                    reference_bitmap_id = EXCLUDED.reference_bitmap_id, search_x = EXCLUDED.search_x, search_y = EXCLUDED.search_y,
+                    search_width = EXCLUDED.search_width, search_height = EXCLUDED.search_height, match_threshold = EXCLUDED.match_threshold,
+                    window_match_pattern = EXCLUDED.window_match_pattern, window_match_type = EXCLUDED.window_match_type, window_check_type = EXCLUDED.window_check_type,
+                    on_match_step_id = EXCLUDED.on_match_step_id, on_no_match_step_id = EXCLUDED.on_no_match_step_id
                 "#,
             )
             .bind(step_id)
@@ -1357,86 +1429,44 @@ async fn save_step_details(
         }
         "mouse_scroll" => {
             let dir_str = form.direction.as_deref().unwrap_or("down");
-            let direction = if dir_str.eq_ignore_ascii_case("up") {
-                "up"
-            } else if dir_str.eq_ignore_ascii_case("left") {
-                "left"
-            } else if dir_str.eq_ignore_ascii_case("right") {
-                "right"
-            } else {
-                "down"
+            let direction = match dir_str {
+                s if s.eq_ignore_ascii_case("up") => "up",
+                s if s.eq_ignore_ascii_case("left") => "left",
+                s if s.eq_ignore_ascii_case("right") => "right",
+                _ => "down",
             };
             let scroll_amount = form.scroll_amount.unwrap_or(3).clamp(1, 100);
-
-            let click_mode = form.click_mode.as_deref().unwrap_or("coordinates");
-            let (x_mode, y_mode) = (
-                form.x_mode.as_deref().unwrap_or("fixed"),
-                form.y_mode.as_deref().unwrap_or("fixed"),
-            );
-
-            let (x, x_var_id, y, y_var_id, region_var_id) = if click_mode == "region" {
-                (None, None, None, None, form.region_variable_id)
-            } else {
-                let x_val = if x_mode == "fixed" || x_mode == "literal" {
-                    form.x
-                } else {
-                    None
-                };
-                let x_var = if x_mode == "variable" {
-                    form.x_variable_id
-                } else {
-                    None
-                };
-                let y_val = if y_mode == "fixed" || y_mode == "literal" {
-                    form.y
-                } else {
-                    None
-                };
-                let y_var = if y_mode == "variable" {
-                    form.y_variable_id
-                } else {
-                    None
-                };
-                (x_val, x_var, y_val, y_var, None)
-            };
+            let cv = extract_coord_and_vars(form);
 
             sqlx::query(
                 r#"
                 INSERT INTO step_mouse_scrolls (step_id, direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    direction = EXCLUDED.direction,
-                    scroll_amount = EXCLUDED.scroll_amount,
-                    x = EXCLUDED.x,
-                    y = EXCLUDED.y,
-                    x_variable_id = EXCLUDED.x_variable_id,
-                    y_variable_id = EXCLUDED.y_variable_id,
-                    region_variable_id = EXCLUDED.region_variable_id
+                    direction = EXCLUDED.direction, scroll_amount = EXCLUDED.scroll_amount,
+                    x = EXCLUDED.x, y = EXCLUDED.y, x_variable_id = EXCLUDED.x_variable_id,
+                    y_variable_id = EXCLUDED.y_variable_id, region_variable_id = EXCLUDED.region_variable_id
                 "#,
             )
             .bind(step_id)
             .bind(direction)
             .bind(scroll_amount)
-            .bind(x)
-            .bind(y)
-            .bind(x_var_id)
-            .bind(y_var_id)
-            .bind(region_var_id)
+            .bind(cv.x)
+            .bind(cv.y)
+            .bind(cv.x_var_id)
+            .bind(cv.y_var_id)
+            .bind(cv.region_var_id)
             .execute(&mut **tx)
             .await?;
         }
         "window_control" => {
             let act_str = form.action.as_deref().unwrap_or("activate");
-            let action = if act_str.eq_ignore_ascii_case("close") {
-                "close"
-            } else if act_str.eq_ignore_ascii_case("minimize") {
-                "minimize"
-            } else if act_str.eq_ignore_ascii_case("maximize") {
-                "maximize"
-            } else if act_str.eq_ignore_ascii_case("wait") {
-                "wait"
-            } else {
-                "activate"
+            let action = match act_str {
+                s if s.eq_ignore_ascii_case("close") => "close",
+                s if s.eq_ignore_ascii_case("minimize") => "minimize",
+                s if s.eq_ignore_ascii_case("maximize") => "maximize",
+                s if s.eq_ignore_ascii_case("wait") => "wait",
+                _ => "activate",
             };
             let match_pattern = form.match_pattern.as_deref().unwrap_or("").trim();
             let mt_str = form.match_type.as_deref().unwrap_or("contains");
@@ -1454,10 +1484,8 @@ async fn save_step_details(
                 INSERT INTO step_window_controls (step_id, action, match_pattern, match_type, timeout_ms)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    action = EXCLUDED.action,
-                    match_pattern = EXCLUDED.match_pattern,
-                    match_type = EXCLUDED.match_type,
-                    timeout_ms = EXCLUDED.timeout_ms
+                    action = EXCLUDED.action, match_pattern = EXCLUDED.match_pattern,
+                    match_type = EXCLUDED.match_type, timeout_ms = EXCLUDED.timeout_ms
                 "#,
             )
             .bind(step_id)
@@ -1469,25 +1497,21 @@ async fn save_step_details(
             .await?;
         }
         "type_text" => {
-            let text_to_type = form.text_to_type.as_deref().unwrap_or("").trim();
-            let delay_between_keys_ms = form.delay_between_keys_ms.unwrap_or(0).max(0);
             sqlx::query(
                 r#"
                 INSERT INTO step_type_texts (step_id, text_to_type, delay_between_keys_ms)
                 VALUES ($1, $2, $3)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    text_to_type = EXCLUDED.text_to_type,
-                    delay_between_keys_ms = EXCLUDED.delay_between_keys_ms
+                    text_to_type = EXCLUDED.text_to_type, delay_between_keys_ms = EXCLUDED.delay_between_keys_ms
                 "#,
             )
             .bind(step_id)
-            .bind(text_to_type)
-            .bind(delay_between_keys_ms)
+            .bind(form.text_to_type.as_deref().unwrap_or("").trim())
+            .bind(form.delay_between_keys_ms.unwrap_or(0).max(0))
             .execute(&mut **tx)
             .await?;
         }
         "key_press" => {
-            let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
             sqlx::query(
                 r#"
                 INSERT INTO step_key_presses (step_id, key_combo)
@@ -1496,36 +1520,14 @@ async fn save_step_details(
                 "#,
             )
             .bind(step_id)
-            .bind(key_combo)
+            .bind(form.key_combo.as_deref().unwrap_or("").trim())
             .execute(&mut **tx)
             .await?;
         }
         "mouse_click" => {
             let button = sanitize_mouse_button(form.button.as_deref());
             let click_type = sanitize_click_type(form.click_type.as_deref());
-            let is_region_mode = form.click_mode.as_deref() == Some("region")
-                || (form.click_mode.is_none() && form.region_variable_id.is_some());
-
-            let (x, y, x_var_id, y_var_id, region_var_id) = if is_region_mode {
-                (None, None, None, None, form.region_variable_id)
-            } else {
-                let x_mode = form.x_mode.as_deref().unwrap_or("fixed");
-                let y_mode = form.y_mode.as_deref().unwrap_or("fixed");
-
-                let (x_val, x_vid) = if x_mode == "variable" {
-                    (None, form.x_variable_id)
-                } else {
-                    (form.x, None)
-                };
-
-                let (y_val, y_vid) = if y_mode == "variable" {
-                    (None, form.y_variable_id)
-                } else {
-                    (form.y, None)
-                };
-
-                (x_val, y_val, x_vid, y_vid, None)
-            };
+            let cv = extract_coord_and_vars(form);
 
             sqlx::query(
                 r#"
@@ -1533,21 +1535,17 @@ async fn save_step_details(
                     (step_id, x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    x = EXCLUDED.x,
-                    y = EXCLUDED.y,
-                    x_variable_id = EXCLUDED.x_variable_id,
-                    y_variable_id = EXCLUDED.y_variable_id,
-                    region_variable_id = EXCLUDED.region_variable_id,
-                    button = EXCLUDED.button,
-                    click_type = EXCLUDED.click_type
+                    x = EXCLUDED.x, y = EXCLUDED.y, x_variable_id = EXCLUDED.x_variable_id,
+                    y_variable_id = EXCLUDED.y_variable_id, region_variable_id = EXCLUDED.region_variable_id,
+                    button = EXCLUDED.button, click_type = EXCLUDED.click_type
                 "#,
             )
             .bind(step_id)
-            .bind(x)
-            .bind(y)
-            .bind(x_var_id)
-            .bind(y_var_id)
-            .bind(region_var_id)
+            .bind(cv.x)
+            .bind(cv.y)
+            .bind(cv.x_var_id)
+            .bind(cv.y_var_id)
+            .bind(cv.region_var_id)
             .bind(button)
             .bind(click_type)
             .execute(&mut **tx)
@@ -1556,13 +1554,10 @@ async fn save_step_details(
         "find_pixel_rgb" => {
             sqlx::query(
                 r#"
-                INSERT INTO step_find_pixel_rgb
-                    (step_id, x, y, output_variable_id)
+                INSERT INTO step_find_pixel_rgb (step_id, x, y, output_variable_id)
                 VALUES ($1, $2, $3, $4)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    x = EXCLUDED.x,
-                    y = EXCLUDED.y,
-                    output_variable_id = EXCLUDED.output_variable_id
+                    x = EXCLUDED.x, y = EXCLUDED.y, output_variable_id = EXCLUDED.output_variable_id
                 "#,
             )
             .bind(step_id)
@@ -1573,7 +1568,6 @@ async fn save_step_details(
             .await?;
         }
         "find_bitmap" => {
-            let ref_bitmap_id = form.reference_bitmap_id.unwrap_or(0);
             sqlx::query(
                 r#"
                 INSERT INTO step_find_bitmap
@@ -1581,20 +1575,15 @@ async fn save_step_details(
                      output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    reference_bitmap_id = EXCLUDED.reference_bitmap_id,
-                    search_x = EXCLUDED.search_x,
-                    search_y = EXCLUDED.search_y,
-                    search_width = EXCLUDED.search_width,
-                    search_height = EXCLUDED.search_height,
-                    match_threshold = EXCLUDED.match_threshold,
-                    output_found_variable_id = EXCLUDED.output_found_variable_id,
-                    output_x_variable_id = EXCLUDED.output_x_variable_id,
-                    output_y_variable_id = EXCLUDED.output_y_variable_id,
-                    output_region_variable_id = EXCLUDED.output_region_variable_id
+                    reference_bitmap_id = EXCLUDED.reference_bitmap_id, search_x = EXCLUDED.search_x,
+                    search_y = EXCLUDED.search_y, search_width = EXCLUDED.search_width,
+                    search_height = EXCLUDED.search_height, match_threshold = EXCLUDED.match_threshold,
+                    output_found_variable_id = EXCLUDED.output_found_variable_id, output_x_variable_id = EXCLUDED.output_x_variable_id,
+                    output_y_variable_id = EXCLUDED.output_y_variable_id, output_region_variable_id = EXCLUDED.output_region_variable_id
                 "#,
             )
             .bind(step_id)
-            .bind(ref_bitmap_id)
+            .bind(form.reference_bitmap_id.unwrap_or(0))
             .bind(form.search_x)
             .bind(form.search_y)
             .bind(form.search_width)
@@ -1616,12 +1605,9 @@ async fn save_step_details(
                     (step_id, search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    search_x = EXCLUDED.search_x,
-                    search_y = EXCLUDED.search_y,
-                    search_width = EXCLUDED.search_width,
-                    search_height = EXCLUDED.search_height,
-                    region_variable_id = EXCLUDED.region_variable_id,
-                    output_variable_id = EXCLUDED.output_variable_id,
+                    search_x = EXCLUDED.search_x, search_y = EXCLUDED.search_y,
+                    search_width = EXCLUDED.search_width, search_height = EXCLUDED.search_height,
+                    region_variable_id = EXCLUDED.region_variable_id, output_variable_id = EXCLUDED.output_variable_id,
                     set_as_task_output = EXCLUDED.set_as_task_output
                 "#,
             )
@@ -1646,7 +1632,7 @@ async fn save_step_details(
             };
             let text_mode = form.text_mode.as_deref().unwrap_or("literal");
             let text_to_set = if action == "set_text" && text_mode != "variable" {
-                form.text_to_set.clone()
+                form.text_to_set.as_deref()
             } else {
                 None
             };
@@ -1663,12 +1649,9 @@ async fn save_step_details(
                     (step_id, action, text_to_set, input_variable_id, output_variable_id, set_as_task_output, timeout_ms)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (step_id) DO UPDATE SET
-                    action = EXCLUDED.action,
-                    text_to_set = EXCLUDED.text_to_set,
-                    input_variable_id = EXCLUDED.input_variable_id,
-                    output_variable_id = EXCLUDED.output_variable_id,
-                    set_as_task_output = EXCLUDED.set_as_task_output,
-                    timeout_ms = EXCLUDED.timeout_ms
+                    action = EXCLUDED.action, text_to_set = EXCLUDED.text_to_set,
+                    input_variable_id = EXCLUDED.input_variable_id, output_variable_id = EXCLUDED.output_variable_id,
+                    set_as_task_output = EXCLUDED.set_as_task_output, timeout_ms = EXCLUDED.timeout_ms
                 "#,
             )
             .bind(step_id)
@@ -1707,7 +1690,6 @@ async fn render_step_form(
         form,
         error,
         None,
-        None,
     )
     .await
 }
@@ -1722,8 +1704,7 @@ async fn render_step_form_with_options(
     step_type: &str,
     form: StepForm,
     error: Option<String>,
-    bundle: Option<StepOptionsBundle>,
-    variables: Option<Vec<VariableOption>>,
+    pre_fetched_options: Option<StepFormOptions>,
 ) -> axum::response::Response {
     let is_edit = step_id.is_some();
     let status = if error.is_some() {
@@ -1733,6 +1714,11 @@ async fn render_step_form_with_options(
     };
     let label = form.label.unwrap_or_default();
     let post_delay_seconds = form.post_delay_seconds.unwrap_or(0.0);
+
+    let options = match pre_fetched_options {
+        Some(opts) => opts,
+        None => StepFormOptions::fetch(db, automation_id, step_id, step_type).await,
+    };
 
     macro_rules! render_tmpl {
         ($tmpl:ident { $($field:ident $(: $val:expr)?),* $(,)? }) => {
@@ -1753,9 +1739,8 @@ async fn render_step_form_with_options(
     let html_body = match step_type {
         "branch" => {
             let condition_type = form.condition_type.unwrap_or_else(|| "pixel_rgb".into());
-            let bundle = match bundle {
-                Some(b) => b,
-                None => fetch_step_options_bundle(db, automation_id, step_id).await,
+            let StepFormOptions::Bundle(bundle) = options else {
+                unreachable!()
             };
             render_tmpl!(StepBranchTemplate {
                 condition_type,
@@ -1784,9 +1769,8 @@ async fn render_step_form_with_options(
             key_combo: form.key_combo.unwrap_or_default(),
         }),
         "clipboard_control" => {
-            let variables = match variables {
-                Some(v) => v,
-                None => fetch_automation_variables(db, automation_id).await,
+            let StepFormOptions::Variables(variables) = options else {
+                unreachable!()
             };
             let set_task_out = is_form_flag_enabled(form.set_as_task_output.as_deref());
 
@@ -1812,9 +1796,8 @@ async fn render_step_form_with_options(
             delay_between_keys_ms: form.delay_between_keys_ms.unwrap_or(0).max(0),
         }),
         "mouse_scroll" => {
-            let variables = match variables {
-                Some(v) => v,
-                None => fetch_automation_variables(db, automation_id).await,
+            let StepFormOptions::Variables(variables) = options else {
+                unreachable!()
             };
             render_tmpl!(StepMouseScrollTemplate {
                 direction: form.direction.unwrap_or_else(|| "down".into()),
@@ -1831,9 +1814,8 @@ async fn render_step_form_with_options(
             })
         }
         "mouse_click" => {
-            let variables = match variables {
-                Some(v) => v,
-                None => fetch_automation_variables(db, automation_id).await,
+            let StepFormOptions::Variables(variables) = options else {
+                unreachable!()
             };
             render_tmpl!(StepMouseClickTemplate {
                 x_mode: form.x_mode.unwrap_or_else(|| "fixed".into()),
@@ -1850,9 +1832,8 @@ async fn render_step_form_with_options(
             })
         }
         "find_pixel_rgb" => {
-            let variables = match variables {
-                Some(v) => v,
-                None => fetch_automation_variables(db, automation_id).await,
+            let StepFormOptions::Variables(variables) = options else {
+                unreachable!()
             };
             render_tmpl!(StepFindPixelRgbTemplate {
                 x: form.x,
@@ -1862,9 +1843,8 @@ async fn render_step_form_with_options(
             })
         }
         "find_bitmap" => {
-            let bundle = match bundle {
-                Some(b) => b,
-                None => fetch_step_options_bundle(db, automation_id, step_id).await,
+            let StepFormOptions::Bundle(bundle) = options else {
+                unreachable!()
             };
             render_tmpl!(StepFindBitmapTemplate {
                 reference_bitmap_id: form.reference_bitmap_id,
@@ -1882,9 +1862,8 @@ async fn render_step_form_with_options(
             })
         }
         "ocr_extract" => {
-            let variables = match variables {
-                Some(v) => v,
-                None => fetch_automation_variables(db, automation_id).await,
+            let StepFormOptions::Variables(variables) = options else {
+                unreachable!()
             };
             let set_task_out = match form.set_as_task_output.as_deref() {
                 Some(v) => is_form_flag_enabled(Some(v)),
@@ -1940,20 +1919,32 @@ async fn validate_automation_variables_exist(
     if var_ids.is_empty() {
         return Ok(());
     }
-    let mut vars = var_ids.to_vec();
-    vars.sort_unstable();
-    vars.dedup();
+
+    let (dedup_vec, expected_len) = if var_ids.len() == 1 {
+        (None, 1)
+    } else {
+        let mut vars = var_ids.to_vec();
+        vars.sort_unstable();
+        vars.dedup();
+        let len = vars.len();
+        (Some(vars), len)
+    };
+
+    let slice = match &dedup_vec {
+        Some(v) => v.as_slice(),
+        None => var_ids,
+    };
 
     let count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
+        "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2 AND deleted_at IS NULL",
     )
-    .bind(&vars)
+    .bind(slice)
     .bind(automation_id)
     .fetch_one(db)
     .await
     .unwrap_or(0);
 
-    if count as usize != vars.len() {
+    if count as usize != expected_len {
         Err("Selected output variable is invalid for this automation.".to_string())
     } else {
         Ok(())
@@ -2033,24 +2024,25 @@ async fn validate_step_form(
                     .ok_or_else(|| "Please select a valid Region variable.".to_string())?;
                 validate_automation_variables_exist(db, automation_id, &[reg_id]).await?;
             } else {
-                let mut var_ids = Vec::new();
-                if form.x_mode.as_deref() == Some("variable") {
-                    match form.x_variable_id.filter(|&id| id > 0) {
-                        Some(id) => var_ids.push(id),
-                        None => {
-                            return Err("Please select a variable for X coordinate.".to_string());
-                        }
-                    }
-                }
-                if form.y_mode.as_deref() == Some("variable") {
-                    match form.y_variable_id.filter(|&id| id > 0) {
-                        Some(id) => var_ids.push(id),
-                        None => {
-                            return Err("Please select a variable for Y coordinate.".to_string());
-                        }
-                    }
-                }
-                validate_automation_variables_exist(db, automation_id, &var_ids).await?;
+                let x_var =
+                    if form.x_mode.as_deref() == Some("variable") {
+                        Some(form.x_variable_id.ok_or_else(|| {
+                            "Please select a variable for X coordinate.".to_string()
+                        })?)
+                    } else {
+                        None
+                    };
+                let y_var =
+                    if form.y_mode.as_deref() == Some("variable") {
+                        Some(form.y_variable_id.ok_or_else(|| {
+                            "Please select a variable for Y coordinate.".to_string()
+                        })?)
+                    } else {
+                        None
+                    };
+
+                let (var_ids, count) = collect_var_ids::<2>(&[x_var, y_var]);
+                validate_automation_variables_exist(db, automation_id, &var_ids[..count]).await?;
             }
             if let Some(amount) = form.scroll_amount
                 && !(1..=100).contains(&amount)
@@ -2060,11 +2052,9 @@ async fn validate_step_form(
         }
         "clipboard_control" => {
             let action = form.action.as_deref().unwrap_or("set_text");
-            let var_ids: Vec<i64> = [form.input_variable_id, form.output_variable_id]
-                .into_iter()
-                .flatten()
-                .collect();
-            validate_automation_variables_exist(db, automation_id, &var_ids).await?;
+            let (var_ids, count) =
+                collect_var_ids::<2>(&[form.input_variable_id, form.output_variable_id]);
+            validate_automation_variables_exist(db, automation_id, &var_ids[..count]).await?;
 
             match action {
                 "set_text" => {
@@ -2111,25 +2101,19 @@ async fn validate_step_form(
                 return Err("Please select a reference bitmap.".to_string());
             }
 
-            let out_vars: Vec<i64> = [
+            let (var_ids, count) = collect_var_ids::<4>(&[
                 form.output_found_variable_id,
                 form.output_x_variable_id,
                 form.output_y_variable_id,
                 form.output_region_variable_id,
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
+            ]);
 
-            validate_automation_variables_exist(db, automation_id, &out_vars).await?;
+            validate_automation_variables_exist(db, automation_id, &var_ids[..count]).await?;
         }
         "ocr_extract" => {
-            let out_vars: Vec<i64> = [form.region_variable_id, form.output_variable_id]
-                .into_iter()
-                .flatten()
-                .collect();
-
-            validate_automation_variables_exist(db, automation_id, &out_vars).await?;
+            let (var_ids, count) =
+                collect_var_ids::<2>(&[form.region_variable_id, form.output_variable_id]);
+            validate_automation_variables_exist(db, automation_id, &var_ids[..count]).await?;
         }
         _ => return Err("Invalid step type.".to_string()),
     }
@@ -2245,16 +2229,39 @@ pub async fn get_edit_step_handler(
         ..Default::default()
     };
 
-    let mut pre_fetched_bundle = None;
-    let mut pre_fetched_variables = None;
+    let (options, _) = tokio::join!(
+        StepFormOptions::fetch(&state.db, id, Some(sid), &step_row.step_type),
+        populate_step_form_details(&state.db, sid, &step_row.step_type, &query, &mut form),
+    );
 
-    match step_row.step_type.as_str() {
+    render_step_form_with_options(
+        &state.db,
+        user,
+        csrf_token,
+        id,
+        Some(sid),
+        &step_row.step_type,
+        form,
+        None,
+        Some(options),
+    )
+    .await
+}
+
+async fn populate_step_form_details(
+    db: &PgPool,
+    sid: i64,
+    step_type: &str,
+    query: &EditStepQuery,
+    form: &mut StepForm,
+) {
+    match step_type {
         "key_press" => {
             form.key_combo = sqlx::query_scalar::<_, String>(
                 "SELECT key_combo FROM step_key_presses WHERE step_id = $1",
             )
             .bind(sid)
-            .fetch_optional(&state.db)
+            .fetch_optional(db)
             .await
             .ok()
             .flatten();
@@ -2264,7 +2271,7 @@ pub async fn get_edit_step_handler(
                 "SELECT step_id, action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
             )
             .bind(sid)
-            .fetch_optional(&state.db)
+            .fetch_optional(db)
             .await
             {
                 form.action = Some(wc.action);
@@ -2278,7 +2285,7 @@ pub async fn get_edit_step_handler(
                 "SELECT step_id, text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
             )
             .bind(sid)
-            .fetch_optional(&state.db)
+            .fetch_optional(db)
             .await
             {
                 form.text_to_type = Some(tt.text_to_type);
@@ -2286,16 +2293,13 @@ pub async fn get_edit_step_handler(
             }
         }
         "find_bitmap" => {
-            let (fb_res, bundle) = tokio::join!(
-                sqlx::query_as::<_, FindBitmapDetailRow>(
-                    "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1",
-                )
-                .bind(sid)
-                .fetch_optional(&state.db),
-                fetch_step_options_bundle(&state.db, id, Some(sid))
-            );
-            pre_fetched_bundle = Some(bundle);
-            if let Ok(Some(fb)) = fb_res {
+            if let Ok(Some(fb)) = sqlx::query_as::<_, FindBitmapDetailRow>(
+                "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(db)
+            .await
+            {
                 form.reference_bitmap_id = query.reference_bitmap_id.or(fb.reference_bitmap_id);
                 form.search_x = query.search_x.or(fb.search_x);
                 form.search_y = query.search_y.or(fb.search_y);
@@ -2315,20 +2319,17 @@ pub async fn get_edit_step_handler(
             }
         }
         "branch" => {
-            let (br_res, bundle) = tokio::join!(
-                sqlx::query_as::<_, BranchDetailRow>(
-                    r#"SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
-                              reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
-                              on_match_step_id, on_no_match_step_id,
-                              window_match_pattern, window_match_type, window_check_type
-                       FROM step_branches WHERE step_id = $1"#,
-                )
-                .bind(sid)
-                .fetch_optional(&state.db),
-                fetch_step_options_bundle(&state.db, id, Some(sid))
-            );
-            pre_fetched_bundle = Some(bundle);
-            if let Ok(Some(br)) = br_res {
+            if let Ok(Some(br)) = sqlx::query_as::<_, BranchDetailRow>(
+                r#"SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+                          reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
+                          on_match_step_id, on_no_match_step_id,
+                          window_match_pattern, window_match_type, window_check_type
+                   FROM step_branches WHERE step_id = $1"#,
+            )
+            .bind(sid)
+            .fetch_optional(db)
+            .await
+            {
                 form.condition_type = Some(br.condition_type);
                 form.x = query.search_x.or(br.x);
                 form.y = query.search_y.or(br.y);
@@ -2358,16 +2359,13 @@ pub async fn get_edit_step_handler(
             }
         }
         "clipboard_control" => {
-            let (cc_res, vars) = tokio::join!(
-                sqlx::query_as::<_, ClipboardControlDetailRow>(
-                    "SELECT action, text_to_set, input_variable_id, output_variable_id, set_as_task_output, timeout_ms FROM step_clipboard_controls WHERE step_id = $1",
-                )
-                .bind(sid)
-                .fetch_optional(&state.db),
-                fetch_automation_variables(&state.db, id)
-            );
-            pre_fetched_variables = Some(vars);
-            if let Ok(Some(cc)) = cc_res {
+            if let Ok(Some(cc)) = sqlx::query_as::<_, ClipboardControlDetailRow>(
+                "SELECT action, text_to_set, input_variable_id, output_variable_id, set_as_task_output, timeout_ms FROM step_clipboard_controls WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(db)
+            .await
+            {
                 form.action = Some(cc.action);
                 form.text_to_set = cc.text_to_set;
                 form.input_variable_id = cc.input_variable_id;
@@ -2377,32 +2375,26 @@ pub async fn get_edit_step_handler(
             }
         }
         "find_pixel_rgb" => {
-            let (fp_res, vars) = tokio::join!(
-                sqlx::query_as::<_, FindPixelDetailRow>(
-                    "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
-                )
-                .bind(sid)
-                .fetch_optional(&state.db),
-                fetch_automation_variables(&state.db, id)
-            );
-            pre_fetched_variables = Some(vars);
-            if let Ok(Some(fp)) = fp_res {
+            if let Ok(Some(fp)) = sqlx::query_as::<_, FindPixelDetailRow>(
+                "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(db)
+            .await
+            {
                 form.x = fp.x;
                 form.y = fp.y;
                 form.output_variable_id = fp.output_variable_id;
             }
         }
         "ocr_extract" => {
-            let (ocr_res, vars) = tokio::join!(
-                sqlx::query_as::<_, OcrExtractDetailRow>(
-                    "SELECT search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts WHERE step_id = $1",
-                )
-                .bind(sid)
-                .fetch_optional(&state.db),
-                fetch_automation_variables(&state.db, id)
-            );
-            pre_fetched_variables = Some(vars);
-            if let Ok(Some(ocr)) = ocr_res {
+            if let Ok(Some(ocr)) = sqlx::query_as::<_, OcrExtractDetailRow>(
+                "SELECT search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(db)
+            .await
+            {
                 form.search_x = query.search_x.or(ocr.search_x);
                 form.search_y = query.search_y.or(ocr.search_y);
                 form.search_width = query.search_width.or(ocr.search_width);
@@ -2418,16 +2410,13 @@ pub async fn get_edit_step_handler(
             }
         }
         "mouse_scroll" => {
-            let (ms_res, vars) = tokio::join!(
-                sqlx::query_as::<_, MouseScrollDetailRow>(
-                    "SELECT direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id FROM step_mouse_scrolls WHERE step_id = $1",
-                )
-                .bind(sid)
-                .fetch_optional(&state.db),
-                fetch_automation_variables(&state.db, id)
-            );
-            pre_fetched_variables = Some(vars);
-            if let Ok(Some(ms)) = ms_res {
+            if let Ok(Some(ms)) = sqlx::query_as::<_, MouseScrollDetailRow>(
+                "SELECT direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id FROM step_mouse_scrolls WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(db)
+            .await
+            {
                 form.direction = Some(ms.direction);
                 form.scroll_amount = Some(ms.scroll_amount);
                 form.x = query.search_x.or(ms.x);
@@ -2444,16 +2433,13 @@ pub async fn get_edit_step_handler(
             }
         }
         "mouse_click" => {
-            let (mc_res, vars) = tokio::join!(
-                sqlx::query_as::<_, MouseClickDetailRow>(
-                    "SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1",
-                )
-                .bind(sid)
-                .fetch_optional(&state.db),
-                fetch_automation_variables(&state.db, id)
-            );
-            pre_fetched_variables = Some(vars);
-            if let Ok(Some(mc)) = mc_res {
+            if let Ok(Some(mc)) = sqlx::query_as::<_, MouseClickDetailRow>(
+                "SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1",
+            )
+            .bind(sid)
+            .fetch_optional(db)
+            .await
+            {
                 form.x = mc.x;
                 form.y = mc.y;
                 form.x_variable_id = mc.x_variable_id;
@@ -2466,22 +2452,8 @@ pub async fn get_edit_step_handler(
                 form.click_mode = Some(if mc.region_variable_id.is_some() { "region".into() } else { "coordinates".into() });
             }
         }
-        _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
+        _ => {}
     }
-
-    render_step_form_with_options(
-        &state.db,
-        user,
-        csrf_token,
-        id,
-        Some(sid),
-        &step_row.step_type,
-        form,
-        None,
-        pre_fetched_bundle,
-        pre_fetched_variables,
-    )
-    .await
 }
 
 /// POST /automations/{id}/steps
@@ -3033,7 +3005,7 @@ mod tests {
 
     #[test]
     fn test_find_bitmap_query_overrides() {
-        let q = NewFindBitmapQuery {
+        let q = EditStepQuery {
             reference_bitmap_id: Some(42),
             search_x: Some(10),
             search_y: Some(20),
@@ -3372,7 +3344,7 @@ mod tests {
         assert_eq!(sanitize_click_type(None), "single");
 
         // 5. Branch form validation
-        let mut form = MouseClickStepForm {
+        let mut form = StepForm {
             step_type: Some("branch".to_string()),
             label: None,
             post_delay_seconds: None,

@@ -61,11 +61,14 @@ mod tests {
     use axum::{Router, body::Body, routing::get};
     use tower::ServiceExt;
 
-    fn create_test_state(s3_public_endpoint: Option<String>) -> AppState {
+    fn create_test_state_with_endpoints(
+        s3_endpoint: Option<String>,
+        s3_public_endpoint: Option<String>,
+    ) -> AppState {
         let config = Config {
             database_url: "postgres://postgres:postgres@localhost/deskdispatch".to_string(),
             public_base_url: "http://localhost:3000".to_string(),
-            s3_endpoint: None,
+            s3_endpoint: s3_endpoint.clone(),
             s3_public_endpoint: s3_public_endpoint.clone(),
             s3_bucket: "test-bucket".to_string(),
             s3_access_key: "key".to_string(),
@@ -95,7 +98,7 @@ mod tests {
             sqlx::PgPool::connect_lazy("postgres://postgres:postgres@localhost/deskdispatch")
                 .unwrap();
         let storage = crate::storage::StorageService::new(&config.s3_bucket)
-            .with_credentials("key", "secret", "us-east-1", None::<String>)
+            .with_credentials("key", "secret", "us-east-1", s3_endpoint)
             .with_public_endpoint(s3_public_endpoint);
         let (tx_notify, _) = tokio::sync::broadcast::channel::<()>(100);
 
@@ -107,6 +110,10 @@ mod tests {
             task_queue_notifier: tx_notify,
             wps_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    fn create_test_state(s3_public_endpoint: Option<String>) -> AppState {
+        create_test_state_with_endpoints(None, s3_public_endpoint)
     }
 
     #[tokio::test]
@@ -155,5 +162,68 @@ mod tests {
             headers.get(header::STRICT_TRANSPORT_SECURITY).unwrap(),
             "max-age=31536000; includeSubDomains"
         );
+    }
+
+    #[tokio::test]
+    async fn test_security_headers_middleware_s3_fallback_and_empty_endpoints() {
+        // Case 1: s3_public_endpoint is None, falls back to s3_endpoint
+        let fallback_state =
+            create_test_state_with_endpoints(Some("http://s3.internal:9000".to_string()), None);
+        let app = Router::new()
+            .route("/test", get(|| async { "OK" }))
+            .layer(axum::middleware::from_fn_with_state(
+                fallback_state.clone(),
+                security_headers_middleware,
+            ))
+            .with_state(fallback_state);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let csp = response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("form-action 'self' http://s3.internal:9000"));
+        assert!(csp.contains("img-src 'self' data: http://s3.internal:9000"));
+
+        // Case 2: Whitespace-only or None endpoints yield clean CSP without extra origin spaces
+        let empty_state =
+            create_test_state_with_endpoints(Some("   ".to_string()), Some(" \t ".to_string()));
+        let app = Router::new()
+            .route("/test", get(|| async { "OK" }))
+            .layer(axum::middleware::from_fn_with_state(
+                empty_state.clone(),
+                security_headers_middleware,
+            ))
+            .with_state(empty_state);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let csp = response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("form-action 'self';"));
+        assert!(csp.contains("img-src 'self' data:;"));
     }
 }

@@ -74,3 +74,11 @@ Action: Write pure unit tests in `src/routes/automations/steps.rs` covering wind
 ## 2025-03-27 Worker API Key Rotation Grace Period & Expiration Coverage
 Learning: `AuthWorker::from_request_parts` supports API key rotation by matching requests against either `api_key_hash` or `(previous_api_key_hash = $1 AND previous_api_key_expires_at > now())`. Key edge cases include authenticating during non-expired rotation grace periods vs rejection after `previous_api_key_expires_at` has elapsed.
 Action: Test worker authentication during key rotation with non-expired vs expired previous API keys in `tests/worker_auth_test.rs` alongside token generation format and hash utility unit tests in `src/auth/worker.rs`.
+
+## 2025-03-28 Security Headers CSP S3 Fallback & Whitespace Endpoint Coverage
+Learning: Security headers middleware (`security_headers_middleware`) builds Content-Security-Policy `form-action` and `img-src` directives by prioritizing `s3_public_endpoint`, falling back to `s3_endpoint`, and filtering out whitespace-only string options (`!endpoint.trim().is_empty()`).
+Action: Test S3 public endpoint fallback and whitespace-only/None endpoint options using `axum::Router`, `tower::ServiceExt::oneshot`, and `security_headers_middleware` assertions in `src/auth/security_headers.rs`.
+
+## 2025-03-29 Remaining Domain Status Enums Display, FromStr & Serde Edge Cases Coverage
+Learning: Domain status enums (`AutomationStatus`, `RecordingSessionStatus`, `ScheduleStatus`, `UserSessionStatus`, `WpsModeStatus`) implement `Display`, custom `FromStr` parsing (including trimming surrounding whitespace, case-insensitivity, and boolean string aliases like `"true"`/`"false"` for Schedule and WPS mode statuses), and Serde JSON serialization/deserialization.
+Action: Test `Display`, case/whitespace-tolerant `FromStr` parsing, invalid string parsing error message outputs, and Serde JSON roundtrips for all domain status enums in `src/domain.rs` unit tests without database dependencies.

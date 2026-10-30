@@ -72,11 +72,10 @@ async fn test_explain_queries_hit_indexes() {
         LEFT JOIN schedules s ON tr.schedule_id = s.id
         WHERE tr.status = 'queued'
           AND (
-            tr.schedule_id IS NULL
-            OR s.worker_group_id IS NULL
+            COALESCE(tr.target_worker_group_id, s.worker_group_id) IS NULL
             OR EXISTS (
               SELECT 1 FROM worker_group_members wgm
-              WHERE wgm.worker_id = $1 AND wgm.group_id = s.worker_group_id
+              WHERE wgm.worker_id = $1 AND wgm.group_id = COALESCE(tr.target_worker_group_id, s.worker_group_id)
             )
           )
         ORDER BY tr.queued_at ASC, tr.id ASC

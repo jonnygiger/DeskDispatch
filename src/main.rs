@@ -377,6 +377,16 @@ async fn verify_database_schema(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::
         "automation_parameters",
         "bitmaps",
         "step_screenshots",
+        "step_mouse_clicks",
+        "step_key_presses",
+        "step_type_texts",
+        "step_find_pixel_rgb",
+        "step_find_bitmap",
+        "step_branches",
+        "step_ocr_extracts",
+        "step_window_controls",
+        "step_mouse_scrolls",
+        "step_clipboard_controls",
         "task_worker_pcs",
         "worker_groups",
         "worker_group_members",
@@ -408,6 +418,14 @@ async fn verify_database_schema(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::
 
     let required_columns = [
         ("sessions", "last_active_at"),
+        ("automations", "expected_output_type"),
+        ("step_mouse_clicks", "region_variable_id"),
+        ("step_find_bitmap", "output_region_variable_id"),
+        ("step_branches", "window_match_pattern"),
+        ("step_branches", "window_match_type"),
+        ("step_branches", "window_check_type"),
+        ("task_runs", "output_type"),
+        ("task_runs", "output_value"),
         ("task_runs", "parameter_overrides"),
         ("task_runs", "cancel_requested_at"),
         ("task_runs", "target_worker_group_id"),
@@ -432,6 +450,26 @@ async fn verify_database_schema(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::
             let err_msg = format!(
                 "Startup schema failsafe error: Required column '{}.{}' is missing from the database.",
                 table, column
+            );
+            error!("{}", err_msg);
+            return Err(err_msg.into());
+        }
+    }
+
+    let required_indexes = ["bitmaps_object_storage_key_key"];
+
+    for index in required_indexes {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = $1 AND c.relkind = 'i')",
+        )
+        .bind(index)
+        .fetch_one(pool)
+        .await?;
+
+        if !exists {
+            let err_msg = format!(
+                "Startup schema failsafe error: Required index '{}' is missing from the database.",
+                index
             );
             error!("{}", err_msg);
             return Err(err_msg.into());
