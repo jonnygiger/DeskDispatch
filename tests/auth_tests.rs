@@ -15,7 +15,37 @@ use deskdispatch::auth::{
     LoginRateLimiter, UserRole, clear_session_cookie, create_session_cookie, generate_csrf_token,
     validate_csrf_token,
 };
-use deskdispatch::config::Config;
+use deskdispatch::config::{Config, SecretString};
+
+fn create_test_config() -> Config {
+    Config {
+        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch"
+            .to_string(),
+        public_base_url: "http://localhost:3000".to_string(),
+        s3_endpoint: None,
+        s3_public_endpoint: None,
+        s3_bucket: "deskdispatch-bucket".to_string(),
+        s3_access_key: "test_key".to_string(),
+        s3_secret_key: SecretString::from("test_secret"),
+        s3_region: "us-east-1".to_string(),
+        session_secret: SecretString::from("test_session_secret"),
+        bind_address: "0.0.0.0:3000".to_string(),
+        environment: "development".to_string(),
+        min_agent_version: None,
+        worker_poll_interval_secs: 5,
+        worker_heartbeat_interval_secs: 15,
+        trust_proxy_headers: false,
+        database_max_connections: 5,
+        database_acquire_timeout_secs: 5,
+        worker_long_poll_timeout_secs: 10,
+        session_retention_days: 7,
+        audit_log_retention_days: 90,
+        task_run_step_retention_days: 30,
+        screenshot_retention_days: 30,
+        metrics_bind_address: None,
+        unattended_registration_psk: SecretString::from("test_psk"),
+    }
+}
 use deskdispatch::routes::{
     get_index_handler, get_login_handler, get_password_handler, post_login_handler,
     post_logout_handler, post_password_handler,
@@ -264,7 +294,7 @@ async fn test_unauthenticated_redirect_to_login() {
         return;
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -330,7 +360,7 @@ async fn test_full_auth_and_password_workflow() {
         user_id,
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",

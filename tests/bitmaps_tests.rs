@@ -4,7 +4,37 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
-use deskdispatch::{AppState, config::Config, routes::*};
+use deskdispatch::{AppState, config::{Config, SecretString}, routes::*};
+
+fn create_test_config() -> Config {
+    Config {
+        database_url: "postgres://postgres:postgrespassword@localhost:5432/deskdispatch"
+            .to_string(),
+        public_base_url: "http://localhost:3000".to_string(),
+        s3_endpoint: None,
+        s3_public_endpoint: None,
+        s3_bucket: "deskdispatch-bucket".to_string(),
+        s3_access_key: "test_key".to_string(),
+        s3_secret_key: SecretString::from("test_secret"),
+        s3_region: "us-east-1".to_string(),
+        session_secret: SecretString::from("test_session_secret"),
+        bind_address: "0.0.0.0:3000".to_string(),
+        environment: "development".to_string(),
+        min_agent_version: None,
+        worker_poll_interval_secs: 5,
+        worker_heartbeat_interval_secs: 15,
+        trust_proxy_headers: false,
+        database_max_connections: 5,
+        database_acquire_timeout_secs: 5,
+        worker_long_poll_timeout_secs: 10,
+        session_retention_days: 7,
+        audit_log_retention_days: 90,
+        task_run_step_retention_days: 30,
+        screenshot_retention_days: 30,
+        metrics_bind_address: None,
+        unattended_registration_psk: SecretString::from("test_psk"),
+    }
+}
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -159,7 +189,7 @@ async fn test_bitmaps_list_routes() {
         bitmap_ids: Vec::new(),
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -307,7 +337,7 @@ async fn test_bitmap_upload_flow() {
         bitmap_ids: Vec::new(),
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -518,7 +548,7 @@ async fn test_bitmap_deletion_flow() {
         bitmap_ids: Vec::new(),
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -731,7 +761,7 @@ async fn test_region_picker_top_left_flow() {
         bitmap_ids: Vec::new(),
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
@@ -833,7 +863,7 @@ async fn test_region_picker_confirm_crop_flow() {
         bitmap_ids: Vec::new(),
     };
 
-    let config = Config::from_env().unwrap();
+    let config = create_test_config();
     let storage = deskdispatch::storage::StorageService::new(&config.s3_bucket).with_credentials(
         "key",
         "secret",
