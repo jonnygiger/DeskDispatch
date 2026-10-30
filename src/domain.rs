@@ -641,7 +641,10 @@ mod tests {
             let input = format!("  {}  ", expected_str.to_uppercase());
             assert_eq!(WpsModeStatus::from_str(&input).unwrap(), status);
             let json = serde_json::to_string(&status).unwrap();
-            assert_eq!(serde_json::from_str::<WpsModeStatus>(&json).unwrap(), status);
+            assert_eq!(
+                serde_json::from_str::<WpsModeStatus>(&json).unwrap(),
+                status
+            );
         }
         assert_eq!(
             WpsModeStatus::from_str(" FALSE ").unwrap(),
