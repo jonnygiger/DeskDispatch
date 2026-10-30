@@ -4,7 +4,11 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
-use deskdispatch::{AppState, config::{Config, SecretString}, routes::*};
+use deskdispatch::{
+    AppState,
+    config::{Config, SecretString},
+    routes::*,
+};
 
 fn create_test_config() -> Config {
     Config {
