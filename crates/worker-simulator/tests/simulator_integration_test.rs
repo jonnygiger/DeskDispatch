@@ -4,6 +4,10 @@ use worker_simulator::worker::{SimulatedWorker, WorkerConfig};
 #[test]
 fn test_simulator_worker_config_and_profiles() {
     let mut profile_counts = std::collections::HashMap::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
 
     for idx in 0..100 {
         let profile = WorkerProfile::select_from_index(idx);
@@ -24,7 +28,7 @@ fn test_simulator_worker_config_and_profiles() {
             server_url: "http://127.0.0.1:3000".to_string(),
         };
 
-        let worker = SimulatedWorker::new(config.clone());
+        let worker = SimulatedWorker::with_client(config, client.clone());
         assert_eq!(worker.config.worker_index, idx + 1);
         assert!(worker.config.hostname.contains("sim-worker-"));
         assert_eq!(worker.config.profile, profile);
