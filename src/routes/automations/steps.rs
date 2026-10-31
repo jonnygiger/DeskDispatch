@@ -1303,6 +1303,48 @@ async fn save_step_details(
     step_type: &str,
     form: &StepForm,
 ) -> Result<(), sqlx::Error> {
+    struct CoordVars {
+        x: Option<i32>,
+        y: Option<i32>,
+        x_var_id: Option<i64>,
+        y_var_id: Option<i64>,
+        region_var_id: Option<i64>,
+    }
+
+    fn extract_coord_and_vars(form: &StepForm) -> CoordVars {
+        if form.click_mode.as_deref() == Some("region")
+            || (form.click_mode.is_none() && form.region_variable_id.is_some())
+        {
+            CoordVars {
+                x: None,
+                y: None,
+                x_var_id: None,
+                y_var_id: None,
+                region_var_id: form.region_variable_id,
+            }
+        } else {
+            let x_mode = form.x_mode.as_deref().unwrap_or("fixed");
+            let y_mode = form.y_mode.as_deref().unwrap_or("fixed");
+            let (x, x_var) = if x_mode == "variable" {
+                (None, form.x_variable_id)
+            } else {
+                (form.x, None)
+            };
+            let (y, y_var) = if y_mode == "variable" {
+                (None, form.y_variable_id)
+            } else {
+                (form.y, None)
+            };
+            CoordVars {
+                x,
+                y,
+                x_var_id: x_var,
+                y_var_id: y_var,
+                region_var_id: None,
+            }
+        }
+    }
+
     match step_type {
         "branch" => {
             let condition_type = form.condition_type.as_deref().unwrap_or("pixel_rgb");
@@ -1394,36 +1436,7 @@ async fn save_step_details(
                 _ => "down",
             };
             let scroll_amount = form.scroll_amount.unwrap_or(3).clamp(1, 100);
-
-            let is_region = form.click_mode.as_deref() == Some("region");
-            let x_mode = form.x_mode.as_deref().unwrap_or("fixed");
-            let y_mode = form.y_mode.as_deref().unwrap_or("fixed");
-
-            let (x, x_var_id, y, y_var_id, region_var_id) = if is_region {
-                (None, None, None, None, form.region_variable_id)
-            } else {
-                let x_val = if matches!(x_mode, "fixed" | "literal") {
-                    form.x
-                } else {
-                    None
-                };
-                let x_var = if x_mode == "variable" {
-                    form.x_variable_id
-                } else {
-                    None
-                };
-                let y_val = if matches!(y_mode, "fixed" | "literal") {
-                    form.y
-                } else {
-                    None
-                };
-                let y_var = if y_mode == "variable" {
-                    form.y_variable_id
-                } else {
-                    None
-                };
-                (x_val, x_var, y_val, y_var, None)
-            };
+            let cv = extract_coord_and_vars(form);
 
             sqlx::query(
                 r#"
@@ -1438,11 +1451,11 @@ async fn save_step_details(
             .bind(step_id)
             .bind(direction)
             .bind(scroll_amount)
-            .bind(x)
-            .bind(y)
-            .bind(x_var_id)
-            .bind(y_var_id)
-            .bind(region_var_id)
+            .bind(cv.x)
+            .bind(cv.y)
+            .bind(cv.x_var_id)
+            .bind(cv.y_var_id)
+            .bind(cv.region_var_id)
             .execute(&mut **tx)
             .await?;
         }
@@ -1484,8 +1497,6 @@ async fn save_step_details(
             .await?;
         }
         "type_text" => {
-            let text_to_type = form.text_to_type.as_deref().unwrap_or("").trim();
-            let delay_between_keys_ms = form.delay_between_keys_ms.unwrap_or(0).max(0);
             sqlx::query(
                 r#"
                 INSERT INTO step_type_texts (step_id, text_to_type, delay_between_keys_ms)
@@ -1495,13 +1506,12 @@ async fn save_step_details(
                 "#,
             )
             .bind(step_id)
-            .bind(text_to_type)
-            .bind(delay_between_keys_ms)
+            .bind(form.text_to_type.as_deref().unwrap_or("").trim())
+            .bind(form.delay_between_keys_ms.unwrap_or(0).max(0))
             .execute(&mut **tx)
             .await?;
         }
         "key_press" => {
-            let key_combo = form.key_combo.as_deref().unwrap_or("").trim();
             sqlx::query(
                 r#"
                 INSERT INTO step_key_presses (step_id, key_combo)
@@ -1510,36 +1520,14 @@ async fn save_step_details(
                 "#,
             )
             .bind(step_id)
-            .bind(key_combo)
+            .bind(form.key_combo.as_deref().unwrap_or("").trim())
             .execute(&mut **tx)
             .await?;
         }
         "mouse_click" => {
             let button = sanitize_mouse_button(form.button.as_deref());
             let click_type = sanitize_click_type(form.click_type.as_deref());
-            let is_region_mode = form.click_mode.as_deref() == Some("region")
-                || (form.click_mode.is_none() && form.region_variable_id.is_some());
-
-            let (x, y, x_var_id, y_var_id, region_var_id) = if is_region_mode {
-                (None, None, None, None, form.region_variable_id)
-            } else {
-                let x_mode = form.x_mode.as_deref().unwrap_or("fixed");
-                let y_mode = form.y_mode.as_deref().unwrap_or("fixed");
-
-                let (x_val, x_vid) = if x_mode == "variable" {
-                    (None, form.x_variable_id)
-                } else {
-                    (form.x, None)
-                };
-
-                let (y_val, y_vid) = if y_mode == "variable" {
-                    (None, form.y_variable_id)
-                } else {
-                    (form.y, None)
-                };
-
-                (x_val, y_val, x_vid, y_vid, None)
-            };
+            let cv = extract_coord_and_vars(form);
 
             sqlx::query(
                 r#"
@@ -1553,11 +1541,11 @@ async fn save_step_details(
                 "#,
             )
             .bind(step_id)
-            .bind(x)
-            .bind(y)
-            .bind(x_var_id)
-            .bind(y_var_id)
-            .bind(region_var_id)
+            .bind(cv.x)
+            .bind(cv.y)
+            .bind(cv.x_var_id)
+            .bind(cv.y_var_id)
+            .bind(cv.region_var_id)
             .bind(button)
             .bind(click_type)
             .execute(&mut **tx)
@@ -1580,7 +1568,6 @@ async fn save_step_details(
             .await?;
         }
         "find_bitmap" => {
-            let ref_bitmap_id = form.reference_bitmap_id.unwrap_or(0);
             sqlx::query(
                 r#"
                 INSERT INTO step_find_bitmap
@@ -1596,7 +1583,7 @@ async fn save_step_details(
                 "#,
             )
             .bind(step_id)
-            .bind(ref_bitmap_id)
+            .bind(form.reference_bitmap_id.unwrap_or(0))
             .bind(form.search_x)
             .bind(form.search_y)
             .bind(form.search_width)

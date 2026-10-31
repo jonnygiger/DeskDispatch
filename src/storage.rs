@@ -1,101 +1,51 @@
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use std::fmt;
+use std::fmt::{self, Write};
 use std::time::Duration;
 
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
 
+#[inline]
+fn encode_hex_write(out: &mut String, bytes: &[u8]) {
+    for &b in bytes {
+        out.push(HEX_CHARS[(b >> 4) as usize] as char);
+        out.push(HEX_CHARS[(b & 0x0f) as usize] as char);
+    }
+}
+
 pub fn encode_hex(bytes: &[u8]) -> String {
-    let mut buf = vec![0u8; bytes.len() * 2];
+    let mut buf = String::with_capacity(bytes.len() * 2);
+    encode_hex_write(&mut buf, bytes);
+    buf
+}
+
+#[inline]
+pub fn encode_hex_32(bytes: &[u8; 32]) -> [u8; 64] {
+    let mut buf = [0u8; 64];
     for (i, &b) in bytes.iter().enumerate() {
         buf[i * 2] = HEX_CHARS[(b >> 4) as usize];
         buf[i * 2 + 1] = HEX_CHARS[(b & 0x0f) as usize];
     }
-    String::from_utf8(buf).expect("hex characters are valid utf8")
+    buf
 }
 
-const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 pub fn encode_base64(bytes: &[u8]) -> String {
-    let cap = bytes.len().saturating_add(2) / 3 * 4;
-    let mut buf = Vec::with_capacity(cap);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).map_or(0, |&b| b as u32);
-        let b2 = chunk.get(2).map_or(0, |&b| b as u32);
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-
-        let c0 = BASE64_CHARS[((triple >> 18) & 0x3f) as usize];
-        let c1 = BASE64_CHARS[((triple >> 12) & 0x3f) as usize];
-        let c2 = if chunk.len() > 1 {
-            BASE64_CHARS[((triple >> 6) & 0x3f) as usize]
-        } else {
-            b'='
-        };
-        let c3 = if chunk.len() > 2 {
-            BASE64_CHARS[(triple & 0x3f) as usize]
-        } else {
-            b'='
-        };
-
-        buf.extend_from_slice(&[c0, c1, c2, c3]);
-    }
-    String::from_utf8(buf).expect("base64 characters are valid utf8")
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
-    let trimmed = input.trim_end_matches('=');
-    let padding_len = input.len() - trimmed.len();
-    if padding_len > 2 {
-        return None;
-    }
-    if trimmed.is_empty() {
-        return Some(Vec::new());
-    }
-
-    fn decode_char(c: u8) -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-
-    let bytes = trimmed.as_bytes();
-    if bytes.len() % 4 == 1 {
-        return None;
-    }
-
-    let mut decoded = Vec::with_capacity(bytes.len() * 3 / 4);
-
-    for chunk in bytes.chunks(4) {
-        let mut buf = [0u8; 4];
-        let mut count = 0;
-        for &b in chunk {
-            buf[count] = decode_char(b)?;
-            count += 1;
-        }
-
-        if count >= 2 {
-            decoded.push((buf[0] << 2) | (buf[1] >> 4));
-        }
-        if count >= 3 {
-            decoded.push(((buf[1] & 0x0f) << 4) | (buf[2] >> 2));
-        }
-        if count >= 4 {
-            decoded.push(((buf[2] & 0x03) << 6) | buf[3]);
-        }
-    }
-
-    Some(decoded)
+    base64::engine::general_purpose::STANDARD.decode(input).ok()
 }
 
 /// Zero-dependency HMAC-SHA256 calculation according to RFC 2104 / RFC 4231 using `sha2::Sha256`.
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    hmac_sha256_chunks(key, &[data])
+}
+
+/// Computes HMAC-SHA256 over multiple data chunks without dynamic concatenation heap allocations.
+pub fn hmac_sha256_chunks(key: &[u8], chunks: &[&[u8]]) -> [u8; 32] {
     let mut k_ipad = [0x36u8; 64];
     let mut k_opad = [0x5cu8; 64];
 
@@ -114,7 +64,9 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
 
     let mut inner_hasher = Sha256::new();
     inner_hasher.update(k_ipad);
-    inner_hasher.update(data);
+    for chunk in chunks {
+        inner_hasher.update(chunk);
+    }
     let inner_hash = inner_hasher.finalize();
 
     let mut outer_hasher = Sha256::new();
@@ -123,25 +75,31 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     outer_hasher.finalize().into()
 }
 
-pub fn url_encode_component(s: &str) -> String {
+#[inline]
+pub fn write_url_encoded_component(out: &mut String, s: &str) {
     if s.bytes()
         .all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~'))
     {
-        return s.to_string();
+        out.push_str(s);
+        return;
     }
-    let mut result = String::with_capacity(s.len() + 16);
     for b in s.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                result.push(b as char);
+                out.push(b as char);
             }
             _ => {
-                result.push('%');
-                result.push(HEX_CHARS_UPPER[(b >> 4) as usize] as char);
-                result.push(HEX_CHARS_UPPER[(b & 0x0f) as usize] as char);
+                out.push('%');
+                out.push(HEX_CHARS_UPPER[(b >> 4) as usize] as char);
+                out.push(HEX_CHARS_UPPER[(b & 0x0f) as usize] as char);
             }
         }
     }
+}
+
+pub fn url_encode_component(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    write_url_encoded_component(&mut result, s);
     result
 }
 
@@ -334,6 +292,7 @@ pub fn generate_presigned_url(
 }
 
 /// Helper to generate SigV4 presigned URLs including optional extra query parameters.
+/// Refactored for zero-allocation SigV4 string construction & streaming digest calculation.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_presigned_url_with_query(
     method: &str,
@@ -346,23 +305,26 @@ pub fn generate_presigned_url_with_query(
     endpoint_url: Option<&str>,
     extra_params: &[(&str, &str)],
 ) -> Result<String, StorageError> {
-    use std::fmt::Write;
-
     let now = Utc::now();
+
     let date_str = now.format("%Y%m%d").to_string();
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
     let expires_secs = expires_in.as_secs().to_string();
-
-    let credential_scope = format!("{}/{}/s3/aws4_request", date_str, region);
-    let credential = format!("{}/{}", access_key, credential_scope);
+    let credential_scope = format!("{date_str}/{region}/s3/aws4_request");
+    let credential = format!("{access_key}/{credential_scope}");
 
     let clean_key = object_key.trim_start_matches('/');
-    let encoded_bucket = url_encode_component(bucket);
-    let encoded_key_path = clean_key
-        .split('/')
-        .map(url_encode_component)
-        .collect::<Vec<_>>()
-        .join("/");
+
+    let mut encoded_bucket = String::with_capacity(bucket.len());
+    write_url_encoded_component(&mut encoded_bucket, bucket);
+
+    let mut encoded_key_path = String::with_capacity(clean_key.len() + 16);
+    for (i, part) in clean_key.split('/').enumerate() {
+        if i > 0 {
+            encoded_key_path.push('/');
+        }
+        write_url_encoded_component(&mut encoded_key_path, part);
+    }
 
     let (host, canonical_uri, base_url) = match endpoint_url {
         Some(endpoint) => {
@@ -435,30 +397,43 @@ pub fn generate_presigned_url_with_query(
         q_str
     };
 
-    let canonical_headers = format!("host:{}\n", host);
-    let signed_headers = "host";
-    let payload_hash = "UNSIGNED-PAYLOAD";
+    // Calculate canonical request SHA-256 digest directly without allocating full string AST
+    // AWS SigV4 Canonical Request format:
+    // HTTPRequestMethod + "\n" + CanonicalURI + "\n" + CanonicalQueryString + "\n" +
+    // CanonicalHeaders + "\n" + SignedHeaders + "\n" + HashedPayload
+    let canonical_request_hash_hex = {
+        let mut req_hasher = Sha256::new();
+        req_hasher.update(method.to_uppercase().as_bytes());
+        req_hasher.update(b"\n");
+        req_hasher.update(canonical_uri.as_bytes());
+        req_hasher.update(b"\n");
+        req_hasher.update(canonical_query_string.as_bytes());
+        req_hasher.update(b"\nhost:");
+        req_hasher.update(host.as_bytes());
+        req_hasher.update(b"\n\nhost\nUNSIGNED-PAYLOAD");
 
-    let canonical_request = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}",
-        method.to_uppercase(),
-        canonical_uri,
-        canonical_query_string,
-        canonical_headers,
-        signed_headers,
-        payload_hash
-    );
+        let hash_bytes: [u8; 32] = req_hasher.finalize().into();
+        encode_hex_32(&hash_bytes)
+    };
 
-    let canonical_request_hash = encode_hex(&Sha256::digest(canonical_request.as_bytes()));
+    let canonical_request_hash_str =
+        std::str::from_utf8(&canonical_request_hash_hex).expect("hex characters are valid utf8");
 
-    let string_to_sign = format!(
-        "AWS4-HMAC-SHA256\n{}\n{}\n{}",
-        amz_date, credential_scope, canonical_request_hash
-    );
-
+    // Compute HMAC-SHA256 signature directly over string-to-sign chunks without heap concatenation
     let k_signing = derive_signing_key(secret_key, &date_str, region);
-    let signature_bytes = hmac_sha256(&k_signing, string_to_sign.as_bytes());
-    let signature_hex = encode_hex(&signature_bytes);
+    let signature_bytes = hmac_sha256_chunks(
+        &k_signing,
+        &[
+            b"AWS4-HMAC-SHA256\n",
+            amz_date.as_bytes(),
+            b"\n",
+            credential_scope.as_bytes(),
+            b"\n",
+            canonical_request_hash_str.as_bytes(),
+        ],
+    );
+    let signature_hex = encode_hex_32(&signature_bytes);
+    let signature_str = std::str::from_utf8(&signature_hex).expect("hex characters are valid utf8");
 
     let mut full_url = String::with_capacity(
         base_url.len() + encoded_key_path.len() + canonical_query_string.len() + 64,
@@ -467,13 +442,13 @@ pub fn generate_presigned_url_with_query(
         let _ = write!(
             full_url,
             "{}?{}&X-Amz-Signature={}",
-            base_url, canonical_query_string, signature_hex
+            base_url, canonical_query_string, signature_str
         );
     } else {
         let _ = write!(
             full_url,
             "{}/{}?{}&X-Amz-Signature={}",
-            base_url, encoded_key_path, canonical_query_string, signature_hex
+            base_url, encoded_key_path, canonical_query_string, signature_str
         );
     }
 
@@ -544,9 +519,8 @@ pub fn generate_presigned_post_policy(
     let date_str = now.format("%Y%m%d").to_string();
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
     let expiration_iso = expiration_dt.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-    let credential_scope = format!("{}/{}/s3/aws4_request", date_str, region);
-    let credential = format!("{}/{}", access_key, credential_scope);
+    let credential_scope = format!("{date_str}/{region}/s3/aws4_request");
+    let credential = format!("{access_key}/{credential_scope}");
 
     let mut conditions = Vec::with_capacity(7);
     conditions.push(PolicyCondition::Eq("bucket", bucket));
@@ -577,7 +551,10 @@ pub fn generate_presigned_post_policy(
 
     let k_signing = derive_signing_key(secret_key, &date_str, region);
     let signature_bytes = hmac_sha256(&k_signing, policy_base64.as_bytes());
-    let signature_hex = encode_hex(&signature_bytes);
+    let signature_hex_bytes = encode_hex_32(&signature_bytes);
+    let signature_hex = std::str::from_utf8(&signature_hex_bytes)
+        .expect("hex characters are valid utf8")
+        .to_string();
 
     let mut ordered_fields = Vec::with_capacity(7);
     ordered_fields.push(("key".to_string(), object_key.to_string()));
@@ -974,28 +951,16 @@ pub fn parse_list_objects_v2_xml(xml: &str) -> Vec<StorageObject> {
 }
 
 fn extract_xml_tag_slice<'a>(xml_block: &'a str, tag_name: &str) -> Option<&'a str> {
-    let open_tag_len = tag_name.len() + 2;
     let mut search = xml_block;
     while let Some(open_idx) = search.find('<') {
         let after_open = &search[open_idx + 1..];
         if after_open.starts_with(tag_name)
             && after_open.as_bytes().get(tag_name.len()) == Some(&b'>')
         {
-            let val_start = open_idx + open_tag_len;
-            let val_block = &search[val_start..];
-            let mut close_search = val_block;
-            let mut offset = 0;
-            while let Some(close_idx) = close_search.find("</") {
-                let after_close = &close_search[close_idx + 2..];
-                if after_close.starts_with(tag_name)
-                    && after_close.as_bytes().get(tag_name.len()) == Some(&b'>')
-                {
-                    return Some(&val_block[..offset + close_idx]);
-                }
-                offset += close_idx + 2;
-                close_search = &val_block[offset..];
-            }
-            return None;
+            let val_block = &after_open[tag_name.len() + 1..];
+            let close_tag = format!("</{tag_name}>");
+            let close_idx = val_block.find(&close_tag)?;
+            return Some(&val_block[..close_idx]);
         }
         search = &search[open_idx + 1..];
     }

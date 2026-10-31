@@ -504,6 +504,140 @@ mod tests {
         assert_eq!(worker_busy.derived_status(), "busy");
         assert_eq!(worker_busy.status_badge_class(), "badge-warning");
     }
+
+    #[test]
+    fn test_worker_pc_and_detail_formatting_and_status_badges() {
+        use chrono::{Duration, TimeZone};
+
+        let fixed_time = Utc.with_ymd_and_hms(2025, 3, 30, 15, 45, 30).unwrap();
+
+        // 1. WorkerPcItem formatted_last_heartbeat
+        let pc_item_with_hb = WorkerPcItem {
+            id: 1,
+            hostname: "worker-pc-1".to_string(),
+            display_name: "Worker PC 1".to_string(),
+            mac_address: None,
+            status: "online".to_string(),
+            last_heartbeat_at: Some(fixed_time),
+            screen_width: Some(1920),
+            screen_height: Some(1080),
+            os_info: Some("Linux".to_string()),
+            agent_version: Some("1.0.0".to_string()),
+            created_at: fixed_time,
+            groups: vec![],
+            latest_screenshot_step_id: None,
+        };
+        assert_eq!(
+            pc_item_with_hb.formatted_last_heartbeat(),
+            "2025-03-30 15:45:30 UTC"
+        );
+
+        let pc_item_no_hb = WorkerPcItem {
+            last_heartbeat_at: None,
+            ..pc_item_with_hb
+        };
+        assert_eq!(pc_item_no_hb.formatted_last_heartbeat(), "Never");
+
+        // 2. WorkerDetail formatted_last_heartbeat and formatted_created_at
+        let detail_with_hb = WorkerDetail {
+            id: 10,
+            hostname: "worker-detail-1".to_string(),
+            display_name: "Worker Detail 1".to_string(),
+            mac_address: Some("00:11:22:33:44:55".to_string()),
+            status: "online".to_string(),
+            last_heartbeat_at: Some(fixed_time),
+            screen_width: Some(1920),
+            screen_height: Some(1080),
+            os_info: Some("Windows".to_string()),
+            agent_version: Some("2.0.0".to_string()),
+            created_at: fixed_time,
+            groups: vec![],
+            registration_token: None,
+            latest_screenshot_step_id: None,
+        };
+        assert_eq!(
+            detail_with_hb.formatted_last_heartbeat(),
+            "2025-03-30 15:45:30 UTC"
+        );
+        assert_eq!(
+            detail_with_hb.formatted_created_at(),
+            "2025-03-30 15:45:30 UTC"
+        );
+
+        let detail_no_hb = WorkerDetail {
+            last_heartbeat_at: None,
+            ..detail_with_hb.clone()
+        };
+        assert_eq!(detail_no_hb.formatted_last_heartbeat(), "Never");
+
+        // 3. WorkerDetail derived_status and status_badge_class edge cases
+        let now = Utc::now();
+        let recent = Some(now);
+        let stale = Some(now - Duration::seconds(95));
+
+        // Online with recent heartbeat -> online / badge-success
+        let detail_online = WorkerDetail {
+            status: "online".to_string(),
+            last_heartbeat_at: recent,
+            ..detail_with_hb.clone()
+        };
+        assert_eq!(detail_online.derived_status(), "online");
+        assert_eq!(detail_online.status_badge_class(), "badge-success");
+
+        // Online with stale heartbeat (>90s) -> offline / badge-neutral
+        let detail_stale = WorkerDetail {
+            status: "online".to_string(),
+            last_heartbeat_at: stale,
+            ..detail_with_hb.clone()
+        };
+        assert_eq!(detail_stale.derived_status(), "offline");
+        assert_eq!(detail_stale.status_badge_class(), "badge-neutral");
+
+        // Online with None heartbeat -> offline / badge-neutral
+        let detail_none_hb = WorkerDetail {
+            status: "online".to_string(),
+            last_heartbeat_at: None,
+            ..detail_with_hb.clone()
+        };
+        assert_eq!(detail_none_hb.derived_status(), "offline");
+        assert_eq!(detail_none_hb.status_badge_class(), "badge-neutral");
+
+        // Explicit offline status with recent heartbeat -> offline / badge-neutral
+        let detail_offline = WorkerDetail {
+            status: "offline".to_string(),
+            last_heartbeat_at: recent,
+            ..detail_with_hb.clone()
+        };
+        assert_eq!(detail_offline.derived_status(), "offline");
+        assert_eq!(detail_offline.status_badge_class(), "badge-neutral");
+
+        // Error status with recent heartbeat -> error / badge-danger
+        let detail_error = WorkerDetail {
+            status: "error".to_string(),
+            last_heartbeat_at: recent,
+            ..detail_with_hb.clone()
+        };
+        assert_eq!(detail_error.derived_status(), "error");
+        assert_eq!(detail_error.status_badge_class(), "badge-danger");
+
+        // Busy status with stale heartbeat (>90s) -> offline / badge-neutral
+        let detail_busy_stale = WorkerDetail {
+            status: "busy".to_string(),
+            last_heartbeat_at: stale,
+            ..detail_with_hb.clone()
+        };
+        assert_eq!(detail_busy_stale.derived_status(), "offline");
+        assert_eq!(detail_busy_stale.status_badge_class(), "badge-neutral");
+
+        // Fallback unknown status with recent heartbeat -> badge-neutral
+        let detail_unknown = WorkerDetail {
+            status: "custom_status".to_string(),
+            last_heartbeat_at: recent,
+            ..detail_with_hb
+        };
+        assert_eq!(detail_unknown.derived_status(), "custom_status");
+        assert_eq!(detail_unknown.status_badge_class(), "badge-neutral");
+    }
 }
 
 #[derive(Debug, Clone)]

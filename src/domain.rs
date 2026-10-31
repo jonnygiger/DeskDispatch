@@ -10,16 +10,46 @@ pub enum WorkerStatus {
     Error,
 }
 
-impl WorkerStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            WorkerStatus::Offline => "offline",
-            WorkerStatus::Online => "online",
-            WorkerStatus::Busy => "busy",
-            WorkerStatus::Error => "error",
+macro_rules! impl_enum_str {
+    (
+        $enum_name:ident, $err_label:expr, {
+            $( $( [$($alias:expr),*] => )? $variant:ident => $str_val:expr ),* $(,)?
         }
-    }
+    ) => {
+        impl $enum_name {
+            #[inline]
+            pub fn as_str(&self) -> &'static str {
+                match self {
+                    $( Self::$variant => $str_val, )*
+                }
+            }
+        }
 
+        impl fmt::Display for $enum_name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+
+        impl std::str::FromStr for $enum_name {
+            type Err = String;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                let trimmed = s.trim();
+                $(
+                    if trimmed.eq_ignore_ascii_case($str_val)
+                        $( || $( trimmed.eq_ignore_ascii_case($alias) )||* )?
+                    {
+                        return Ok(Self::$variant);
+                    }
+                )*
+                Err(format!("Invalid {} '{}'", $err_label, trimmed))
+            }
+        }
+    };
+}
+
+impl WorkerStatus {
     pub fn can_transition_to(&self, target: WorkerStatus) -> bool {
         if *self == target {
             return true;
@@ -39,25 +69,12 @@ impl WorkerStatus {
     }
 }
 
-impl fmt::Display for WorkerStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for WorkerStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "offline" => Ok(WorkerStatus::Offline),
-            "online" => Ok(WorkerStatus::Online),
-            "busy" => Ok(WorkerStatus::Busy),
-            "error" => Ok(WorkerStatus::Error),
-            other => Err(format!("Invalid worker status '{}'", other)),
-        }
-    }
-}
+impl_enum_str!(WorkerStatus, "worker status", {
+    Offline => "offline",
+    Online => "online",
+    Busy => "busy",
+    Error => "error",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
@@ -100,19 +117,15 @@ impl TaskRunStatus {
     }
 }
 
-impl fmt::Display for TaskRunStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TaskRunStatus::Queued => write!(f, "queued"),
-            TaskRunStatus::Running => write!(f, "running"),
-            TaskRunStatus::Cancelling => write!(f, "cancelling"),
-            TaskRunStatus::Cancelled => write!(f, "cancelled"),
-            TaskRunStatus::Succeeded => write!(f, "succeeded"),
-            TaskRunStatus::Failed => write!(f, "failed"),
-            TaskRunStatus::Lost => write!(f, "lost"),
-        }
-    }
-}
+impl_enum_str!(TaskRunStatus, "task run status", {
+    Queued => "queued",
+    Running => "running",
+    Cancelling => "cancelling",
+    Cancelled => "cancelled",
+    Succeeded => "succeeded",
+    Failed => "failed",
+    Lost => "lost",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
@@ -140,28 +153,11 @@ impl AutomationStatus {
     }
 }
 
-impl fmt::Display for AutomationStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AutomationStatus::Draft => write!(f, "draft"),
-            AutomationStatus::Active => write!(f, "active"),
-            AutomationStatus::Archived => write!(f, "archived"),
-        }
-    }
-}
-
-impl std::str::FromStr for AutomationStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "draft" => Ok(AutomationStatus::Draft),
-            "active" => Ok(AutomationStatus::Active),
-            "archived" => Ok(AutomationStatus::Archived),
-            other => Err(format!("Invalid automation status '{}'", other)),
-        }
-    }
-}
+impl_enum_str!(AutomationStatus, "automation status", {
+    Draft => "draft",
+    Active => "active",
+    Archived => "archived",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
@@ -191,30 +187,12 @@ impl RecordingSessionStatus {
     }
 }
 
-impl fmt::Display for RecordingSessionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RecordingSessionStatus::Recording => write!(f, "recording"),
-            RecordingSessionStatus::Completed => write!(f, "completed"),
-            RecordingSessionStatus::Imported => write!(f, "imported"),
-            RecordingSessionStatus::Discarded => write!(f, "discarded"),
-        }
-    }
-}
-
-impl std::str::FromStr for RecordingSessionStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "recording" => Ok(RecordingSessionStatus::Recording),
-            "completed" => Ok(RecordingSessionStatus::Completed),
-            "imported" => Ok(RecordingSessionStatus::Imported),
-            "discarded" => Ok(RecordingSessionStatus::Discarded),
-            other => Err(format!("Invalid recording session status '{}'", other)),
-        }
-    }
-}
+impl_enum_str!(RecordingSessionStatus, "recording session status", {
+    Recording => "recording",
+    Completed => "completed",
+    Imported => "imported",
+    Discarded => "discarded",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScheduleStatus {
@@ -228,26 +206,10 @@ impl ScheduleStatus {
     }
 }
 
-impl fmt::Display for ScheduleStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ScheduleStatus::Disabled => write!(f, "disabled"),
-            ScheduleStatus::Enabled => write!(f, "enabled"),
-        }
-    }
-}
-
-impl std::str::FromStr for ScheduleStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "disabled" | "false" => Ok(ScheduleStatus::Disabled),
-            "enabled" | "true" => Ok(ScheduleStatus::Enabled),
-            other => Err(format!("Invalid schedule status '{}'", other)),
-        }
-    }
-}
+impl_enum_str!(ScheduleStatus, "schedule status", {
+    ["false"] => Disabled => "disabled",
+    ["true"] => Enabled => "enabled",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserSessionStatus {
@@ -271,28 +233,11 @@ impl UserSessionStatus {
     }
 }
 
-impl fmt::Display for UserSessionStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            UserSessionStatus::Active => write!(f, "active"),
-            UserSessionStatus::Expired => write!(f, "expired"),
-            UserSessionStatus::Revoked => write!(f, "revoked"),
-        }
-    }
-}
-
-impl std::str::FromStr for UserSessionStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "active" => Ok(UserSessionStatus::Active),
-            "expired" => Ok(UserSessionStatus::Expired),
-            "revoked" => Ok(UserSessionStatus::Revoked),
-            other => Err(format!("Invalid user session status '{}'", other)),
-        }
-    }
-}
+impl_enum_str!(UserSessionStatus, "user session status", {
+    Active => "active",
+    Expired => "expired",
+    Revoked => "revoked",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WpsModeStatus {
@@ -306,43 +251,10 @@ impl WpsModeStatus {
     }
 }
 
-impl fmt::Display for WpsModeStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            WpsModeStatus::Disabled => write!(f, "disabled"),
-            WpsModeStatus::Enabled => write!(f, "enabled"),
-        }
-    }
-}
-
-impl std::str::FromStr for WpsModeStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "disabled" | "false" => Ok(WpsModeStatus::Disabled),
-            "enabled" | "true" => Ok(WpsModeStatus::Enabled),
-            other => Err(format!("Invalid WPS mode status '{}'", other)),
-        }
-    }
-}
-
-impl std::str::FromStr for TaskRunStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "queued" => Ok(TaskRunStatus::Queued),
-            "running" => Ok(TaskRunStatus::Running),
-            "cancelling" => Ok(TaskRunStatus::Cancelling),
-            "cancelled" => Ok(TaskRunStatus::Cancelled),
-            "succeeded" => Ok(TaskRunStatus::Succeeded),
-            "failed" => Ok(TaskRunStatus::Failed),
-            "lost" => Ok(TaskRunStatus::Lost),
-            other => Err(format!("Invalid task run status '{}'", other)),
-        }
-    }
-}
+impl_enum_str!(WpsModeStatus, "WPS mode status", {
+    ["false"] => Disabled => "disabled",
+    ["true"] => Enabled => "enabled",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
@@ -353,37 +265,12 @@ pub enum StepResultStatus {
     BranchNotMatched,
 }
 
-impl StepResultStatus {
-    #[inline]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            StepResultStatus::Success => "success",
-            StepResultStatus::Failed => "failed",
-            StepResultStatus::BranchMatched => "branch_matched",
-            StepResultStatus::BranchNotMatched => "branch_not_matched",
-        }
-    }
-}
-
-impl fmt::Display for StepResultStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for StepResultStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "success" => Ok(StepResultStatus::Success),
-            "failed" => Ok(StepResultStatus::Failed),
-            "branch_matched" => Ok(StepResultStatus::BranchMatched),
-            "branch_not_matched" => Ok(StepResultStatus::BranchNotMatched),
-            other => Err(format!("Invalid step result status '{}'", other)),
-        }
-    }
-}
+impl_enum_str!(StepResultStatus, "step result status", {
+    Success => "success",
+    Failed => "failed",
+    BranchMatched => "branch_matched",
+    BranchNotMatched => "branch_not_matched",
+});
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -535,5 +422,128 @@ mod tests {
         // Act & Assert Invalid Status
         let err = StepResultStatus::from_str("passed").unwrap_err();
         assert_eq!(err, "Invalid step result status 'passed'");
+    }
+
+    #[test]
+    fn test_remaining_domain_statuses_display_from_str_and_serde() {
+        // AutomationStatus
+        let auto_statuses = [
+            (AutomationStatus::Draft, "draft"),
+            (AutomationStatus::Active, "active"),
+            (AutomationStatus::Archived, "archived"),
+        ];
+        for (status, expected_str) in auto_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("  {}  ", expected_str.to_uppercase());
+            assert_eq!(AutomationStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<AutomationStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            AutomationStatus::from_str("invalid_status").unwrap_err(),
+            "Invalid automation status 'invalid_status'"
+        );
+
+        // RecordingSessionStatus
+        let rec_statuses = [
+            (RecordingSessionStatus::Recording, "recording"),
+            (RecordingSessionStatus::Completed, "completed"),
+            (RecordingSessionStatus::Imported, "imported"),
+            (RecordingSessionStatus::Discarded, "discarded"),
+        ];
+        for (status, expected_str) in rec_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("\t{}\n", expected_str.to_uppercase());
+            assert_eq!(RecordingSessionStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<RecordingSessionStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            RecordingSessionStatus::from_str("paused").unwrap_err(),
+            "Invalid recording session status 'paused'"
+        );
+
+        // ScheduleStatus (supports "disabled"/"false", "enabled"/"true")
+        let sched_statuses = [
+            (ScheduleStatus::Disabled, "disabled"),
+            (ScheduleStatus::Enabled, "enabled"),
+        ];
+        for (status, expected_str) in sched_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("  {}  ", expected_str.to_uppercase());
+            assert_eq!(ScheduleStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ScheduleStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            ScheduleStatus::from_str(" false ").unwrap(),
+            ScheduleStatus::Disabled
+        );
+        assert_eq!(
+            ScheduleStatus::from_str(" TRUE ").unwrap(),
+            ScheduleStatus::Enabled
+        );
+        assert_eq!(
+            ScheduleStatus::from_str("unknown").unwrap_err(),
+            "Invalid schedule status 'unknown'"
+        );
+
+        // UserSessionStatus
+        let session_statuses = [
+            (UserSessionStatus::Active, "active"),
+            (UserSessionStatus::Expired, "expired"),
+            (UserSessionStatus::Revoked, "revoked"),
+        ];
+        for (status, expected_str) in session_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("  {}  ", expected_str.to_uppercase());
+            assert_eq!(UserSessionStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<UserSessionStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            UserSessionStatus::from_str("terminated").unwrap_err(),
+            "Invalid user session status 'terminated'"
+        );
+
+        // WpsModeStatus (supports "disabled"/"false", "enabled"/"true")
+        let wps_statuses = [
+            (WpsModeStatus::Disabled, "disabled"),
+            (WpsModeStatus::Enabled, "enabled"),
+        ];
+        for (status, expected_str) in wps_statuses {
+            assert_eq!(status.to_string(), expected_str);
+            let input = format!("  {}  ", expected_str.to_uppercase());
+            assert_eq!(WpsModeStatus::from_str(&input).unwrap(), status);
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(
+                serde_json::from_str::<WpsModeStatus>(&json).unwrap(),
+                status
+            );
+        }
+        assert_eq!(
+            WpsModeStatus::from_str(" FALSE ").unwrap(),
+            WpsModeStatus::Disabled
+        );
+        assert_eq!(
+            WpsModeStatus::from_str(" true ").unwrap(),
+            WpsModeStatus::Enabled
+        );
+        assert_eq!(
+            WpsModeStatus::from_str("invalid").unwrap_err(),
+            "Invalid WPS mode status 'invalid'"
+        );
     }
 }

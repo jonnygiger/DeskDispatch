@@ -115,20 +115,33 @@ impl Modifiers {
     }
 
     fn prefix(&self) -> String {
-        let mut parts = Vec::new();
+        let mut buf = String::with_capacity(24);
+        let mut needs_plus = false;
         if self.ctrl {
-            parts.push("ctrl");
+            buf.push_str("ctrl");
+            needs_plus = true;
         }
         if self.alt {
-            parts.push("alt");
+            if needs_plus {
+                buf.push('+');
+            }
+            buf.push_str("alt");
+            needs_plus = true;
         }
         if self.shift {
-            parts.push("shift");
+            if needs_plus {
+                buf.push('+');
+            }
+            buf.push_str("shift");
+            needs_plus = true;
         }
         if self.super_key {
-            parts.push("super");
+            if needs_plus {
+                buf.push('+');
+            }
+            buf.push_str("super");
         }
-        parts.join("+")
+        buf
     }
 }
 
@@ -147,78 +160,120 @@ fn is_modifier(code: u16) -> bool {
 }
 
 fn key_name(code: u16) -> Option<&'static str> {
-    let name = match code {
-        1 => "Escape",
-        2..=11 => return Some(DIGITS[(code - 2) as usize]),
-        12 => "minus",
-        13 => "equal",
-        14 => "BackSpace",
-        15 => "Tab",
-        16..=25 => return Some(LETTERS_QWERTY[(code - 16) as usize]),
-        26 => "bracketleft",
-        27 => "bracketright",
-        28 => "Return",
-        30..=38 => return Some(LETTERS_HOME[(code - 30) as usize]),
-        39 => "semicolon",
-        40 => "apostrophe",
-        41 => "grave",
-        43 => "backslash",
-        44..=50 => return Some(LETTERS_BOTTOM[(code - 44) as usize]),
-        51 => "comma",
-        52 => "period",
-        53 => "slash",
-        55 => "KP_Multiply",
-        57 => "space",
-        58 => "Caps_Lock",
-        59..=68 => return Some(F_KEYS[(code - 59) as usize]),
-        69 => "Num_Lock",
-        70 => "Scroll_Lock",
-        71..=79 => return Some(KP_DIGITS[(code - 71) as usize]),
-        80 => "KP_7",
-        81 => "KP_8",
-        82 => "KP_0",
-        83 => "KP_Decimal",
-        87 => "F11",
-        88 => "F12",
-        96 => "KP_Enter",
-        98 => "KP_Divide",
-        99 => "Print",
-        102 => "Home",
-        103 => "Up",
-        104 => "Prior",
-        105 => "Left",
-        106 => "Right",
-        107 => "End",
-        108 => "Down",
-        109 => "Next",
-        110 => "Insert",
-        111 => "Delete",
-        119 => "Pause",
-        127 => "Menu",
-        _ => return None,
-    };
-    Some(name)
+    match code {
+        1 => Some("Escape"),
+        2 => Some("1"),
+        3 => Some("2"),
+        4 => Some("3"),
+        5 => Some("4"),
+        6 => Some("5"),
+        7 => Some("6"),
+        8 => Some("7"),
+        9 => Some("8"),
+        10 => Some("9"),
+        11 => Some("0"),
+        12 => Some("minus"),
+        13 => Some("equal"),
+        14 => Some("BackSpace"),
+        15 => Some("Tab"),
+        16 => Some("q"),
+        17 => Some("w"),
+        18 => Some("e"),
+        19 => Some("r"),
+        20 => Some("t"),
+        21 => Some("y"),
+        22 => Some("u"),
+        23 => Some("i"),
+        24 => Some("o"),
+        25 => Some("p"),
+        26 => Some("bracketleft"),
+        27 => Some("bracketright"),
+        28 => Some("Return"),
+        30 => Some("a"),
+        31 => Some("s"),
+        32 => Some("d"),
+        33 => Some("f"),
+        34 => Some("g"),
+        35 => Some("h"),
+        36 => Some("j"),
+        37 => Some("k"),
+        38 => Some("l"),
+        39 => Some("semicolon"),
+        40 => Some("apostrophe"),
+        41 => Some("grave"),
+        43 => Some("backslash"),
+        44 => Some("z"),
+        45 => Some("x"),
+        46 => Some("c"),
+        47 => Some("v"),
+        48 => Some("b"),
+        49 => Some("n"),
+        50 => Some("m"),
+        51 => Some("comma"),
+        52 => Some("period"),
+        53 => Some("slash"),
+        55 => Some("KP_Multiply"),
+        57 => Some("space"),
+        58 => Some("Caps_Lock"),
+        59 => Some("F1"),
+        60 => Some("F2"),
+        61 => Some("F3"),
+        62 => Some("F4"),
+        63 => Some("F5"),
+        64 => Some("F6"),
+        65 => Some("F7"),
+        66 => Some("F8"),
+        67 => Some("F9"),
+        68 => Some("F10"),
+        69 => Some("Num_Lock"),
+        70 => Some("Scroll_Lock"),
+        71 => Some("KP_1"),
+        72 => Some("KP_2"),
+        73 => Some("KP_3"),
+        74 => Some("KP_4"),
+        75 => Some("KP_5"),
+        76 => Some("KP_6"),
+        77 => Some("KP_7"),
+        78 => Some("KP_8"),
+        79 => Some("KP_9"),
+        80 => Some("KP_7"),
+        81 => Some("KP_8"),
+        82 => Some("KP_0"),
+        83 => Some("KP_Decimal"),
+        87 => Some("F11"),
+        88 => Some("F12"),
+        96 => Some("KP_Enter"),
+        98 => Some("KP_Divide"),
+        99 => Some("Print"),
+        102 => Some("Home"),
+        103 => Some("Up"),
+        104 => Some("Prior"),
+        105 => Some("Left"),
+        106 => Some("Right"),
+        107 => Some("End"),
+        108 => Some("Down"),
+        109 => Some("Next"),
+        110 => Some("Insert"),
+        111 => Some("Delete"),
+        119 => Some("Pause"),
+        127 => Some("Menu"),
+        _ => None,
+    }
 }
 
-static DIGITS: [&str; 10] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
-static LETTERS_QWERTY: [&str; 10] = ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"];
-static LETTERS_HOME: [&str; 9] = ["a", "s", "d", "f", "g", "h", "j", "k", "l"];
-static LETTERS_BOTTOM: [&str; 7] = ["z", "x", "c", "v", "b", "n", "m"];
-static F_KEYS: [&str; 10] = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"];
-static KP_DIGITS: [&str; 9] = [
-    "KP_1", "KP_2", "KP_3", "KP_4", "KP_5", "KP_6", "KP_7", "KP_8", "KP_9",
-];
-
+#[inline]
 fn eviocgbit(event_type: u8, len: usize) -> libc::c_ulong {
     ((2u64 << 30) | ((len as u64) << 16) | (u64::from(b'E') << 8) | (0x20 + u64::from(event_type)))
         as libc::c_ulong
 }
 
+#[inline]
 fn eviocgabs(abs: u8) -> libc::c_ulong {
     ((2u64 << 30) | (24u64 << 16) | (u64::from(b'E') << 8) | (0x40 + u64::from(abs)))
         as libc::c_ulong
 }
 
+#[inline]
 fn test_bit(bits: &[u8], code: u16) -> bool {
     let byte = code as usize / 8;
     bits.get(byte)
@@ -226,17 +281,17 @@ fn test_bit(bits: &[u8], code: u16) -> bool {
         .unwrap_or(false)
 }
 
-fn read_capabilities(file: &File, event_type: u16, len: usize) -> Vec<u8> {
-    let mut bits = vec![0u8; len];
-    // SAFETY: the kernel writes at most `len` bytes into the valid `bits` buffer.
+fn read_capabilities<const N: usize>(file: &File, event_type: u16) -> [u8; N] {
+    let mut bits = [0u8; N];
+    // SAFETY: the kernel writes at most `N` bytes into the valid `bits` buffer.
     let ret = unsafe {
         libc::ioctl(
             file.as_raw_fd(),
-            eviocgbit(event_type as u8, len),
+            eviocgbit(event_type as u8, N),
             bits.as_mut_ptr(),
         )
     };
-    if ret < 0 { Vec::new() } else { bits }
+    if ret < 0 { [0u8; N] } else { bits }
 }
 
 fn read_abs_info(file: &File, abs: u8) -> Option<InputAbsInfo> {
@@ -290,9 +345,9 @@ fn enumerate_devices() -> Vec<DeviceInfo> {
         };
 
         let name = read_device_name(&file);
-        let key_bits = read_capabilities(&file, EV_KEY, 96);
-        let rel_bits = read_capabilities(&file, EV_REL, 8);
-        let abs_bits = read_capabilities(&file, EV_ABS, 8);
+        let key_bits = read_capabilities::<96>(&file, EV_KEY);
+        let rel_bits = read_capabilities::<8>(&file, EV_REL);
+        let abs_bits = read_capabilities::<8>(&file, EV_ABS);
 
         let keyboard = test_bit(&key_bits, KEY_A);
         let has_abs_xy = test_bit(&abs_bits, ABS_X) && test_bit(&abs_bits, ABS_Y);
@@ -531,9 +586,8 @@ async fn flush_events(
         return Ok(response.stop_requested);
     }
 
-    let batch = events.clone();
+    let batch = std::mem::take(events);
     let response = api_client.post_recording_events(session_id, batch).await?;
-    events.clear();
     Ok(response.stop_requested)
 }
 

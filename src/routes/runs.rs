@@ -714,16 +714,16 @@ pub async fn get_run_detail_handler(
         });
     }
 
-    let mut parameters = Vec::new();
     let overrides_map = parameter_overrides_json
         .as_ref()
         .and_then(|v| v.as_object());
 
-    if let Some(params_obj) = dispatched_json
+    let parameters = if let Some(params_obj) = dispatched_json
         .as_ref()
         .and_then(|j| j.get("parameters"))
         .and_then(|p| p.as_object())
     {
+        let mut params = Vec::with_capacity(params_obj.len());
         for (k, v) in params_obj {
             let val_str = match v {
                 serde_json::Value::String(s) => s.clone(),
@@ -732,12 +732,13 @@ pub async fn get_run_detail_handler(
                 _ => v.to_string(),
             };
             let is_override = overrides_map.is_some_and(|m| m.contains_key(k));
-            parameters.push(RunParameterItem {
+            params.push(RunParameterItem {
                 name: k.clone(),
                 value: val_str,
                 is_override,
             });
         }
+        params
     } else {
         let param_rows = sqlx::query_as::<_, ParamDefaultRow>(
             "SELECT name, default_value FROM automation_parameters WHERE automation_id = $1 ORDER BY name ASC",
@@ -747,6 +748,7 @@ pub async fn get_run_detail_handler(
         .await
         .unwrap_or_default();
 
+        let mut params = Vec::with_capacity(param_rows.len());
         for p in param_rows {
             let (val_str, is_override) = if let Some(override_val) = overrides_map
                 .and_then(|m| m.get(&p.name))
@@ -756,13 +758,14 @@ pub async fn get_run_detail_handler(
             } else {
                 (p.default_value, false)
             };
-            parameters.push(RunParameterItem {
+            params.push(RunParameterItem {
                 name: p.name,
                 value: val_str,
                 is_override,
             });
         }
-    }
+        params
+    };
 
     HtmlTemplate(RunDetailTemplate {
         user,
@@ -774,121 +777,6 @@ pub async fn get_run_detail_handler(
         auto_refresh,
     })
     .into_response()
-}
-
-/// Pre-calculated ISO 3309 CRC32 lookup table (polynomial 0xEDB88320).
-const CRC32_TABLE: [u32; 256] = {
-    let mut table = [0u32; 256];
-    let mut i = 0;
-    while i < 256 {
-        let mut crc = i as u32;
-        let mut j = 0;
-        while j < 8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0xEDB8_8320;
-            } else {
-                crc >>= 1;
-            }
-            j += 1;
-        }
-        table[i] = crc;
-        i += 1;
-    }
-    table
-};
-
-/// Calculates standard ISO 3309 CRC32 checksum over a byte slice using a 256-entry lookup table.
-pub fn crc32(data: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    for &byte in data {
-        let idx = ((crc as u8) ^ byte) as usize;
-        crc = (crc >> 8) ^ CRC32_TABLE[idx];
-    }
-    !crc
-}
-
-/// Zero-dependency ZIP STORE writer.
-///
-/// Designed specifically for screenshot download archives. Screenshots in DeskDispatch are pre-compressed PNG files.
-/// Storing PNG files in uncompressed STORE format avoids redundant double DEFLATE re-compression, significantly
-/// reducing CPU overhead during download generation while maintaining standard ZIP archive compatibility.
-#[derive(Default)]
-pub struct ZipWriter {
-    buf: Vec<u8>,
-    entries: Vec<(String, u32, u32, u32)>,
-}
-
-impl ZipWriter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn add_file(&mut self, filename: &str, data: &[u8]) {
-        let offset = self.buf.len() as u32;
-        let crc = crc32(data);
-        let size = data.len() as u32;
-        let filename_bytes = filename.as_bytes();
-        let filename_len = filename_bytes.len() as u16;
-
-        self.buf.extend_from_slice(&0x04034b50u32.to_le_bytes());
-        self.buf.extend_from_slice(&20u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&crc.to_le_bytes());
-        self.buf.extend_from_slice(&size.to_le_bytes());
-        self.buf.extend_from_slice(&size.to_le_bytes());
-        self.buf.extend_from_slice(&filename_len.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(filename_bytes);
-        self.buf.extend_from_slice(data);
-
-        self.entries.push((filename.to_string(), crc, size, offset));
-    }
-
-    pub fn finish(mut self) -> Vec<u8> {
-        let cd_offset = self.buf.len() as u32;
-
-        for (filename, crc, size, offset) in &self.entries {
-            let filename_bytes = filename.as_bytes();
-            let filename_len = filename_bytes.len() as u16;
-
-            self.buf.extend_from_slice(&0x02014b50u32.to_le_bytes());
-            self.buf.extend_from_slice(&20u16.to_le_bytes());
-            self.buf.extend_from_slice(&20u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&crc.to_le_bytes());
-            self.buf.extend_from_slice(&size.to_le_bytes());
-            self.buf.extend_from_slice(&size.to_le_bytes());
-            self.buf.extend_from_slice(&filename_len.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf.extend_from_slice(&0u16.to_le_bytes());
-            self.buf
-                .extend_from_slice(&(0o100644u32 << 16).to_le_bytes());
-            self.buf.extend_from_slice(&offset.to_le_bytes());
-            self.buf.extend_from_slice(filename_bytes);
-        }
-
-        let cd_size = (self.buf.len() as u32) - cd_offset;
-        let num_entries = self.entries.len() as u16;
-
-        self.buf.extend_from_slice(&0x06054b50u32.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-        self.buf.extend_from_slice(&num_entries.to_le_bytes());
-        self.buf.extend_from_slice(&num_entries.to_le_bytes());
-        self.buf.extend_from_slice(&cd_size.to_le_bytes());
-        self.buf.extend_from_slice(&cd_offset.to_le_bytes());
-        self.buf.extend_from_slice(&0u16.to_le_bytes());
-
-        self.buf
-    }
 }
 
 #[tracing::instrument(skip(state, _user))]
@@ -935,7 +823,9 @@ pub async fn get_run_screenshots_zip_handler(
         }
     };
 
-    let mut zip_writer = ZipWriter::new();
+    let mut zip_builder = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let zip_options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     let storage = state.storage_service();
     let mut count = 0;
 
@@ -952,8 +842,11 @@ pub async fn get_run_screenshots_zip_handler(
                 row.step_id
             );
 
-            zip_writer.add_file(&filename, &bytes);
-            count += 1;
+            if zip_builder.start_file(&filename, zip_options).is_ok()
+                && std::io::Write::write_all(&mut zip_builder, &bytes).is_ok()
+            {
+                count += 1;
+            }
         }
     }
 
@@ -965,7 +858,16 @@ pub async fn get_run_screenshots_zip_handler(
             .into_response();
     }
 
-    let buf = zip_writer.finish();
+    let buf = match zip_builder.finish() {
+        Ok(cursor) => cursor.into_inner(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to finalize ZIP archive",
+            )
+                .into_response();
+        }
+    };
     let filename = format!("run-{}-screenshots.zip", id);
     (
         [
@@ -1025,6 +927,7 @@ pub async fn post_cancel_run_handler(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -1092,19 +995,21 @@ mod tests {
     }
 
     #[test]
-    fn test_crc32_and_zip_writer() {
-        // Standard ASCII string CRC32 check
-        let data = b"123456789";
-        assert_eq!(crc32(data), 0xCBF43926);
+    fn test_zip_writer() {
+        let mut zip_builder = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
 
-        let mut writer = ZipWriter::new();
-        writer.add_file("hello.txt", b"Hello World!");
-        writer.add_file(
-            "test.png",
+        zip_builder.start_file("hello.txt", options).unwrap();
+        std::io::Write::write_all(&mut zip_builder, b"Hello World!").unwrap();
+        zip_builder.start_file("test.png", options).unwrap();
+        std::io::Write::write_all(
+            &mut zip_builder,
             &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
-        );
+        )
+        .unwrap();
 
-        let zip_bytes = writer.finish();
+        let zip_bytes = zip_builder.finish().unwrap().into_inner();
         assert!(!zip_bytes.is_empty());
         // Verify Local File Header Signature
         assert_eq!(&zip_bytes[0..4], &[0x50, 0x4B, 0x03, 0x04]);
