@@ -632,7 +632,7 @@ pub async fn get_run_detail_handler(
         .fetch_all(&state.db),
     );
 
-    let run_row = match run_row_res {
+    let mut run_row = match run_row_res {
         Ok(Some(row)) => row,
         _ => return Redirect::to("/runs").into_response(),
     };
@@ -640,11 +640,8 @@ pub async fn get_run_detail_handler(
     let worker_screen_width: u32 = run_row.worker_screen_width.unwrap_or(1920).max(1) as u32;
     let worker_screen_height: u32 = run_row.worker_screen_height.unwrap_or(1080).max(1) as u32;
 
-    let parameter_overrides_json = run_row.parameter_overrides.clone();
-    let dispatched_json = run_row
-        .dispatched_automation_json
-        .as_ref()
-        .map(|j| serde_json::to_value(&j.0).unwrap_or_default());
+    let parameter_overrides_json = run_row.parameter_overrides.take();
+    let dispatched_automation = run_row.dispatched_automation_json.take().map(|j| j.0);
 
     let run_item = run_row.into_item();
 
@@ -718,26 +715,23 @@ pub async fn get_run_detail_handler(
         .as_ref()
         .and_then(|v| v.as_object());
 
-    let parameters = if let Some(params_obj) = dispatched_json
-        .as_ref()
-        .and_then(|j| j.get("parameters"))
-        .and_then(|p| p.as_object())
-    {
-        let mut params = Vec::with_capacity(params_obj.len());
-        for (k, v) in params_obj {
+    let parameters = if let Some(automation) = dispatched_automation {
+        let mut params = Vec::with_capacity(automation.parameters.len());
+        for (k, v) in automation.parameters {
             let val_str = match v {
-                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::String(s) => s,
                 serde_json::Value::Bool(b) => b.to_string(),
                 serde_json::Value::Number(n) => n.to_string(),
-                _ => v.to_string(),
+                other => other.to_string(),
             };
-            let is_override = overrides_map.is_some_and(|m| m.contains_key(k));
+            let is_override = overrides_map.is_some_and(|m| m.contains_key(&k));
             params.push(RunParameterItem {
-                name: k.clone(),
+                name: k,
                 value: val_str,
                 is_override,
             });
         }
+        params.sort_by(|a, b| a.name.cmp(&b.name));
         params
     } else {
         let param_rows = sqlx::query_as::<_, ParamDefaultRow>(
