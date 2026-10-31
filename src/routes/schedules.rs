@@ -518,13 +518,18 @@ pub fn compute_next_run_at(
         .parse()
         .map_err(|_| format!("Invalid timezone: '{tz_name}'"))?;
 
-    let schedule = CronSchedule::parse(cron_expr).map_err(|e| e.to_string())?;
+    let schedule = CronSchedule::parse(cron_expr)?;
+
+    let one_sec = chrono::Duration::seconds(1);
+    let one_min = chrono::Duration::minutes(1);
+    let one_hour = chrono::Duration::hours(1);
+    let one_day = chrono::Duration::days(1);
 
     let local_from = from_dt.with_timezone(&tz);
     let mut curr = if schedule.is_6_fields {
-        local_from + chrono::Duration::seconds(1)
+        local_from + one_sec
     } else {
-        reset_time_to_start_of_minute(local_from) + chrono::Duration::minutes(1)
+        reset_time_to_start_of_minute(local_from) + one_min
     };
 
     let max_steps = if schedule.is_6_fields {
@@ -571,25 +576,25 @@ pub fn compute_next_run_at(
         };
 
         if !day_matches {
-            curr = reset_time_to_start_of_day(curr + chrono::Duration::days(1));
+            curr = reset_time_to_start_of_day(curr + one_day);
             continue;
         }
 
         let hour = curr.hour();
         if (schedule.hour_mask & (1u32 << hour)) == 0 {
-            curr = reset_time_to_start_of_hour(curr + chrono::Duration::hours(1));
+            curr = reset_time_to_start_of_hour(curr + one_hour);
             continue;
         }
 
         let min = curr.minute();
         if (schedule.min_mask & (1u64 << min)) == 0 {
-            curr = reset_time_to_start_of_minute(curr + chrono::Duration::minutes(1));
+            curr = reset_time_to_start_of_minute(curr + one_min);
             continue;
         }
 
         let sec = curr.second();
         if (schedule.sec_mask & (1u64 << sec)) == 0 {
-            curr += chrono::Duration::seconds(1);
+            curr += one_sec;
             continue;
         }
 

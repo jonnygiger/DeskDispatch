@@ -188,12 +188,12 @@ impl ImageMagnifier {
     /// Background style for normal panel (1x scale, viewport 600x340 or calculated fit)
     pub fn normal_style(&self) -> String {
         let url = self.escaped_url();
-        let mut style = String::with_capacity(url.len() + 72);
-        let _ = write!(
-            style,
-            "background-image: url('{}'); background-size: contain; background-position: center;",
-            url
-        );
+        const PREFIX: &str = "background-image: url('";
+        const SUFFIX: &str = "'); background-size: contain; background-position: center;";
+        let mut style = String::with_capacity(PREFIX.len() + url.len() + SUFFIX.len());
+        style.push_str(PREFIX);
+        style.push_str(&url);
+        style.push_str(SUFFIX);
         style
     }
 
@@ -220,7 +220,7 @@ impl ImageMagnifier {
             (0.0, 0.0)
         };
         let url = self.escaped_url();
-        let mut style = String::with_capacity(url.len() + 100);
+        let mut style = String::with_capacity(url.len() + 96);
         let _ = write!(
             style,
             "background-image: url('{}'); background-size: {}px {}px; background-position: {:.2}px {:.2}px;",
@@ -249,7 +249,7 @@ impl ImageMagnifier {
             (0.0, 0.0)
         };
         let url = self.escaped_url();
-        let mut style = String::with_capacity(url.len() + 110);
+        let mut style = String::with_capacity(url.len() + 106);
         let _ = write!(
             style,
             "--grid-bg-url: url('{}'); --grid-bg-w: {}px; --grid-bg-h: {}px; --grid-pan-x: {:.2}px; --grid-pan-y: {:.2}px;",
