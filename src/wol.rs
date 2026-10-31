@@ -1,12 +1,58 @@
 use std::net::SocketAddr;
-use std::str::FromStr;
 use tokio::net::UdpSocket;
 
 /// Parses a MAC address in colon, hyphen, dotted, or raw hex notation.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    MacAddr6::from_str(mac_str.trim())
-        .map(|mac| mac.into_array())
-        .map_err(|e| format!("Invalid MAC address '{mac_str}': {e}"))
+    let s = mac_str.trim();
+    let bytes = s.as_bytes();
+    let mut mac = [0u8; 6];
+
+    let parse_hex_byte = |hi: u8, lo: u8| -> Option<u8> {
+        let h = match hi {
+            b'0'..=b'9' => hi - b'0',
+            b'a'..=b'f' => hi - b'a' + 10,
+            b'A'..=b'F' => hi - b'A' + 10,
+            _ => return None,
+        };
+        let l = match lo {
+            b'0'..=b'9' => lo - b'0',
+            b'a'..=b'f' => lo - b'a' + 10,
+            b'A'..=b'F' => lo - b'A' + 10,
+            _ => return None,
+        };
+        Some((h << 4) | l)
+    };
+
+    if bytes.len() == 17 {
+        let sep = bytes[2];
+        if sep != b':' && sep != b'-' {
+            return Err(format!(
+                "Invalid MAC address '{mac_str}': invalid separator"
+            ));
+        }
+        for (i, item) in mac.iter_mut().enumerate() {
+            let offset = i * 3;
+            if i > 0 && bytes[offset - 1] != sep {
+                return Err(format!(
+                    "Invalid MAC address '{mac_str}': inconsistent separator"
+                ));
+            }
+            *item = parse_hex_byte(bytes[offset], bytes[offset + 1])
+                .ok_or_else(|| format!("Invalid MAC address '{mac_str}': invalid hex character"))?;
+        }
+        Ok(mac)
+    } else if bytes.len() == 12 {
+        for (i, item) in mac.iter_mut().enumerate() {
+            let offset = i * 2;
+            *item = parse_hex_byte(bytes[offset], bytes[offset + 1])
+                .ok_or_else(|| format!("Invalid MAC address '{mac_str}': invalid hex character"))?;
+        }
+        Ok(mac)
+    } else {
+        Err(format!(
+            "Invalid MAC address '{mac_str}': expected 12 hex characters or 17 characters with separators"
+        ))
+    }
 }
 
 /// Constructs a 102-byte Wake-on-LAN Magic Packet for the given 6-byte MAC address.

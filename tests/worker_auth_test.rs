@@ -56,7 +56,7 @@ async fn test_protected_worker_route(worker: WorkerAuth) -> impl IntoResponse {
 }
 
 struct WorkerAuthCleanupGuard {
-    pool: sqlx::PgPool,
+    _pool: sqlx::PgPool,
     worker_id: i64,
 }
 
@@ -131,7 +131,7 @@ async fn test_worker_auth_extractor_integration() {
     .unwrap();
 
     let _cleanup_guard = WorkerAuthCleanupGuard {
-        pool: pool.clone(),
+        _pool: pool.clone(),
         worker_id,
     };
 
@@ -257,7 +257,7 @@ async fn test_worker_auth_key_rotation_and_expiration() {
     .unwrap();
 
     let _cleanup_guard = WorkerAuthCleanupGuard {
-        pool: pool.clone(),
+        _pool: pool.clone(),
         worker_id,
     };
 

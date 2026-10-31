@@ -296,5 +296,4 @@ mod tests {
         assert!(!debug_str.contains("secure_s3_secret_key_99"));
         assert!(!debug_str.contains("secure_session_secret_007"));
     }
-
 }
