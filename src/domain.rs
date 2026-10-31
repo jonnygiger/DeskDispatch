@@ -35,12 +35,15 @@ macro_rules! impl_enum_str {
             type Err = String;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
-                match s.trim().to_lowercase().as_str() {
-                    $(
-                        $str_val $( | $($alias),* )? => Ok(Self::$variant),
-                    )*
-                    other => Err(format!("Invalid {} '{}'", $err_label, other)),
-                }
+                let trimmed = s.trim();
+                $(
+                    if trimmed.eq_ignore_ascii_case($str_val)
+                        $( || $( trimmed.eq_ignore_ascii_case($alias) )||* )?
+                    {
+                        return Ok(Self::$variant);
+                    }
+                )*
+                Err(format!("Invalid {} '{}'", $err_label, trimmed))
             }
         }
     };
