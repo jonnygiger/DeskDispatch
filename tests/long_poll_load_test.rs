@@ -32,13 +32,21 @@ struct WorkerCleanupGuard {
 
 impl Drop for WorkerCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let prefix = format!("{}%", self.host_prefix);
         let user_id = self.user_id;
         let auto_id = self.auto_id;
         let task_run_id = self.task_run_id;
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             if let Some(tr_id) = task_run_id {
                 let _ = sqlx::query("DELETE FROM task_runs WHERE id = $1")
                     .bind(tr_id)
@@ -69,6 +77,7 @@ impl Drop for WorkerCleanupGuard {
                 .build()
             {
                 rt.block_on(cleanup);
+                rt.shutdown_timeout(std::time::Duration::from_millis(500));
             }
         })
         .join();

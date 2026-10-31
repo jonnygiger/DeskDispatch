@@ -62,22 +62,30 @@ struct WorkerAuthCleanupGuard {
 
 impl Drop for WorkerAuthCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
+        });
         let worker_id = self.worker_id;
-
-        let cleanup = async move {
-            let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1")
-                .bind(worker_id)
-                .execute(&pool)
-                .await;
-        };
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
-            rt.block_on(cleanup);
+            rt.block_on(async move {
+                let pool = sqlx::postgres::PgPoolOptions::new()
+                    .max_connections(1)
+                    .acquire_timeout(std::time::Duration::from_secs(2))
+                    .connect(&url)
+                    .await
+                    .unwrap();
+                let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = $1")
+                    .bind(worker_id)
+                    .execute(&pool)
+                    .await;
+                pool.close().await;
+            });
+            rt.shutdown_timeout(std::time::Duration::from_secs(1));
         })
         .join()
         .unwrap();

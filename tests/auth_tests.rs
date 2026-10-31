@@ -257,10 +257,18 @@ struct AuthCleanupGuard {
 
 impl Drop for AuthCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_id = self.user_id;
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             let _ = sqlx::query("DELETE FROM audit_log WHERE user_id = $1")
                 .bind(user_id)
                 .execute(&pool)
@@ -281,6 +289,7 @@ impl Drop for AuthCleanupGuard {
                 .build()
                 .unwrap();
             rt.block_on(cleanup);
+            rt.shutdown_timeout(std::time::Duration::from_millis(500));
         })
         .join()
         .unwrap();
@@ -391,7 +400,10 @@ async fn test_full_auth_and_password_workflow() {
             state.clone(),
             deskdispatch::auth::csrf_middleware,
         ))
-        .with_state(state);
+        .with_state(state)
+        .layer(axum::extract::connect_info::MockConnectInfo(
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        ));
 
     // 1. Post login with valid credentials
     let login_form = format!("username={}&password={}", username, initial_password);

@@ -83,28 +83,6 @@ impl Assets {
     }
 }
 
-/// Returns the static string slice corresponding to the file extension of `path`.
-#[inline]
-pub fn get_mime_type(path: &str) -> &'static str {
-    let ext = path.rsplit('.').next().unwrap_or_default();
-    match ext.to_ascii_lowercase().as_str() {
-        "css" => "text/css; charset=utf-8",
-        "js" => "application/javascript; charset=utf-8",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "svg" => "image/svg+xml",
-        "ico" => "image/x-icon",
-        "webp" => "image/webp",
-        "woff2" => "font/woff2",
-        "woff" => "font/woff",
-        "ttf" => "font/ttf",
-        "html" => "text/html; charset=utf-8",
-        "json" => "application/json",
-        _ => "application/octet-stream",
-    }
-}
-
 #[tracing::instrument(skip(headers))]
 pub async fn static_asset_handler(
     headers: HeaderMap,
@@ -147,47 +125,6 @@ pub async fn static_asset_handler(
 mod tests {
     use super::*;
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-
-    #[test]
-    fn test_get_mime_type_extension_resolution() {
-        assert_eq!(get_mime_type("style.css"), "text/css; charset=utf-8");
-        assert_eq!(
-            get_mime_type("script.js"),
-            "application/javascript; charset=utf-8"
-        );
-        assert_eq!(get_mime_type("logo.png"), "image/png");
-        assert_eq!(get_mime_type("photo.jpg"), "image/jpeg");
-        assert_eq!(get_mime_type("photo.jpeg"), "image/jpeg");
-        assert_eq!(get_mime_type("anim.gif"), "image/gif");
-        assert_eq!(get_mime_type("icon.svg"), "image/svg+xml");
-        assert_eq!(get_mime_type("favicon.ico"), "image/x-icon");
-        assert_eq!(get_mime_type("banner.webp"), "image/webp");
-        assert_eq!(get_mime_type("font.woff2"), "font/woff2");
-        assert_eq!(get_mime_type("font.woff"), "font/woff");
-        assert_eq!(get_mime_type("font.ttf"), "font/ttf");
-        assert_eq!(get_mime_type("index.html"), "text/html; charset=utf-8");
-        assert_eq!(get_mime_type("data.json"), "application/json");
-
-        // Case insensitivity
-        assert_eq!(get_mime_type("MAIN.CSS"), "text/css; charset=utf-8");
-        assert_eq!(
-            get_mime_type("App.JS"),
-            "application/javascript; charset=utf-8"
-        );
-        assert_eq!(get_mime_type("Hero.PNG"), "image/png");
-
-        // Multi-dot paths
-        assert_eq!(get_mime_type("styles.min.css"), "text/css; charset=utf-8");
-        assert_eq!(
-            get_mime_type("bundle.v2.js"),
-            "application/javascript; charset=utf-8"
-        );
-
-        // Missing / unknown extensions
-        assert_eq!(get_mime_type("README"), "application/octet-stream");
-        assert_eq!(get_mime_type("binary.dat"), "application/octet-stream");
-        assert_eq!(get_mime_type(".gitignore"), "application/octet-stream");
-    }
 
     #[tokio::test]
     async fn test_static_asset_handler_existing_asset_and_404() {

@@ -40,7 +40,7 @@ impl RetentionCleanupGuard {
 
 impl Drop for RetentionCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_ids = self.user_ids.clone();
         let session_ids = self.session_ids.clone();
         let audit_ids = self.audit_ids.clone();
@@ -48,6 +48,14 @@ impl Drop for RetentionCleanupGuard {
         let task_run_ids = self.task_run_ids.clone();
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             if !session_ids.is_empty() {
                 let _ = sqlx::query("DELETE FROM sessions WHERE id = ANY($1)")
                     .bind(&session_ids)
@@ -94,6 +102,7 @@ impl Drop for RetentionCleanupGuard {
                 .build()
             {
                 rt.block_on(cleanup);
+                rt.shutdown_timeout(std::time::Duration::from_millis(500));
             }
         })
         .join();

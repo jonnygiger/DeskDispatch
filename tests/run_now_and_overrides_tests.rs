@@ -62,12 +62,20 @@ struct RunNowCleanupGuard {
 
 impl Drop for RunNowCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_id = self.user_id;
         let automation_ids = std::mem::take(&mut self.automation_ids);
         let worker_group_ids = std::mem::take(&mut self.worker_group_ids);
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             if !automation_ids.is_empty() {
                 let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = ANY($1)")
                     .bind(&automation_ids)
@@ -113,6 +121,7 @@ impl Drop for RunNowCleanupGuard {
                 .build()
                 .unwrap();
             rt.block_on(cleanup);
+            rt.shutdown_timeout(std::time::Duration::from_millis(500));
         })
         .join()
         .unwrap();
