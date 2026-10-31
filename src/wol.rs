@@ -1,3 +1,4 @@
+use macaddr::MacAddr6;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use tokio::net::UdpSocket;
