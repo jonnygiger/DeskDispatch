@@ -21,3 +21,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 png = "0.18"
 libc = "0.2"
+zbus = { version = "5", features = ["tokio"] }
+x11rb = "0.13"
+futures-util = "0.3"

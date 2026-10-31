@@ -1,18 +1,145 @@
 use std::process::Command;
-use tracing::{debug, info};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
+
+use super::wayland::WaylandInput;
+
+/// Which input backend the worker uses.
+enum Backend {
+    /// XTEST through xdotool. Works on X11 sessions and for Xwayland clients,
+    /// but native Wayland clients ignore these events.
+    Xdotool,
+    /// XDG Desktop Portal RemoteDesktop. Required for native Wayland clients.
+    Portal(Arc<PortalState>),
+}
+
+struct PortalState {
+    display: String,
+    screen_width: u32,
+    screen_height: u32,
+    slot: Mutex<PortalSlot>,
+}
+
+struct PortalSlot {
+    input: Option<WaylandInput>,
+    last_error: Option<(Instant, String)>,
+}
 
 pub struct InputController {
     pub display: String,
+    backend: Backend,
+}
+
+/// How long to wait before retrying a failed portal initialization. This avoids
+/// opening a new permission dialog for every single input action.
+const PORTAL_RETRY_COOLDOWN: Duration = Duration::from_secs(30);
+
+fn wayland_session_detected() -> bool {
+    std::env::var("XDG_SESSION_TYPE")
+        .map(|value| value.eq_ignore_ascii_case("wayland"))
+        .unwrap_or(false)
+        || std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+async fn portal_input(
+    state: &PortalState,
+) -> Result<tokio::sync::MutexGuard<'_, PortalSlot>, String> {
+    let mut slot = state.slot.lock().await;
+
+    if slot.input.is_some() {
+        return Ok(slot);
+    }
+
+    if let Some((attempted_at, error)) = &slot.last_error
+        && attempted_at.elapsed() < PORTAL_RETRY_COOLDOWN
+    {
+        return Err(error.clone());
+    }
+
+    info!("Initializing Wayland portal input backend");
+    match WaylandInput::connect(&state.display, state.screen_width, state.screen_height).await {
+        Ok(input) => {
+            info!("Wayland portal input backend ready");
+            slot.input = Some(input);
+            slot.last_error = None;
+            Ok(slot)
+        }
+        Err(error) => {
+            warn!("Wayland portal input initialization failed: {}", error);
+            slot.last_error = Some((Instant::now(), error.clone()));
+            Err(error)
+        }
+    }
+}
+
+fn xdotool_failure(action: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if !stderr.trim().is_empty() {
+        stderr.trim()
+    } else if !stdout.trim().is_empty() {
+        stdout.trim()
+    } else {
+        "no error output"
+    };
+    format!("xdotool {action} failed: {detail}")
 }
 
 impl InputController {
-    pub fn new(display: &str) -> Self {
+    pub fn new(display: &str, screen_width: u32, screen_height: u32) -> Self {
+        let requested = std::env::var("DESKDISPATCH_INPUT_BACKEND")
+            .unwrap_or_default()
+            .to_lowercase();
+
+        let use_portal = match requested.as_str() {
+            "xdotool" | "x11" => false,
+            "portal" | "wayland" => true,
+            _ => wayland_session_detected(),
+        };
+
+        let backend = if use_portal {
+            let state = Arc::new(PortalState {
+                display: display.to_string(),
+                screen_width,
+                screen_height,
+                slot: Mutex::new(PortalSlot {
+                    input: None,
+                    last_error: None,
+                }),
+            });
+
+            // Warm up the portal session in the background so the permission
+            // dialog (if any) appears at startup instead of during the first
+            // automation step.
+            let warmup = Arc::clone(&state);
+            tokio::spawn(async move {
+                match portal_input(&warmup).await {
+                    Ok(_) => {}
+                    Err(error) => {
+                        warn!(
+                            "Wayland portal input is not available yet: {}. \
+                             It will be retried on the next input action.",
+                            error
+                        );
+                    }
+                }
+            });
+
+            Backend::Portal(state)
+        } else {
+            Backend::Xdotool
+        };
+
         Self {
             display: display.to_string(),
+            backend,
         }
     }
 
-    pub fn mouse_click(
+    pub async fn mouse_click(
         &self,
         x: i32,
         y: i32,
@@ -27,6 +154,15 @@ impl InputController {
             "Executing mouse click"
         );
 
+        if let Backend::Portal(state) = &self.backend {
+            let mut slot = portal_input(state).await?;
+            let input = slot
+                .input
+                .as_ref()
+                .ok_or_else(|| "Wayland portal input is not initialized".to_string())?;
+            return input.mouse_click(x, y, button, click_type).await;
+        }
+
         let btn_num = match button.to_lowercase().as_str() {
             "right" => "3",
             "middle" => "2",
@@ -39,8 +175,7 @@ impl InputController {
             "1"
         };
 
-        // Try xdotool on Linux Debian
-        let status = Command::new("xdotool")
+        let output = Command::new("xdotool")
             .env("DISPLAY", &self.display)
             .arg("mousemove")
             .arg(x.to_string())
@@ -49,18 +184,17 @@ impl InputController {
             .arg("--repeat")
             .arg(repeat)
             .arg(btn_num)
-            .status();
+            .output()
+            .map_err(|e| format!("could not run xdotool: {e}"))?;
 
-        match status {
-            Ok(s) if s.success() => Ok(()),
-            _ => {
-                debug!("xdotool click execution omitted or unavailable");
-                Ok(())
-            }
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(xdotool_failure("click", &output))
         }
     }
 
-    pub fn mouse_scroll(
+    pub async fn mouse_scroll(
         &self,
         direction: &str,
         scroll_amount: i32,
@@ -74,6 +208,17 @@ impl InputController {
             y = y,
             "Executing mouse scroll"
         );
+
+        if let Backend::Portal(state) = &self.backend {
+            let mut slot = portal_input(state).await?;
+            let input = slot
+                .input
+                .as_ref()
+                .ok_or_else(|| "Wayland portal input is not initialized".to_string())?;
+            return input
+                .mouse_scroll(direction, scroll_amount, x, y)
+                .await;
+        }
 
         let btn_num = match direction.to_lowercase().as_str() {
             "up" => "4",
@@ -94,23 +239,36 @@ impl InputController {
 
         cmd.arg("click").arg("--repeat").arg(repeat).arg(btn_num);
 
-        let status = cmd.status();
+        let output = cmd
+            .output()
+            .map_err(|e| format!("could not run xdotool: {e}"))?;
 
-        match status {
-            Ok(s) if s.success() => Ok(()),
-            _ => {
-                debug!("xdotool scroll execution omitted or unavailable");
-                Ok(())
-            }
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(xdotool_failure("scroll", &output))
         }
     }
 
-    pub fn type_text(&self, text: &str, delay_between_keys_ms: u64) -> Result<(), String> {
+    pub async fn type_text(
+        &self,
+        text: &str,
+        delay_between_keys_ms: u64,
+    ) -> Result<(), String> {
         info!(
             text_len = text.len(),
             delay_between_keys_ms = delay_between_keys_ms,
             "Executing type text"
         );
+
+        if let Backend::Portal(state) = &self.backend {
+            let mut slot = portal_input(state).await?;
+            let input = slot
+                .input
+                .as_ref()
+                .ok_or_else(|| "Wayland portal input is not initialized".to_string())?;
+            return input.type_text(text, delay_between_keys_ms).await;
+        }
 
         let mut cmd = Command::new("xdotool");
         cmd.env("DISPLAY", &self.display).arg("type");
@@ -121,32 +279,40 @@ impl InputController {
 
         cmd.arg("--").arg(text);
 
-        let status = cmd.status();
+        let output = cmd
+            .output()
+            .map_err(|e| format!("could not run xdotool: {e}"))?;
 
-        match status {
-            Ok(s) if s.success() => Ok(()),
-            _ => {
-                debug!("xdotool type text execution omitted or unavailable");
-                Ok(())
-            }
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(xdotool_failure("type", &output))
         }
     }
 
-    pub fn key_press(&self, key_combo: &str) -> Result<(), String> {
+    pub async fn key_press(&self, key_combo: &str) -> Result<(), String> {
         info!(key_combo = key_combo, "Executing key press combo");
 
-        let status = Command::new("xdotool")
+        if let Backend::Portal(state) = &self.backend {
+            let mut slot = portal_input(state).await?;
+            let input = slot
+                .input
+                .as_ref()
+                .ok_or_else(|| "Wayland portal input is not initialized".to_string())?;
+            return input.key_press(key_combo).await;
+        }
+
+        let output = Command::new("xdotool")
             .env("DISPLAY", &self.display)
             .arg("key")
             .arg(key_combo)
-            .status();
+            .output()
+            .map_err(|e| format!("could not run xdotool: {e}"))?;
 
-        match status {
-            Ok(s) if s.success() => Ok(()),
-            _ => {
-                debug!("xdotool keypress execution omitted or unavailable");
-                Ok(())
-            }
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(xdotool_failure("key", &output))
         }
     }
 

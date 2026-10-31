@@ -19,7 +19,11 @@ pub struct StepRunner {
 
 impl StepRunner {
     pub fn new(config: WorkerConfig, api_client: WorkerApiClient) -> Self {
-        let input = InputController::new(&config.display);
+        let input = InputController::new(
+            &config.display,
+            config.screen_width,
+            config.screen_height,
+        );
         Self {
             config,
             api_client,
@@ -251,7 +255,8 @@ impl StepRunner {
                 );
 
                 self.input
-                    .mouse_scroll(direction, *scroll_amount, target_x, target_y)?;
+                    .mouse_scroll(direction, *scroll_amount, target_x, target_y)
+                    .await?;
                 captured.captured_x = target_x;
                 captured.captured_y = target_y;
 
@@ -279,7 +284,8 @@ impl StepRunner {
                 let target_y = target_y_opt.unwrap_or(0);
 
                 self.input
-                    .mouse_click(target_x, target_y, button, click_type)?;
+                    .mouse_click(target_x, target_y, button, click_type)
+                    .await?;
                 captured.captured_x = Some(target_x);
                 captured.captured_y = Some(target_y);
 
@@ -310,12 +316,13 @@ impl StepRunner {
                 ..
             } => {
                 self.input
-                    .type_text(text_to_type, (*delay_between_keys_ms).max(0) as u64)?;
+                    .type_text(text_to_type, (*delay_between_keys_ms).max(0) as u64)
+                    .await?;
                 (None, "success".to_string())
             }
 
             StepPayload::KeyPress { key_combo, .. } => {
-                self.input.key_press(key_combo)?;
+                self.input.key_press(key_combo).await?;
                 (None, "success".to_string())
             }
 
