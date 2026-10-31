@@ -34,7 +34,6 @@ png = "0.18"
 croner = { version = "4.0", features = ["chrono"] }
 crc32fast = "1.4"
 base64 = "0.22"
-macaddr = "1.0.1"
 zip = { version = "2.2", default-features = false }
 
 [dev-dependencies]
