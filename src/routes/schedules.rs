@@ -325,8 +325,7 @@ pub fn compute_next_run_at(
         .parse()
         .map_err(|_| format!("Invalid timezone: '{tz_name}'"))?;
 
-    let cron = Cron::from_str(cron_expr)
-        .map_err(|e| format!("Invalid cron expression: {e}"))?;
+    let cron = Cron::from_str(cron_expr).map_err(|e| format!("Invalid cron expression: {e}"))?;
 
     let local_from = from_dt.with_timezone(&tz);
     cron.find_next_occurrence(&local_from, false)
