@@ -31,8 +31,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.28", features = ["v4", "serde"] }
 png = "0.18"
-cron = "0.15"
-crc32fast = "1.4"
 base64 = "0.22"
 zip = { version = "2.2", default-features = false }
 
