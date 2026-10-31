@@ -1936,7 +1936,7 @@ async fn validate_automation_variables_exist(
     };
 
     let count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2 AND deleted_at IS NULL",
+        "SELECT COUNT(*) FROM automation_variables WHERE id = ANY($1) AND automation_id = $2",
     )
     .bind(slice)
     .bind(automation_id)
