@@ -1,7 +1,7 @@
+use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region, RequestChecksumCalculation};
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::Client;
 use base64::Engine;
 use chrono::{DateTime, TimeZone, Utc};
 use hmac::{Hmac, Mac};
@@ -178,9 +178,7 @@ impl StorageService {
             .send()
             .await
             .map_err(|e| match e.as_service_error() {
-                Some(err) if err.is_no_such_key() => {
-                    StorageError::NotFound(object_key.to_string())
-                }
+                Some(err) if err.is_no_such_key() => StorageError::NotFound(object_key.to_string()),
                 _ => StorageError::Request(e.to_string()),
             })?;
         let bytes = output
@@ -207,9 +205,7 @@ impl StorageService {
             .send()
             .await
             .map_err(|e| match e.as_service_error() {
-                Some(err) if err.is_no_such_key() => {
-                    StorageError::NotFound(object_key.to_string())
-                }
+                Some(err) if err.is_no_such_key() => StorageError::NotFound(object_key.to_string()),
                 _ => StorageError::Request(e.to_string()),
             })?;
         let bytes = output
@@ -473,10 +469,7 @@ mod tests {
 
         let expected2 = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
         assert_eq!(
-            encode_hex(&hmac_sha256(
-                b"Jefe",
-                b"what do ya want for nothing?"
-            )),
+            encode_hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
             expected2
         );
     }
