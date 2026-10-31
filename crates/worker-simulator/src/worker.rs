@@ -240,6 +240,10 @@ impl SimulatedWorker {
             .build()
             .unwrap_or_else(|_| Client::new());
 
+        Self::with_client(config, client)
+    }
+
+    pub fn with_client(config: WorkerConfig, client: Client) -> Self {
         let api_key = config.api_key.clone();
         let auth_header = api_key.as_ref().map(|key| format!("Bearer {}", key));
 
