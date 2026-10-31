@@ -413,39 +413,40 @@ pub async fn get_recording_review_handler(
     let event_rows = event_rows_res.unwrap_or_default();
     let storage = state.storage_service();
 
-    let events: Vec<RecordingEventDetail> = event_rows
-        .into_iter()
-        .map(|r| {
-            let magnifier = r.screenshot_object_key.as_deref().and_then(|key| {
-                storage
-                    .generate_presigned_get_url(key, std::time::Duration::from_secs(3600))
-                    .ok()
-                    .map(|presigned_url| {
-                        ImageMagnifier::new(
-                            presigned_url,
-                            1920,
-                            1080,
-                            r.x.and_then(|v| u32::try_from(v).ok()),
-                            r.y.and_then(|v| u32::try_from(v).ok()),
-                        )
-                    })
-            });
+    let mut events = Vec::with_capacity(event_rows.len());
+    for r in event_rows {
+        let magnifier = if let Some(key) = r.screenshot_object_key.as_deref() {
+            storage
+                .generate_presigned_get_url(key, std::time::Duration::from_secs(3600))
+                .await
+                .ok()
+                .map(|presigned_url| {
+                    ImageMagnifier::new(
+                        presigned_url,
+                        1920,
+                        1080,
+                        r.x.and_then(|v| u32::try_from(v).ok()),
+                        r.y.and_then(|v| u32::try_from(v).ok()),
+                    )
+                })
+        } else {
+            None
+        };
 
-            RecordingEventDetail {
-                id: r.id,
-                recording_session_id: r.recording_session_id,
-                sequence_number: r.sequence_number,
-                event_type: r.event_type,
-                x: r.x,
-                y: r.y,
-                button: r.button,
-                key_combo: r.key_combo,
-                screenshot_object_key: r.screenshot_object_key,
-                captured_at: r.captured_at,
-                magnifier,
-            }
-        })
-        .collect();
+        events.push(RecordingEventDetail {
+            id: r.id,
+            recording_session_id: r.recording_session_id,
+            sequence_number: r.sequence_number,
+            event_type: r.event_type,
+            x: r.x,
+            y: r.y,
+            button: r.button,
+            key_combo: r.key_combo,
+            screenshot_object_key: r.screenshot_object_key,
+            captured_at: r.captured_at,
+            magnifier,
+        });
+    }
 
     let default_automation_name = format!(
         "Recorded Automation - {}",

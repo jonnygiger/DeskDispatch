@@ -38,36 +38,13 @@ impl fmt::Debug for SecretString {
     }
 }
 
-/// Zero-dependency `.env` file parser returning key-value pairs without modifying process environment state.
+/// Parses `.env` into key-value pairs without modifying process environment state.
 pub fn parse_dotenv() -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    let Ok(content) = std::fs::read_to_string(".env") else {
-        return map;
-    };
-    parse_dotenv_content(&content, &mut map);
-    map
-}
-
-pub fn parse_dotenv_content(content: &str, map: &mut HashMap<String, String>) {
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            let key = key.trim();
-            let value = value.trim();
-            let unquoted = if value.len() >= 2
-                && ((value.starts_with('"') && value.ends_with('"'))
-                    || (value.starts_with('\'') && value.ends_with('\'')))
-            {
-                &value[1..value.len() - 1]
-            } else {
-                value
-            };
-            map.insert(key.to_string(), unquoted.to_string());
-        }
-    }
+    dotenvy::from_path_iter(".env")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -313,41 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_dotenv_content() {
-        let env_content = r#"
-# Comment line
-TEST_DESKDISPATCH_PORT=8080
-TEST_DESKDISPATCH_NAME="DeskDispatch Service"
-TEST_DESKDISPATCH_SINGLE='SingleQuoted'
-TEST_DESKDISPATCH_QUOTE_CHAR="
-TEST_DESKDISPATCH_APOS_CHAR='
-"#;
-        let mut map = HashMap::new();
-        parse_dotenv_content(env_content, &mut map);
-
-        assert_eq!(
-            map.get("TEST_DESKDISPATCH_PORT").map(String::as_str),
-            Some("8080")
-        );
-        assert_eq!(
-            map.get("TEST_DESKDISPATCH_NAME").map(String::as_str),
-            Some("DeskDispatch Service")
-        );
-        assert_eq!(
-            map.get("TEST_DESKDISPATCH_SINGLE").map(String::as_str),
-            Some("SingleQuoted")
-        );
-        assert_eq!(
-            map.get("TEST_DESKDISPATCH_QUOTE_CHAR").map(String::as_str),
-            Some("\"")
-        );
-        assert_eq!(
-            map.get("TEST_DESKDISPATCH_APOS_CHAR").map(String::as_str),
-            Some("'")
-        );
-    }
-
-    #[test]
     fn test_debug_formatting_does_not_leak_secrets() {
         let config = create_valid_prod_config();
         let debug_str = format!("{:?}", config);
@@ -355,45 +297,4 @@ TEST_DESKDISPATCH_APOS_CHAR='
         assert!(!debug_str.contains("secure_session_secret_007"));
     }
 
-    #[test]
-    fn test_parse_dotenv_content_edge_cases() {
-        // Arrange: dotenv content with comments containing leading spaces, key/value surrounding whitespace,
-        // multiple equals signs, empty values, empty quoted strings, mismatched quotes, single character strings,
-        // and lines without equals signs.
-        let env_content = r#"
-   # Leading whitespace comment
-NO_EQUALS_LINE
-  SPACED_KEY   =   spaced_value
-EMPTY_VAL=
-EMPTY_QUOTED_DOUBLE=""
-EMPTY_QUOTED_SINGLE=''
-MISMATCHED_QUOTES="unmatched'
-MULTIPLE_EQUALS=postgres://user:pass@localhost:5432/db?ssl=true&mode=1
-SINGLE_CHAR_QUOTED="x"
-"#;
-        let mut map = HashMap::new();
-
-        // Act
-        parse_dotenv_content(env_content, &mut map);
-
-        // Assert: Verify expected parsed entries and omission of invalid or comment lines
-        assert_eq!(map.len(), 7);
-        assert_eq!(
-            map.get("SPACED_KEY").map(String::as_str),
-            Some("spaced_value")
-        );
-        assert_eq!(map.get("EMPTY_VAL").map(String::as_str), Some(""));
-        assert_eq!(map.get("EMPTY_QUOTED_DOUBLE").map(String::as_str), Some(""));
-        assert_eq!(map.get("EMPTY_QUOTED_SINGLE").map(String::as_str), Some(""));
-        assert_eq!(
-            map.get("MISMATCHED_QUOTES").map(String::as_str),
-            Some("\"unmatched'")
-        );
-        assert_eq!(
-            map.get("MULTIPLE_EQUALS").map(String::as_str),
-            Some("postgres://user:pass@localhost:5432/db?ssl=true&mode=1")
-        );
-        assert_eq!(map.get("SINGLE_CHAR_QUOTED").map(String::as_str), Some("x"));
-        assert!(!map.contains_key("NO_EQUALS_LINE"));
-    }
 }

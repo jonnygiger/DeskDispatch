@@ -233,12 +233,20 @@ impl WorkersCrudCleanupGuard {
 
 impl Drop for WorkersCrudCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_ids = self.user_ids.lock().unwrap().clone();
         let worker_ids = self.worker_ids.lock().unwrap().clone();
         let group_ids = self.group_ids.lock().unwrap().clone();
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             if !group_ids.is_empty() {
                 let _ = sqlx::query("DELETE FROM worker_group_members WHERE group_id = ANY($1)")
                     .bind(&group_ids)
@@ -277,6 +285,7 @@ impl Drop for WorkersCrudCleanupGuard {
                 .build()
                 .unwrap();
             rt.block_on(cleanup);
+            rt.shutdown_timeout(std::time::Duration::from_millis(500));
         })
         .join()
         .unwrap();

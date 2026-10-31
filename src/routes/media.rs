@@ -75,6 +75,7 @@ pub async fn get_media_screenshot_handler(
             match state
                 .storage_service()
                 .generate_presigned_get_url(&object_key, Duration::from_secs(900))
+                .await
             {
                 Ok(presigned_url) => (
                     StatusCode::FOUND,
@@ -125,6 +126,7 @@ pub async fn get_media_bitmap_handler(
             match state
                 .storage_service()
                 .generate_presigned_get_url(&object_key, Duration::from_secs(900))
+                .await
             {
                 Ok(presigned_url) => (
                     StatusCode::FOUND,

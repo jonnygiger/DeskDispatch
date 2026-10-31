@@ -82,12 +82,20 @@ struct BitmapsCleanupGuard {
 
 impl Drop for BitmapsCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_ids = self.user_ids.clone();
         let automation_ids = self.automation_ids.clone();
         let bitmap_ids = self.bitmap_ids.clone();
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             if !bitmap_ids.is_empty() {
                 let _ = sqlx::query(
                     "DELETE FROM audit_log WHERE entity_type = 'bitmap' AND entity_id = ANY($1)",
@@ -140,6 +148,7 @@ impl Drop for BitmapsCleanupGuard {
                 .build()
                 .unwrap();
             rt.block_on(cleanup);
+            rt.shutdown_timeout(std::time::Duration::from_millis(500));
         })
         .join()
         .unwrap();

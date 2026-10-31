@@ -29,10 +29,18 @@ impl Drop for UserManagementCleanupGuard {
         if self.user_ids.is_empty() {
             return;
         }
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_ids = self.user_ids.clone();
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             let _ = sqlx::query("DELETE FROM users WHERE id = ANY($1)")
                 .bind(&user_ids)
                 .execute(&pool)
@@ -45,6 +53,7 @@ impl Drop for UserManagementCleanupGuard {
                 .build()
                 .unwrap();
             rt.block_on(cleanup);
+            rt.shutdown_timeout(std::time::Duration::from_millis(500));
         })
         .join()
         .unwrap();
@@ -431,10 +440,18 @@ async fn test_full_user_crud_and_last_admin_protection() {
                 if self.deactivated_admin_ids.is_empty() {
                     return;
                 }
-                let pool = self.pool.clone();
+                let options = self.pool.connect_options().clone();
                 let ids = self.deactivated_admin_ids.clone();
 
                 let restore = async move {
+                    let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(2)
+                        .acquire_timeout(std::time::Duration::from_secs(2))
+                        .connect_with((*options).clone())
+                        .await
+                    else {
+                        return;
+                    };
                     let _ = sqlx::query("UPDATE users SET is_active = true WHERE id = ANY($1)")
                         .bind(&ids)
                         .execute(&pool)
@@ -447,6 +464,7 @@ async fn test_full_user_crud_and_last_admin_protection() {
                         .build()
                     {
                         rt.block_on(restore);
+                        rt.shutdown_timeout(std::time::Duration::from_millis(500));
                     }
                 })
                 .join();

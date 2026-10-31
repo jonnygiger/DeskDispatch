@@ -23,11 +23,19 @@ struct StepPositioningCleanupGuard {
 
 impl Drop for StepPositioningCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_id = self.user_id;
         let auto_id = self.automation_id;
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             if let Some(a_id) = auto_id {
                 let _ = sqlx::query("DELETE FROM automation_steps WHERE automation_id = $1")
                     .bind(a_id)
@@ -52,6 +60,7 @@ impl Drop for StepPositioningCleanupGuard {
                 .build()
             {
                 rt.block_on(cleanup);
+                rt.shutdown_timeout(std::time::Duration::from_millis(500));
             }
         })
         .join();

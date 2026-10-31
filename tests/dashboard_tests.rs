@@ -59,12 +59,20 @@ struct DashboardCleanupGuard {
 
 impl Drop for DashboardCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_id = self.user_id;
         let worker1_id = self.worker1_id;
         let auto1_id = self.auto1_id;
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             let _ = sqlx::query("DELETE FROM task_runs WHERE automation_id = $1")
                 .bind(auto1_id)
                 .execute(&pool)
@@ -93,6 +101,7 @@ impl Drop for DashboardCleanupGuard {
                 .build()
                 .unwrap();
             rt.block_on(cleanup);
+            rt.shutdown_timeout(std::time::Duration::from_millis(500));
         })
         .join()
         .unwrap();

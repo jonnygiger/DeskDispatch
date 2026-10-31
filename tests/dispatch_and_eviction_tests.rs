@@ -41,7 +41,7 @@ impl DispatchCleanupGuard {
 
 impl Drop for DispatchCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_ids = self.user_ids.clone();
         let auto_ids = self.auto_ids.clone();
         let worker_ids = self.worker_ids.clone();
@@ -50,6 +50,14 @@ impl Drop for DispatchCleanupGuard {
         let recording_session_ids = self.recording_session_ids.clone();
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             if !recording_session_ids.is_empty() {
                 let _ = sqlx::query("DELETE FROM recording_sessions WHERE id = ANY($1)")
                     .bind(&recording_session_ids)
@@ -98,6 +106,7 @@ impl Drop for DispatchCleanupGuard {
                 .build()
             {
                 rt.block_on(cleanup);
+                rt.shutdown_timeout(std::time::Duration::from_millis(500));
             }
         })
         .join();

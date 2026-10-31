@@ -80,11 +80,19 @@ struct WolCleanupGuard {
 
 impl Drop for WolCleanupGuard {
     fn drop(&mut self) {
-        let pool = self.pool.clone();
+        let options = self.pool.connect_options().clone();
         let user_ids = self.user_ids.clone();
         let worker_ids = self.worker_ids.clone();
 
         let cleanup = async move {
+            let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .acquire_timeout(std::time::Duration::from_secs(2))
+                .connect_with((*options).clone())
+                .await
+            else {
+                return;
+            };
             if !worker_ids.is_empty() {
                 let _ = sqlx::query("DELETE FROM task_worker_pcs WHERE id = ANY($1)")
                     .bind(&worker_ids)
@@ -109,6 +117,7 @@ impl Drop for WolCleanupGuard {
                 .build()
             {
                 rt.block_on(cleanup);
+                rt.shutdown_timeout(std::time::Duration::from_millis(500));
             }
         })
         .join();
