@@ -276,6 +276,7 @@ async fn test_concurrent_dispatch_claiming() {
                 .unwrap();
 
                 if let Some(task_run_id) = select_res {
+                    // 1. Claim task run (transition queued -> running)
                     sqlx::query(
                         r#"
                         UPDATE task_runs
@@ -293,6 +294,24 @@ async fn test_concurrent_dispatch_claiming() {
 
                     tx.commit().await.unwrap();
                     claimed_ids.push(task_run_id);
+
+                    // 2. Realistic execution lifecycle: complete the task run (running -> succeeded).
+                    // This clears the worker from the partial unique constraint `idx_task_runs_worker_running`
+                    // (which only permits a single running/cancelling run per worker_id) so the worker
+                    // is ready to claim subsequent task runs in the next iteration.
+                    sqlx::query(
+                        r#"
+                        UPDATE task_runs
+                        SET status = 'succeeded',
+                            completed_at = now()
+                        WHERE id = $1 AND worker_id = $2
+                        "#,
+                    )
+                    .bind(task_run_id)
+                    .bind(worker_id)
+                    .execute(&*pool_clone)
+                    .await
+                    .unwrap();
                 } else {
                     tx.commit().await.unwrap();
                 }
@@ -334,7 +353,7 @@ async fn test_concurrent_dispatch_claiming() {
                 .await
                 .unwrap();
 
-        assert_eq!(status, "running");
+        assert_eq!(status, "succeeded");
         assert!(
             assigned_worker_id.is_some(),
             "Targeted task run {} should be assigned",
@@ -358,7 +377,7 @@ async fn test_concurrent_dispatch_claiming() {
                 .await
                 .unwrap();
 
-        assert_eq!(status, "running");
+        assert_eq!(status, "succeeded");
         assert!(assigned_worker_id.is_some());
         assert!(worker_ids.contains(&assigned_worker_id.unwrap()));
     }

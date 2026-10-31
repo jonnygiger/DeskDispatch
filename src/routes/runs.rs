@@ -927,6 +927,7 @@ pub async fn post_cancel_run_handler(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
