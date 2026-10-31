@@ -552,11 +552,8 @@ pub fn compute_next_run_at(
                 .with_day(1)
                 .and_then(|d| d.with_month(next_m))
                 .and_then(|d| d.with_year(year))
-                .and_then(|d| d.with_hour(0))
-                .and_then(|d| d.with_minute(0))
-                .and_then(|d| d.with_second(0))
             {
-                curr = next_dt;
+                curr = reset_time_to_start_of_day(next_dt);
                 continue;
             }
         }
