@@ -1,13 +1,57 @@
 use std::net::SocketAddr;
-use std::str::FromStr;
 use tokio::net::UdpSocket;
 
-/// Parses a MAC address string into a 6-byte array using `macaddr::MacAddr6`.
+/// Parses a MAC address string into a 6-byte array using standard library string parsing.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    MacAddr6::from_str(mac_str.trim())
-        .map(|mac| mac.into_array())
-        .map_err(|_| format!("Invalid MAC address '{mac_str}'"))
+    let s = mac_str.trim();
+    if !s.is_ascii() {
+        return Err(format!("Invalid MAC address '{mac_str}'"));
+    }
+
+    let mut bytes = [0u8; 6];
+
+    let success = match s.len() {
+        17 => {
+            let delim = if s.as_bytes()[2] == b':' {
+                ':'
+            } else if s.as_bytes()[2] == b'-' {
+                '-'
+            } else {
+                return Err(format!("Invalid MAC address '{mac_str}'"));
+            };
+
+            let mut count = 0;
+            for (i, part) in s.split(delim).enumerate() {
+                if i >= 6 || part.len() != 2 {
+                    return Err(format!("Invalid MAC address '{mac_str}'"));
+                }
+                match u8::from_str_radix(part, 16) {
+                    Ok(b) => bytes[i] = b,
+                    Err(_) => return Err(format!("Invalid MAC address '{mac_str}'")),
+                }
+                count += 1;
+            }
+            count == 6
+        }
+        12 => {
+            for i in 0..6 {
+                let part = &s[i * 2..i * 2 + 2];
+                match u8::from_str_radix(part, 16) {
+                    Ok(b) => bytes[i] = b,
+                    Err(_) => return Err(format!("Invalid MAC address '{mac_str}'")),
+                }
+            }
+            true
+        }
+        _ => false,
+    };
+
+    if success {
+        Ok(bytes)
+    } else {
+        Err(format!("Invalid MAC address '{mac_str}'"))
+    }
 }
 
 /// Constructs a 102-byte Wake-on-LAN Magic Packet for the given 6-byte MAC address.
