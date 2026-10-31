@@ -824,8 +824,8 @@ pub async fn get_run_screenshots_zip_handler(
     };
 
     let mut zip_builder = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let zip_options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let zip_options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     let storage = state.storage_service();
     let mut count = 0;
 
@@ -927,6 +927,7 @@ pub async fn post_cancel_run_handler(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
