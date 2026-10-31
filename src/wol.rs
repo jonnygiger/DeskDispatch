@@ -1,56 +1,62 @@
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
-/// Parses a MAC address string into a 6-byte array using standard library string parsing.
+/// Parses a single hex ASCII digit into its numeric value `0..=15`.
+#[inline]
+fn parse_hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Parses two hexadecimal ASCII characters into a single byte.
+#[inline]
+fn parse_hex_pair(hi: u8, lo: u8) -> Option<u8> {
+    let hi = parse_hex_digit(hi)?;
+    let lo = parse_hex_digit(lo)?;
+    Some((hi << 4) | lo)
+}
+
+/// Parses a MAC address string into a 6-byte array without heap allocations.
 /// Supports formats: `XX:XX:XX:XX:XX:XX`, `XX-XX-XX-XX-XX-XX`, or `XXXXXXXXXXXX`.
 pub fn parse_mac_address(mac_str: &str) -> Result<[u8; 6], String> {
-    let s = mac_str.trim();
-    if !s.is_ascii() {
-        return Err(format!("Invalid MAC address '{mac_str}'"));
-    }
+    let s = mac_str.trim().as_bytes();
+    let mut mac = [0u8; 6];
 
-    let mut bytes = [0u8; 6];
-
-    let success = match s.len() {
+    match s.len() {
+        // Delimited format: 17 ASCII characters (e.g. "00:11:22:33:44:55" or "00-11-22-33-44-55")
         17 => {
-            let delim = if s.as_bytes()[2] == b':' {
-                ':'
-            } else if s.as_bytes()[2] == b'-' {
-                '-'
-            } else {
+            let delim = s[2];
+            if delim != b':' && delim != b'-' {
                 return Err(format!("Invalid MAC address '{mac_str}'"));
-            };
-
-            let mut count = 0;
-            for (i, part) in s.split(delim).enumerate() {
-                if i >= 6 || part.len() != 2 {
+            }
+            for (i, slot) in mac.iter_mut().enumerate() {
+                let offset = i * 3;
+                if i > 0 && s[offset - 1] != delim {
                     return Err(format!("Invalid MAC address '{mac_str}'"));
                 }
-                match u8::from_str_radix(part, 16) {
-                    Ok(b) => bytes[i] = b,
-                    Err(_) => return Err(format!("Invalid MAC address '{mac_str}'")),
+                match parse_hex_pair(s[offset], s[offset + 1]) {
+                    Some(byte) => *slot = byte,
+                    None => return Err(format!("Invalid MAC address '{mac_str}'")),
                 }
-                count += 1;
             }
-            count == 6
+            Ok(mac)
         }
+        // Raw hex format: 12 ASCII characters (e.g. "001122334455")
         12 => {
-            for i in 0..6 {
-                let part = &s[i * 2..i * 2 + 2];
-                match u8::from_str_radix(part, 16) {
-                    Ok(b) => bytes[i] = b,
-                    Err(_) => return Err(format!("Invalid MAC address '{mac_str}'")),
+            for (i, slot) in mac.iter_mut().enumerate() {
+                let offset = i * 2;
+                match parse_hex_pair(s[offset], s[offset + 1]) {
+                    Some(byte) => *slot = byte,
+                    None => return Err(format!("Invalid MAC address '{mac_str}'")),
                 }
             }
-            true
+            Ok(mac)
         }
-        _ => false,
-    };
-
-    if success {
-        Ok(bytes)
-    } else {
-        Err(format!("Invalid MAC address '{mac_str}'"))
+        _ => Err(format!("Invalid MAC address '{mac_str}'")),
     }
 }
 
