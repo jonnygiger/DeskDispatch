@@ -15,6 +15,7 @@ use axum::routing::{get, post};
 use crate::auth::worker::{generate_worker_api_key, hash_token};
 use crate::domain::{StepResultStatus, WorkerStatus};
 use crate::error::AppError;
+use crate::routes::automations::types::{KeyPressRow, TypeTextRow, WindowControlRow};
 use crate::{AppState, auth::AuthWorker};
 
 pub fn router() -> Router<AppState> {
@@ -126,27 +127,8 @@ struct MouseClickRow {
     click_type: String,
 }
 
-#[derive(sqlx::FromRow)]
-struct KeyPressRow {
-    step_id: i64,
-    key_combo: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct TypeTextRow {
-    step_id: i64,
-    text_to_type: String,
-    delay_between_keys_ms: i32,
-}
-
-#[derive(sqlx::FromRow)]
-struct WindowControlRow {
-    step_id: i64,
-    action: String,
-    match_pattern: String,
-    match_type: String,
-    timeout_ms: i64,
-}
+// Trim simplification: Replaced local KeyPressRow, TypeTextRow, and WindowControlRow
+// with shared definitions from crate::routes::automations::types.
 
 #[derive(sqlx::FromRow)]
 struct FindPixelRow {

@@ -7,7 +7,7 @@ use axum::{
 use std::time::Duration;
 
 use super::auth::HtmlTemplate;
-use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
+use crate::auth::{ActionForm, AuthUser, CsrfForm, RequireEditor, log_audit};
 use crate::de::deserialize_option_number;
 use crate::magnifier::ImageMagnifier;
 use axum::Router;
@@ -44,10 +44,7 @@ pub struct StatusFrameQuery {
     pub paused: Option<bool>,
 }
 
-#[derive(serde::Deserialize)]
-pub struct CancelRunForm {
-    pub csrf_token: String,
-}
+// Trim simplification: Replaced duplicate CancelRunForm with shared ActionForm from crate::auth.
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TaskRunListItem {
@@ -882,7 +879,7 @@ pub async fn post_cancel_run_handler(
     State(state): State<AppState>,
     RequireEditor(user): RequireEditor,
     Path(id): Path<i64>,
-    CsrfForm(_form): CsrfForm<CancelRunForm>,
+    CsrfForm(_form): CsrfForm<ActionForm>,
 ) -> Response {
     let update_res = sqlx::query_as::<_, CancelRunRow>(
         r#"

@@ -31,6 +31,30 @@ impl Default for SlaStats {
     }
 }
 
+// Trim simplification: Canonical step detail query row structs shared between worker API
+// and automation step views to eliminate duplicate struct declarations.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct KeyPressRow {
+    pub step_id: i64,
+    pub key_combo: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TypeTextRow {
+    pub step_id: i64,
+    pub text_to_type: String,
+    pub delay_between_keys_ms: i32,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct WindowControlRow {
+    pub step_id: i64,
+    pub action: String,
+    pub match_pattern: String,
+    pub match_type: String,
+    pub timeout_ms: i64,
+}
+
 impl SlaStats {
     pub fn formatted_daily(&self) -> String {
         format!("{:.1}%", self.daily_uptime)

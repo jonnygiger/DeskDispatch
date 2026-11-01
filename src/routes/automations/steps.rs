@@ -128,14 +128,8 @@ struct OcrExtractDetailRow {
     set_as_task_output: bool,
 }
 
-#[derive(sqlx::FromRow)]
-struct WindowControlViewRow {
-    step_id: i64,
-    action: String,
-    match_pattern: String,
-    match_type: String,
-    timeout_ms: i64,
-}
+// Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, and TypeTextViewRow
+// with shared WindowControlRow, KeyPressRow, and TypeTextRow from super::types.
 
 #[derive(sqlx::FromRow)]
 struct ClipboardControlDetailRow {
@@ -771,19 +765,6 @@ struct RawStepRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct KeyPressViewRow {
-    step_id: i64,
-    key_combo: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct TypeTextViewRow {
-    step_id: i64,
-    text_to_type: String,
-    delay_between_keys_ms: i32,
-}
-
-#[derive(sqlx::FromRow)]
 struct MouseScrollViewRow {
     step_id: i64,
     direction: String,
@@ -886,7 +867,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
     }
 
     let (kp_res, ms_res, wc_res, tt_res, mc_res, fp_res, fb_res, br_res, ocr_res, ss_res) = tokio::join!(
-        sqlx::query_as::<_, KeyPressViewRow>(
+        sqlx::query_as::<_, KeyPressRow>(
             r#"
             SELECT skp.step_id, skp.key_combo
             FROM step_key_presses skp
@@ -911,7 +892,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .bind(automation_id)
         .fetch_all(db),
 
-        sqlx::query_as::<_, WindowControlViewRow>(
+        sqlx::query_as::<_, WindowControlRow>(
             r#"
             SELECT swc.step_id, swc.action, swc.match_pattern, swc.match_type, swc.timeout_ms
             FROM step_window_controls swc
@@ -922,7 +903,7 @@ pub async fn fetch_automation_step_views(db: &PgPool, automation_id: i64) -> Vec
         .bind(automation_id)
         .fetch_all(db),
 
-        sqlx::query_as::<_, TypeTextViewRow>(
+        sqlx::query_as::<_, TypeTextRow>(
             r#"
             SELECT stt.step_id, stt.text_to_type, stt.delay_between_keys_ms
             FROM step_type_texts stt
@@ -2267,7 +2248,7 @@ async fn populate_step_form_details(
             .flatten();
         }
         "window_control" => {
-            if let Ok(Some(wc)) = sqlx::query_as::<_, WindowControlViewRow>(
+            if let Ok(Some(wc)) = sqlx::query_as::<_, WindowControlRow>(
                 "SELECT step_id, action, match_pattern, match_type, timeout_ms FROM step_window_controls WHERE step_id = $1",
             )
             .bind(sid)
@@ -2281,7 +2262,7 @@ async fn populate_step_form_details(
             }
         }
         "type_text" => {
-            if let Ok(Some(tt)) = sqlx::query_as::<_, TypeTextViewRow>(
+            if let Ok(Some(tt)) = sqlx::query_as::<_, TypeTextRow>(
                 "SELECT step_id, text_to_type, delay_between_keys_ms FROM step_type_texts WHERE step_id = $1",
             )
             .bind(sid)
