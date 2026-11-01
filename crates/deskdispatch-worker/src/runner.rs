@@ -19,11 +19,8 @@ pub struct StepRunner {
 
 impl StepRunner {
     pub fn new(config: WorkerConfig, api_client: WorkerApiClient) -> Self {
-        let input = InputController::new(
-            &config.display,
-            config.screen_width,
-            config.screen_height,
-        );
+        let input =
+            InputController::new(&config.display, config.screen_width, config.screen_height);
         Self {
             config,
             api_client,
