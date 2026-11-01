@@ -17,12 +17,8 @@ pub struct ForbiddenTemplate {
     pub user: Option<AuthUser>,
 }
 
-#[derive(Template)]
-#[template(path = "409.html")]
-pub struct ConflictTemplate {
-    pub message: Option<String>,
-    pub user: Option<AuthUser>,
-}
+// Trim simplification: Removed unused ConflictTemplate and templates/409.html
+// as API conflicts return JSON ErrorResponse payloads.
 
 #[derive(Template)]
 #[template(path = "500.html")]

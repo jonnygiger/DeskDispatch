@@ -42,6 +42,13 @@ pub fn validate_csrf_token(token: &str, expected_token: &str) -> bool {
         == 0
 }
 
+/// Generic single-field action form containing only a CSRF token for simple POST actions
+/// (e.g., cancellations, deletions, toggles).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ActionForm {
+    pub csrf_token: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct CsrfForm<T>(pub T);
 

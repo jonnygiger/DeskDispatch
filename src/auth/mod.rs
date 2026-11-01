@@ -8,7 +8,7 @@ pub mod user;
 pub mod worker;
 
 pub use audit::log_audit;
-pub use csrf::{CsrfForm, csrf_middleware, generate_csrf_token, validate_csrf_token};
+pub use csrf::{ActionForm, CsrfForm, csrf_middleware, generate_csrf_token, validate_csrf_token};
 pub use flash::{
     FlashLevel, FlashMessage, build_flash_cookie, clear_flash_cookie, extract_flash_message,
 };

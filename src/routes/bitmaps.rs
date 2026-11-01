@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use super::auth::HtmlTemplate;
 use crate::AppState;
-use crate::auth::{AuthUser, CsrfForm, RequireEditor, log_audit};
+use crate::auth::{ActionForm, AuthUser, CsrfForm, RequireEditor, log_audit};
 use crate::de::deserialize_option_number;
 use crate::magnifier::{ImageMagnifier, map_coarse_click_to_native, map_grid_click_to_native};
 
@@ -75,10 +75,7 @@ pub struct BitmapUploadForm {
     pub name: String,
 }
 
-#[derive(serde::Deserialize, Debug)]
-pub struct DeleteBitmapForm {
-    pub csrf_token: String,
-}
+// Trim simplification: Replaced duplicate DeleteBitmapForm with shared ActionForm from crate::auth.
 
 #[derive(serde::Deserialize, Debug)]
 pub struct BitmapCommitQuery {
@@ -815,7 +812,7 @@ pub async fn post_delete_bitmap_handler(
     State(state): State<AppState>,
     RequireEditor(user): RequireEditor,
     Path(id): Path<i64>,
-    CsrfForm(form): CsrfForm<DeleteBitmapForm>,
+    CsrfForm(form): CsrfForm<ActionForm>,
 ) -> Response {
     delete_bitmap_logic(&state, &user, id, &form.csrf_token, None).await
 }
@@ -826,7 +823,7 @@ pub async fn post_automation_delete_bitmap_handler(
     State(state): State<AppState>,
     RequireEditor(user): RequireEditor,
     Path((id, bid)): Path<(i64, i64)>,
-    CsrfForm(form): CsrfForm<DeleteBitmapForm>,
+    CsrfForm(form): CsrfForm<ActionForm>,
 ) -> Response {
     delete_bitmap_logic(&state, &user, bid, &form.csrf_token, Some(id)).await
 }
