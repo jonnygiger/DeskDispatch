@@ -10,30 +10,9 @@ use crate::image_gen::generate_random_screenshot;
 use crate::prng::FastPrng;
 use crate::profile::WorkerProfile;
 
-#[inline]
-fn random_bool(p: f64) -> bool {
-    FastPrng::gen_bool(p)
-}
-
-#[inline]
-fn random_range_i32(min: i32, max: i32) -> i32 {
-    FastPrng::gen_range_i32(min, max)
-}
-
-#[inline]
-fn random_range_u64(min: u64, max: u64) -> u64 {
-    FastPrng::gen_range_u64(min, max)
-}
-
-#[inline]
-fn random_range_usize(min: usize, max: usize) -> usize {
-    FastPrng::gen_range_usize(min, max)
-}
-
-#[inline]
-fn random_flag() -> bool {
-    FastPrng::gen_bool(0.5)
-}
+// Trim simplification: Replaced redundant private forwarding wrapper functions
+// (`random_bool`, `random_range_i32`, `random_range_u64`, `random_range_usize`, `random_flag`)
+// with direct calls to `FastPrng` methods, matching the rest of the workspace.
 
 /// Zero-allocation helper to extract `host:port` from a URL string.
 #[inline]
@@ -64,21 +43,21 @@ pub struct StepExecutionOutcome {
 impl StepExecutionOutcome {
     #[inline]
     pub fn evaluate(profile: WorkerProfile, step_type: &str) -> Self {
-        if profile == WorkerProfile::Flaky && random_bool(0.3) {
+        if profile == WorkerProfile::Flaky && FastPrng::gen_bool(0.3) {
             return Self {
                 result_str: "failed",
                 captured_r: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
                 captured_g: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
                 captured_b: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
-                captured_x: Some(random_range_i32(0, 1920)),
-                captured_y: Some(random_range_i32(0, 1080)),
+                captured_x: Some(FastPrng::gen_range_i32(0, 1920)),
+                captured_y: Some(FastPrng::gen_range_i32(0, 1080)),
                 found: Some(false),
             };
         }
 
         match step_type {
             "branch" => {
-                let matched = random_flag();
+                let matched = FastPrng::gen_bool(0.5);
                 Self {
                     result_str: if matched {
                         "branch_matched"
@@ -107,8 +86,8 @@ impl StepExecutionOutcome {
                 captured_r: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
                 captured_g: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
                 captured_b: Some(FastPrng::gen_range_u8_inclusive(0, 255) as i16),
-                captured_x: Some(random_range_i32(0, 1920)),
-                captured_y: Some(random_range_i32(0, 1080)),
+                captured_x: Some(FastPrng::gen_range_i32(0, 1920)),
+                captured_y: Some(FastPrng::gen_range_i32(0, 1080)),
                 found: Some(true),
             },
         }
@@ -347,7 +326,7 @@ impl SimulatedWorker {
                 }
 
                 // Simulating power outage profile: abruptly terminate heartbeats after a delay
-                if hb_profile == WorkerProfile::PowerOutage && random_bool(0.15) {
+                if hb_profile == WorkerProfile::PowerOutage && FastPrng::gen_bool(0.15) {
                     warn!(
                         worker_idx = hb_worker_idx,
                         "Simulating POWER OUTAGE! Heartbeat stopping abruptly."
@@ -421,7 +400,7 @@ impl SimulatedWorker {
                 break;
             }
 
-            if self.config.profile == WorkerProfile::PowerOutage && random_bool(0.2) {
+            if self.config.profile == WorkerProfile::PowerOutage && FastPrng::gen_bool(0.2) {
                 warn!(
                     worker_idx = self.config.worker_index,
                     "Simulating POWER OUTAGE / DISCONNECT during main poll loop!"
@@ -430,7 +409,7 @@ impl SimulatedWorker {
             }
 
             if self.config.profile == WorkerProfile::LaggyNetwork {
-                let extra_delay = random_range_u64(2, 8);
+                let extra_delay = FastPrng::gen_range_u64(2, 8);
                 tokio::time::sleep(Duration::from_secs(extra_delay)).await;
             }
 
@@ -611,7 +590,7 @@ impl SimulatedWorker {
             }
 
             // Power outage profile during task step
-            if self.config.profile == WorkerProfile::PowerOutage && random_bool(0.25) {
+            if self.config.profile == WorkerProfile::PowerOutage && FastPrng::gen_bool(0.25) {
                 warn!(
                     worker_idx = self.config.worker_index,
                     task_run_id = task_run_id,
@@ -671,7 +650,7 @@ impl SimulatedWorker {
             }
 
             // Periodically upload a reference bitmap for bitmap steps if needed
-            if (step_type == "find_bitmap" || step_type == "branch") && random_bool(0.2) {
+            if (step_type == "find_bitmap" || step_type == "branch") && FastPrng::gen_bool(0.2) {
                 let auto_id = Some(automation.id);
                 let bitmap_name = format!("sim_ref_{}_step_{}", self.config.worker_index, step_id);
                 let _ = self
@@ -1077,18 +1056,18 @@ impl SimulatedWorker {
                 }
             }
 
-            let ev_type = event_types[random_range_usize(0, event_types.len())];
+            let ev_type = event_types[FastPrng::gen_range_usize(0, event_types.len())];
             let (x_opt, y_opt, btn_opt, key_opt) = match ev_type {
                 "key_press" => (
                     None,
                     None,
                     None,
-                    Some(key_combos[random_range_usize(0, key_combos.len())].to_string()),
+                    Some(key_combos[FastPrng::gen_range_usize(0, key_combos.len())].to_string()),
                 ),
                 _ => (
-                    Some(random_range_i32(50, 1800)),
-                    Some(random_range_i32(50, 1000)),
-                    Some(buttons[random_range_usize(0, buttons.len())].to_string()),
+                    Some(FastPrng::gen_range_i32(50, 1800)),
+                    Some(FastPrng::gen_range_i32(50, 1000)),
+                    Some(buttons[FastPrng::gen_range_usize(0, buttons.len())].to_string()),
                     None,
                 ),
             };
