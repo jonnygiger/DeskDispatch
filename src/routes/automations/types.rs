@@ -239,14 +239,19 @@ pub struct AutomationListItem {
     pub sla: SlaStats,
 }
 
+// Trim simplification: Consolidated shared status badge class mapping for automation definitions.
+pub fn automation_status_badge_class(status: &str) -> &'static str {
+    match status {
+        "active" => "badge-success",
+        "archived" => "badge-neutral",
+        "draft" => "badge-warning",
+        _ => "badge-neutral",
+    }
+}
+
 impl AutomationListItem {
     pub fn status_badge_class(&self) -> &'static str {
-        match self.status.as_str() {
-            "active" => "badge-success",
-            "archived" => "badge-neutral",
-            "draft" => "badge-warning",
-            _ => "badge-neutral",
-        }
+        automation_status_badge_class(&self.status)
     }
 
     pub fn last_run_status_badge_class(&self) -> &'static str {
@@ -308,12 +313,7 @@ pub struct AutomationDetail {
 
 impl AutomationDetail {
     pub fn status_badge_class(&self) -> &'static str {
-        match self.status.as_str() {
-            "active" => "badge-success",
-            "archived" => "badge-neutral",
-            "draft" => "badge-warning",
-            _ => "badge-neutral",
-        }
+        automation_status_badge_class(&self.status)
     }
 }
 
