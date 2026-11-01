@@ -112,18 +112,16 @@ pub fn generate_random_screenshot_with_dimensions(width: u32, height: u32) -> Ve
     // ZLIB header: CINFO=7 (32K window), CM=8 (deflate), FCHECK=0x01 -> 0x78 0x01
     zlib_data.extend_from_slice(&[0x78, 0x01]);
 
-    let chunks: Vec<&[u8]> = scanlines.chunks(max_block_size).collect();
-    let num_chunks = chunks.len();
-
-    for (idx, chunk) in chunks.into_iter().enumerate() {
-        let is_last = idx == num_chunks - 1;
+    // Stream chunks directly with peekable iterator, avoiding intermediate Vec<&[u8]> allocation
+    let mut chunk_iter = scanlines.chunks(max_block_size).peekable();
+    while let Some(chunk) = chunk_iter.next() {
+        let is_last = chunk_iter.peek().is_none();
         let header_byte = if is_last { 0x01 } else { 0x00 };
         let len = chunk.len() as u16;
-        let nlen = !len;
 
         zlib_data.push(header_byte);
         zlib_data.extend_from_slice(&len.to_le_bytes());
-        zlib_data.extend_from_slice(&nlen.to_le_bytes());
+        zlib_data.extend_from_slice(&(!len).to_le_bytes());
         zlib_data.extend_from_slice(chunk);
     }
 
