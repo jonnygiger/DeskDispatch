@@ -58,7 +58,7 @@
             <select id="input_variable_id" name="input_variable_id" class="form-control" style="width: 100%;">
                 <option value="">-- Select Input Variable --</option>
                 {% for var in variables %}
-                    <option value="{{ var.id }}"{% if var.is_selected_found(input_variable_id) %} selected{% endif %}>{{ var.name }} ({{ var.var_type }})</option>
+                    <option value="{{ var.id }}"{% if var.is_selected(input_variable_id) %} selected{% endif %}>{{ var.name }} ({{ var.var_type }})</option>
                 {% endfor %}
             </select>
         </div>
@@ -68,7 +68,7 @@
             <select id="output_variable_id" name="output_variable_id" class="form-control" style="width: 100%;">
                 <option value="">-- Select Variable --</option>
                 {% for var in variables %}
-                    <option value="{{ var.id }}"{% if var.is_selected_found(output_variable_id) %} selected{% endif %}>{{ var.name }} ({{ var.var_type }})</option>
+                    <option value="{{ var.id }}"{% if var.is_selected(output_variable_id) %} selected{% endif %}>{{ var.name }} ({{ var.var_type }})</option>
                 {% endfor %}
             </select>
             <span style="font-size: 0.8125rem; color: var(--color-text-muted);">Variable to store clipboard text into</span>

@@ -103,7 +103,7 @@
             <select name="output_found_variable_id" id="output_found_variable_id" class="form-control" style="width: 100%;">
                 <option value="">-- Do Not Store --</option>
                 {% for var in variables %}
-                    <option value="{{ var.id }}" {% if var.is_selected_found(output_found_variable_id) %}selected{% endif %}>
+                    <option value="{{ var.id }}" {% if var.is_selected(output_found_variable_id) %}selected{% endif %}>
                         {{ var.name }} ({{ var.var_type }})
                     </option>
                 {% endfor %}
@@ -116,7 +116,7 @@
             <select name="output_x_variable_id" id="output_x_variable_id" class="form-control" style="width: 100%;">
                 <option value="">-- Do Not Store --</option>
                 {% for var in variables %}
-                    <option value="{{ var.id }}" {% if var.is_selected_x(output_x_variable_id) %}selected{% endif %}>
+                    <option value="{{ var.id }}" {% if var.is_selected(output_x_variable_id) %}selected{% endif %}>
                         {{ var.name }} ({{ var.var_type }})
                     </option>
                 {% endfor %}
@@ -129,7 +129,7 @@
             <select name="output_y_variable_id" id="output_y_variable_id" class="form-control" style="width: 100%;">
                 <option value="">-- Do Not Store --</option>
                 {% for var in variables %}
-                    <option value="{{ var.id }}" {% if var.is_selected_y(output_y_variable_id) %}selected{% endif %}>
+                    <option value="{{ var.id }}" {% if var.is_selected(output_y_variable_id) %}selected{% endif %}>
                         {{ var.name }} ({{ var.var_type }})
                     </option>
                 {% endfor %}

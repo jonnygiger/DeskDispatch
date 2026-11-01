@@ -42,7 +42,7 @@
                 <select name="x_variable_id" id="x_variable_id" class="form-control" style="width: 100%;">
                     <option value="">-- Select X Variable --</option>
                     {% for var in variables %}
-                        <option value="{{ var.id }}" {% if var.is_selected_x(x_variable_id) %}selected{% endif %}>
+                        <option value="{{ var.id }}" {% if var.is_selected(x_variable_id) %}selected{% endif %}>
                             {{ var.name }} ({{ var.var_type }})
                         </option>
                     {% endfor %}
@@ -64,7 +64,7 @@
                 <select name="y_variable_id" id="y_variable_id" class="form-control" style="width: 100%;">
                     <option value="">-- Select Y Variable --</option>
                     {% for var in variables %}
-                        <option value="{{ var.id }}" {% if var.is_selected_y(y_variable_id) %}selected{% endif %}>
+                        <option value="{{ var.id }}" {% if var.is_selected(y_variable_id) %}selected{% endif %}>
                             {{ var.name }} ({{ var.var_type }})
                         </option>
                     {% endfor %}
