@@ -15,6 +15,10 @@ use super::auth::HtmlTemplate;
 use crate::AppState;
 use crate::auth::{AuthUser, CsrfForm, FlashMessage, RequireEditor, log_audit};
 use crate::de::deserialize_option_number;
+// Trim simplification: Replaced duplicate ScheduleAutomationOption and ScheduleWorkerGroupOption structs
+// with shared AutomationOption and WorkerGroupOption.
+pub use crate::routes::automations::types::WorkerGroupOption;
+pub use crate::routes::runs::AutomationOption;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -115,18 +119,6 @@ impl ScheduleItem {
     }
 }
 
-#[derive(Debug, Clone, FromRow)]
-pub struct ScheduleAutomationOption {
-    pub id: i64,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, FromRow)]
-pub struct ScheduleWorkerGroupOption {
-    pub id: i64,
-    pub name: String,
-}
-
 #[derive(Template)]
 #[template(path = "schedules/index.html")]
 pub struct SchedulesIndexTemplate {
@@ -150,8 +142,8 @@ pub struct ScheduleFormTemplate {
     pub wol_enabled: bool,
     pub wol_warmup_secs: i32,
     pub is_enabled: bool,
-    pub automations: Vec<ScheduleAutomationOption>,
-    pub worker_groups: Vec<ScheduleWorkerGroupOption>,
+    pub automations: Vec<AutomationOption>,
+    pub worker_groups: Vec<WorkerGroupOption>,
     pub error: Option<String>,
 }
 
@@ -168,8 +160,8 @@ impl ScheduleFormTemplate {
         user: AuthUser,
         schedule_id: Option<i64>,
         form: &ScheduleForm,
-        automations: Vec<ScheduleAutomationOption>,
-        worker_groups: Vec<ScheduleWorkerGroupOption>,
+        automations: Vec<AutomationOption>,
+        worker_groups: Vec<WorkerGroupOption>,
         error: impl Into<String>,
     ) -> Self {
         let (name, cron, tz, wol_warmup) = form.normalized();
@@ -375,16 +367,13 @@ pub async fn get_schedules_handler(
 /// concurrently using `tokio::join!`. This reduces HTTP response latency by avoiding sequential database round-trips.
 async fn fetch_schedule_options(
     db: &sqlx::PgPool,
-) -> (
-    Vec<ScheduleAutomationOption>,
-    Vec<ScheduleWorkerGroupOption>,
-) {
+) -> (Vec<AutomationOption>, Vec<WorkerGroupOption>) {
     let (automations_res, worker_groups_res) = tokio::join!(
-        sqlx::query_as::<_, ScheduleAutomationOption>(
+        sqlx::query_as::<_, AutomationOption>(
             "SELECT id, name FROM automations WHERE status != 'archived' ORDER BY name ASC",
         )
         .fetch_all(db),
-        sqlx::query_as::<_, ScheduleWorkerGroupOption>(
+        sqlx::query_as::<_, WorkerGroupOption>(
             "SELECT id, name FROM worker_groups ORDER BY name ASC",
         )
         .fetch_all(db),
@@ -516,11 +505,11 @@ pub async fn get_edit_schedule_handler(
         )
         .bind(id)
         .fetch_optional(&state.db),
-        sqlx::query_as::<_, ScheduleAutomationOption>(
+        sqlx::query_as::<_, AutomationOption>(
             "SELECT id, name FROM automations WHERE status != 'archived' ORDER BY name ASC",
         )
         .fetch_all(&state.db),
-        sqlx::query_as::<_, ScheduleWorkerGroupOption>(
+        sqlx::query_as::<_, WorkerGroupOption>(
             "SELECT id, name FROM worker_groups ORDER BY name ASC",
         )
         .fetch_all(&state.db),
