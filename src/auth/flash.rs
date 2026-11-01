@@ -48,9 +48,9 @@ impl FlashMessage {
     }
 }
 
-pub fn url_encode(input: &str) -> String {
-    urlencoding::encode(input).into_owned()
-}
+// Trim simplification: Replaced custom duplicate url_encode function with an alias to
+// `crate::storage::url_encode_component`, consolidating URL encoding logic across the codebase.
+pub use crate::storage::url_encode_component as url_encode;
 
 pub fn url_decode(input: &str) -> Option<String> {
     let bytes = input.as_bytes();
