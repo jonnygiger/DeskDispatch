@@ -68,38 +68,45 @@ pub struct WorkerPcItem {
     pub latest_screenshot_step_id: Option<i64>,
 }
 
+// Trim simplification: Shared helpers deduplicating worker status evaluation, badge styling,
+// and heartbeat timestamp formatting across WorkerPcItem and WorkerDetail.
+fn derive_worker_status(status: &str, last_heartbeat_at: Option<DateTime<Utc>>) -> &str {
+    if status == "offline" {
+        return "offline";
+    }
+    match last_heartbeat_at {
+        Some(dt) if Utc::now().signed_duration_since(dt).num_seconds() <= 90 => status,
+        _ => "offline",
+    }
+}
+
+fn worker_status_badge_class(derived_status: &str) -> &'static str {
+    match derived_status {
+        "online" => "badge-success",
+        "busy" => "badge-warning",
+        "error" => "badge-danger",
+        _ => "badge-neutral",
+    }
+}
+
+fn format_worker_last_heartbeat(last_heartbeat_at: Option<DateTime<Utc>>) -> String {
+    match last_heartbeat_at {
+        Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        None => "Never".to_string(),
+    }
+}
+
 impl WorkerPcItem {
     pub fn derived_status(&self) -> &str {
-        if self.status == "offline" {
-            return "offline";
-        }
-        match self.last_heartbeat_at {
-            Some(dt) => {
-                let seconds = Utc::now().signed_duration_since(dt).num_seconds();
-                if seconds > 90 {
-                    "offline"
-                } else {
-                    self.status.as_str()
-                }
-            }
-            None => "offline",
-        }
+        derive_worker_status(&self.status, self.last_heartbeat_at)
     }
 
     pub fn status_badge_class(&self) -> &'static str {
-        match self.derived_status() {
-            "online" => "badge-success",
-            "busy" => "badge-warning",
-            "error" => "badge-danger",
-            _ => "badge-neutral",
-        }
+        worker_status_badge_class(self.derived_status())
     }
 
     pub fn formatted_last_heartbeat(&self) -> String {
-        match self.last_heartbeat_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => "Never".to_string(),
-        }
+        format_worker_last_heartbeat(self.last_heartbeat_at)
     }
 }
 
@@ -706,36 +713,15 @@ pub struct WorkerDetail {
 
 impl WorkerDetail {
     pub fn derived_status(&self) -> &str {
-        if self.status == "offline" {
-            return "offline";
-        }
-        match self.last_heartbeat_at {
-            Some(dt) => {
-                let seconds = Utc::now().signed_duration_since(dt).num_seconds();
-                if seconds > 90 {
-                    "offline"
-                } else {
-                    self.status.as_str()
-                }
-            }
-            None => "offline",
-        }
+        derive_worker_status(&self.status, self.last_heartbeat_at)
     }
 
     pub fn status_badge_class(&self) -> &'static str {
-        match self.derived_status() {
-            "online" => "badge-success",
-            "busy" => "badge-warning",
-            "error" => "badge-danger",
-            _ => "badge-neutral",
-        }
+        worker_status_badge_class(self.derived_status())
     }
 
     pub fn formatted_last_heartbeat(&self) -> String {
-        match self.last_heartbeat_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => "Never".to_string(),
-        }
+        format_worker_last_heartbeat(self.last_heartbeat_at)
     }
 
     pub fn formatted_created_at(&self) -> String {
