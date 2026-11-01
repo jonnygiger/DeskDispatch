@@ -155,7 +155,7 @@ impl InputController {
         );
 
         if let Backend::Portal(state) = &self.backend {
-            let mut slot = portal_input(state).await?;
+            let slot = portal_input(state).await?;
             let input = slot
                 .input
                 .as_ref()
@@ -210,14 +210,12 @@ impl InputController {
         );
 
         if let Backend::Portal(state) = &self.backend {
-            let mut slot = portal_input(state).await?;
+            let slot = portal_input(state).await?;
             let input = slot
                 .input
                 .as_ref()
                 .ok_or_else(|| "Wayland portal input is not initialized".to_string())?;
-            return input
-                .mouse_scroll(direction, scroll_amount, x, y)
-                .await;
+            return input.mouse_scroll(direction, scroll_amount, x, y).await;
         }
 
         let btn_num = match direction.to_lowercase().as_str() {
@@ -250,11 +248,7 @@ impl InputController {
         }
     }
 
-    pub async fn type_text(
-        &self,
-        text: &str,
-        delay_between_keys_ms: u64,
-    ) -> Result<(), String> {
+    pub async fn type_text(&self, text: &str, delay_between_keys_ms: u64) -> Result<(), String> {
         info!(
             text_len = text.len(),
             delay_between_keys_ms = delay_between_keys_ms,
@@ -262,7 +256,7 @@ impl InputController {
         );
 
         if let Backend::Portal(state) = &self.backend {
-            let mut slot = portal_input(state).await?;
+            let slot = portal_input(state).await?;
             let input = slot
                 .input
                 .as_ref()
@@ -294,7 +288,7 @@ impl InputController {
         info!(key_combo = key_combo, "Executing key press combo");
 
         if let Backend::Portal(state) = &self.backend {
-            let mut slot = portal_input(state).await?;
+            let slot = portal_input(state).await?;
             let input = slot
                 .input
                 .as_ref()
