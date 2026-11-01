@@ -628,11 +628,11 @@ fn main() {
         wol_enabled: true,
         wol_warmup_secs: 300,
         is_enabled: true,
-        automations: vec![ScheduleAutomationOption {
+        automations: vec![AutomationOption {
             id: 12,
             name: "Daily Login Check".to_string(),
         }],
-        worker_groups: vec![ScheduleWorkerGroupOption {
+        worker_groups: vec![WorkerGroupOption {
             id: 1,
             name: "Warehouse Fleet".to_string(),
         }],
