@@ -480,25 +480,11 @@ pub struct VariableOption {
     pub var_type: String,
 }
 
+// Trim simplification: Replaced 5 redundant `is_selected_*` methods on VariableOption
+// with a single unified `is_selected` method matching WorkerGroupOption and BitmapOption.
 impl VariableOption {
-    pub fn is_selected_x(&self, x_var_id: &Option<i64>) -> bool {
-        *x_var_id == Some(self.id)
-    }
-
-    pub fn is_selected_y(&self, y_var_id: &Option<i64>) -> bool {
-        *y_var_id == Some(self.id)
-    }
-
-    pub fn is_selected_output(&self, output_var_id: &Option<i64>) -> bool {
-        *output_var_id == Some(self.id)
-    }
-
-    pub fn is_selected_found(&self, found_var_id: &Option<i64>) -> bool {
-        *found_var_id == Some(self.id)
-    }
-
-    pub fn is_selected_region(&self, region_var_id: &Option<i64>) -> bool {
-        *region_var_id == Some(self.id)
+    pub fn is_selected(&self, selected_id: &Option<i64>) -> bool {
+        *selected_id == Some(self.id)
     }
 }
 
@@ -526,13 +512,10 @@ pub struct StepOption {
     pub display_number: usize,
 }
 
+// Trim simplification: Replaced `is_selected_match` and `is_selected_no_match` with a unified `is_selected` method.
 impl StepOption {
-    pub fn is_selected_match(&self, match_id: &Option<i64>) -> bool {
-        *match_id == Some(self.id)
-    }
-
-    pub fn is_selected_no_match(&self, no_match_id: &Option<i64>) -> bool {
-        *no_match_id == Some(self.id)
+    pub fn is_selected(&self, selected_id: &Option<i64>) -> bool {
+        *selected_id == Some(self.id)
     }
 
     pub fn display_name(&self) -> String {
@@ -1093,18 +1076,9 @@ mod tests {
             var_type: "int".to_string(),
         };
 
-        assert!(var.is_selected_x(&Some(15)));
-        assert!(!var.is_selected_x(&Some(10)));
-        assert!(!var.is_selected_x(&None));
-
-        assert!(var.is_selected_y(&Some(15)));
-        assert!(!var.is_selected_y(&None));
-
-        assert!(var.is_selected_output(&Some(15)));
-        assert!(!var.is_selected_output(&None));
-
-        assert!(var.is_selected_found(&Some(15)));
-        assert!(!var.is_selected_found(&None));
+        assert!(var.is_selected(&Some(15)));
+        assert!(!var.is_selected(&Some(10)));
+        assert!(!var.is_selected(&None));
     }
 
     #[test]
@@ -1132,9 +1106,9 @@ mod tests {
             display_number: 1,
         };
         assert_eq!(step_with_label.display_name(), "Step 1 (Submit Form)");
-        assert!(step_with_label.is_selected_match(&Some(101)));
-        assert!(!step_with_label.is_selected_match(&Some(200)));
-        assert!(step_with_label.is_selected_no_match(&Some(101)));
+        assert!(step_with_label.is_selected(&Some(101)));
+        assert!(!step_with_label.is_selected(&Some(200)));
+        assert!(!step_with_label.is_selected(&None));
 
         let step_with_whitespace_label = StepOption {
             id: 102,

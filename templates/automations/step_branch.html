@@ -162,7 +162,7 @@
                 <select name="on_match_step_id" id="on_match_step_id" class="form-control" style="width: 100%;">
                     <option value="">-- Continue to Next Sequential Step --</option>
                     {% for st in steps %}
-                        <option value="{{ st.id }}" {% if st.is_selected_match(on_match_step_id) %}selected{% endif %}>
+                        <option value="{{ st.id }}" {% if st.is_selected(on_match_step_id) %}selected{% endif %}>
                             {{ st.display_name() }}
                         </option>
                     {% endfor %}
@@ -175,7 +175,7 @@
                 <select name="on_no_match_step_id" id="on_no_match_step_id" class="form-control" style="width: 100%;">
                     <option value="">-- Continue to Next Sequential Step --</option>
                     {% for st in steps %}
-                        <option value="{{ st.id }}" {% if st.is_selected_no_match(on_no_match_step_id) %}selected{% endif %}>
+                        <option value="{{ st.id }}" {% if st.is_selected(on_no_match_step_id) %}selected{% endif %}>
                             {{ st.display_name() }}
                         </option>
                     {% endfor %}
