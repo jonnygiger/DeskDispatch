@@ -90,6 +90,14 @@ pub struct MouseScrollRow {
     pub region_variable_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct FindPixelRow {
+    pub step_id: i64,
+    pub x: i32,
+    pub y: i32,
+    pub output_variable_id: Option<i64>,
+}
+
 impl SlaStats {
     pub fn formatted_daily(&self) -> String {
         format!("{:.1}%", self.daily_uptime)
