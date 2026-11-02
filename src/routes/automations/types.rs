@@ -255,12 +255,9 @@ impl AutomationListItem {
     }
 
     pub fn last_run_status_badge_class(&self) -> &'static str {
-        match self.last_run_status.as_deref() {
-            Some("succeeded") => "badge-success",
-            Some("failed") | Some("lost") => "badge-danger",
-            Some("running") | Some("cancelling") => "badge-warning",
-            _ => "badge-neutral",
-        }
+        crate::routes::runs::task_run_status_badge_class(
+            self.last_run_status.as_deref().unwrap_or(""),
+        )
     }
 
     pub fn formatted_updated_at(&self) -> String {
