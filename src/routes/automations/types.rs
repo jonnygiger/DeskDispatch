@@ -34,6 +34,18 @@ impl Default for SlaStats {
 // Trim simplification: Canonical step detail query row structs shared between worker API
 // and automation step views to eliminate duplicate struct declarations.
 #[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MouseClickRow {
+    pub step_id: i64,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub x_variable_id: Option<i64>,
+    pub y_variable_id: Option<i64>,
+    pub region_variable_id: Option<i64>,
+    pub button: String,
+    pub click_type: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct KeyPressRow {
     pub step_id: i64,
     pub key_combo: String,

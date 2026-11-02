@@ -107,17 +107,6 @@ struct MouseScrollDetailRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct MouseClickDetailRow {
-    x: Option<i32>,
-    y: Option<i32>,
-    x_variable_id: Option<i64>,
-    y_variable_id: Option<i64>,
-    region_variable_id: Option<i64>,
-    button: String,
-    click_type: String,
-}
-
-#[derive(sqlx::FromRow)]
 struct OcrExtractDetailRow {
     search_x: Option<i32>,
     search_y: Option<i32>,
@@ -128,8 +117,9 @@ struct OcrExtractDetailRow {
     set_as_task_output: bool,
 }
 
-// Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, TypeTextViewRow, and ClipboardControlDetailRow
-// with shared WindowControlRow, KeyPressRow, TypeTextRow, and ClipboardControlRow from super::types.
+// Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, TypeTextViewRow,
+// ClipboardControlDetailRow, and MouseClickDetailRow with shared WindowControlRow, KeyPressRow,
+// TypeTextRow, ClipboardControlRow, and MouseClickRow from super::types.
 
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
@@ -2404,8 +2394,8 @@ async fn populate_step_form_details(
             }
         }
         "mouse_click" => {
-            if let Ok(Some(mc)) = sqlx::query_as::<_, MouseClickDetailRow>(
-                "SELECT x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1",
+            if let Ok(Some(mc)) = sqlx::query_as::<_, MouseClickRow>(
+                "SELECT step_id, x, y, x_variable_id, y_variable_id, region_variable_id, button, click_type FROM step_mouse_clicks WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(db)
