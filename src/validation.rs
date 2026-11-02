@@ -1,6 +1,8 @@
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 
+use crate::routes::automations::types::FindPixelRow;
+
 /// Result of linting an automation before activation or execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutomationLintError {
@@ -47,13 +49,7 @@ struct MouseClickRow {
     region_variable_id: Option<i64>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct FindPixelRow {
-    step_id: i64,
-    x: i32,
-    y: i32,
-    output_variable_id: Option<i64>,
-}
+// Trim simplification: Replaced local duplicate FindPixelRow with shared definition from crate::routes::automations::types.
 
 #[derive(Debug, sqlx::FromRow)]
 struct FindBitmapRow {
