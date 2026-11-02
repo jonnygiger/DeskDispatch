@@ -96,17 +96,6 @@ struct FindPixelDetailRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct MouseScrollDetailRow {
-    direction: String,
-    scroll_amount: i32,
-    x: Option<i32>,
-    y: Option<i32>,
-    x_variable_id: Option<i64>,
-    y_variable_id: Option<i64>,
-    region_variable_id: Option<i64>,
-}
-
-#[derive(sqlx::FromRow)]
 struct OcrExtractDetailRow {
     search_x: Option<i32>,
     search_y: Option<i32>,
@@ -118,8 +107,8 @@ struct OcrExtractDetailRow {
 }
 
 // Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, TypeTextViewRow,
-// ClipboardControlDetailRow, and MouseClickDetailRow with shared WindowControlRow, KeyPressRow,
-// TypeTextRow, ClipboardControlRow, and MouseClickRow from super::types.
+// ClipboardControlDetailRow, MouseClickDetailRow, and MouseScrollDetailRow with shared WindowControlRow,
+// KeyPressRow, TypeTextRow, ClipboardControlRow, MouseClickRow, and MouseScrollRow from super::types.
 
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
@@ -2371,8 +2360,8 @@ async fn populate_step_form_details(
             }
         }
         "mouse_scroll" => {
-            if let Ok(Some(ms)) = sqlx::query_as::<_, MouseScrollDetailRow>(
-                "SELECT direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id FROM step_mouse_scrolls WHERE step_id = $1",
+            if let Ok(Some(ms)) = sqlx::query_as::<_, MouseScrollRow>(
+                "SELECT step_id, direction, scroll_amount, x, y, x_variable_id, y_variable_id, region_variable_id FROM step_mouse_scrolls WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(db)
