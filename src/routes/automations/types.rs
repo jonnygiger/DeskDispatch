@@ -78,6 +78,18 @@ pub struct ClipboardControlRow {
     pub timeout_ms: i64,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MouseScrollRow {
+    pub step_id: i64,
+    pub direction: String,
+    pub scroll_amount: i32,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub x_variable_id: Option<i64>,
+    pub y_variable_id: Option<i64>,
+    pub region_variable_id: Option<i64>,
+}
+
 impl SlaStats {
     pub fn formatted_daily(&self) -> String {
         format!("{:.1}%", self.daily_uptime)
