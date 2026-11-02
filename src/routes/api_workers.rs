@@ -16,7 +16,8 @@ use crate::auth::worker::{generate_worker_api_key, hash_token};
 use crate::domain::{StepResultStatus, WorkerStatus};
 use crate::error::AppError;
 use crate::routes::automations::types::{
-    ClipboardControlRow, KeyPressRow, MouseClickRow, MouseScrollRow, TypeTextRow, WindowControlRow,
+    ClipboardControlRow, FindPixelRow, KeyPressRow, MouseClickRow, MouseScrollRow, TypeTextRow,
+    WindowControlRow,
 };
 use crate::{AppState, auth::AuthWorker};
 
@@ -106,15 +107,7 @@ struct StepRow {
 }
 
 // Trim simplification: Replaced local KeyPressRow, TypeTextRow, WindowControlRow, ClipboardControlRow,
-// MouseClickRow, and MouseScrollRow with shared definitions from crate::routes::automations::types.
-
-#[derive(sqlx::FromRow)]
-struct FindPixelRow {
-    step_id: i64,
-    x: i32,
-    y: i32,
-    output_variable_id: Option<i64>,
-}
+// MouseClickRow, MouseScrollRow, and FindPixelRow with shared definitions from crate::routes::automations::types.
 
 #[derive(sqlx::FromRow)]
 struct FindBitmapRow {

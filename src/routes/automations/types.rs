@@ -31,8 +31,16 @@ impl Default for SlaStats {
     }
 }
 
-// Trim simplification: Canonical step detail query row structs shared between worker API
-// and automation step views to eliminate duplicate struct declarations.
+// Trim simplification: Canonical step detail query row structs shared between worker API,
+// validation, and automation step views to eliminate duplicate struct declarations.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct FindPixelRow {
+    pub step_id: i64,
+    pub x: i32,
+    pub y: i32,
+    pub output_variable_id: Option<i64>,
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct MouseClickRow {
     pub step_id: i64,
