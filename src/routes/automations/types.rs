@@ -99,6 +99,8 @@ impl SlaStats {
     }
 }
 
+// Trim simplification: Consolidated SLA query row mapping using `#[sqlx(flatten)]`
+// and `From<SlaRow> for SlaStats`, eliminating duplicate struct fields and mapping logic.
 #[derive(Debug, sqlx::FromRow)]
 struct SlaRow {
     total_24h: i64,
@@ -114,14 +116,31 @@ struct SlaRow {
 #[derive(Debug, sqlx::FromRow)]
 struct AutoSlaRow {
     automation_id: i64,
-    total_24h: i64,
-    success_24h: i64,
-    total_7d: i64,
-    success_7d: i64,
-    total_30d: i64,
-    success_30d: i64,
-    total_365d: i64,
-    success_365d: i64,
+    #[sqlx(flatten)]
+    sla: SlaRow,
+}
+
+impl From<SlaRow> for SlaStats {
+    fn from(r: SlaRow) -> Self {
+        let calc_uptime = |success: i64, total: i64| -> f64 {
+            if total == 0 {
+                100.0
+            } else {
+                (success as f64 / total as f64) * 100.0
+            }
+        };
+
+        Self {
+            daily_uptime: calc_uptime(r.success_24h, r.total_24h),
+            weekly_uptime: calc_uptime(r.success_7d, r.total_7d),
+            monthly_uptime: calc_uptime(r.success_30d, r.total_30d),
+            yearly_uptime: calc_uptime(r.success_365d, r.total_365d),
+            total_runs_24h: r.total_24h,
+            total_runs_7d: r.total_7d,
+            total_runs_30d: r.total_30d,
+            total_runs_365d: r.total_365d,
+        }
+    }
 }
 
 pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaStats {
@@ -151,28 +170,7 @@ pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaS
     .ok()
     .flatten();
 
-    if let Some(r) = row {
-        let calc_uptime = |success: i64, total: i64| -> f64 {
-            if total == 0 {
-                100.0
-            } else {
-                (success as f64 / total as f64) * 100.0
-            }
-        };
-
-        SlaStats {
-            daily_uptime: calc_uptime(r.success_24h, r.total_24h),
-            weekly_uptime: calc_uptime(r.success_7d, r.total_7d),
-            monthly_uptime: calc_uptime(r.success_30d, r.total_30d),
-            yearly_uptime: calc_uptime(r.success_365d, r.total_365d),
-            total_runs_24h: r.total_24h,
-            total_runs_7d: r.total_7d,
-            total_runs_30d: r.total_30d,
-            total_runs_365d: r.total_365d,
-        }
-    } else {
-        SlaStats::default()
-    }
+    row.map(SlaStats::from).unwrap_or_default()
 }
 
 pub async fn fetch_all_automations_sla(db: &sqlx::PgPool) -> HashMap<i64, SlaStats> {
@@ -203,28 +201,8 @@ pub async fn fetch_all_automations_sla(db: &sqlx::PgPool) -> HashMap<i64, SlaSta
     .unwrap_or_default();
 
     let mut map = HashMap::new();
-    let calc_uptime = |success: i64, total: i64| -> f64 {
-        if total == 0 {
-            100.0
-        } else {
-            (success as f64 / total as f64) * 100.0
-        }
-    };
-
     for r in rows {
-        map.insert(
-            r.automation_id,
-            SlaStats {
-                daily_uptime: calc_uptime(r.success_24h, r.total_24h),
-                weekly_uptime: calc_uptime(r.success_7d, r.total_7d),
-                monthly_uptime: calc_uptime(r.success_30d, r.total_30d),
-                yearly_uptime: calc_uptime(r.success_365d, r.total_365d),
-                total_runs_24h: r.total_24h,
-                total_runs_7d: r.total_7d,
-                total_runs_30d: r.total_30d,
-                total_runs_365d: r.total_365d,
-            },
-        );
+        map.insert(r.automation_id, SlaStats::from(r.sla));
     }
 
     map
