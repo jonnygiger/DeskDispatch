@@ -113,6 +113,16 @@ impl TaskRunDetailRow {
     }
 }
 
+// Trim simplification: Consolidated helper for summary task run status badge styling across views (home, automation lists).
+pub fn task_run_status_badge_class(status: &str) -> &'static str {
+    match status {
+        "succeeded" => "badge-success",
+        "failed" | "lost" => "badge-danger",
+        "running" | "cancelling" => "badge-warning",
+        _ => "badge-neutral",
+    }
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct ExecutedStepRow {
     id: i64,
@@ -1065,6 +1075,16 @@ mod tests {
                 status
             );
         }
+
+        // 3. Shared task_run_status_badge_class helper
+        assert_eq!(task_run_status_badge_class("succeeded"), "badge-success");
+        assert_eq!(task_run_status_badge_class("failed"), "badge-danger");
+        assert_eq!(task_run_status_badge_class("lost"), "badge-danger");
+        assert_eq!(task_run_status_badge_class("running"), "badge-warning");
+        assert_eq!(task_run_status_badge_class("cancelling"), "badge-warning");
+        assert_eq!(task_run_status_badge_class("queued"), "badge-neutral");
+        assert_eq!(task_run_status_badge_class("unknown"), "badge-neutral");
+        assert_eq!(task_run_status_badge_class(""), "badge-neutral");
 
         // 3. ExecutedStepItem result badge classes and partial captures
         let mut step = ExecutedStepItem {

@@ -27,12 +27,7 @@ pub struct RecentRunItem {
 
 impl RecentRunItem {
     pub fn status_badge_class(&self) -> &'static str {
-        match self.status.as_str() {
-            "succeeded" => "badge-success",
-            "failed" | "lost" => "badge-danger",
-            "running" | "cancelling" => "badge-warning",
-            _ => "badge-neutral",
-        }
+        crate::routes::runs::task_run_status_badge_class(&self.status)
     }
 
     pub fn formatted_queued_at(&self) -> String {
