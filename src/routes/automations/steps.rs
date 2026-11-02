@@ -128,18 +128,8 @@ struct OcrExtractDetailRow {
     set_as_task_output: bool,
 }
 
-// Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, and TypeTextViewRow
-// with shared WindowControlRow, KeyPressRow, and TypeTextRow from super::types.
-
-#[derive(sqlx::FromRow)]
-struct ClipboardControlDetailRow {
-    action: String,
-    text_to_set: Option<String>,
-    input_variable_id: Option<i64>,
-    output_variable_id: Option<i64>,
-    set_as_task_output: bool,
-    timeout_ms: i64,
-}
+// Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, TypeTextViewRow, and ClipboardControlDetailRow
+// with shared WindowControlRow, KeyPressRow, TypeTextRow, and ClipboardControlRow from super::types.
 
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
@@ -2340,8 +2330,8 @@ async fn populate_step_form_details(
             }
         }
         "clipboard_control" => {
-            if let Ok(Some(cc)) = sqlx::query_as::<_, ClipboardControlDetailRow>(
-                "SELECT action, text_to_set, input_variable_id, output_variable_id, set_as_task_output, timeout_ms FROM step_clipboard_controls WHERE step_id = $1",
+            if let Ok(Some(cc)) = sqlx::query_as::<_, ClipboardControlRow>(
+                "SELECT step_id, action, text_to_set, input_variable_id, output_variable_id, set_as_task_output, timeout_ms FROM step_clipboard_controls WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(db)
