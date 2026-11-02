@@ -1,3 +1,4 @@
+use crate::routes::automations::types::FindPixelRow;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 
@@ -47,13 +48,7 @@ struct MouseClickRow {
     region_variable_id: Option<i64>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct FindPixelRow {
-    step_id: i64,
-    x: i32,
-    y: i32,
-    output_variable_id: Option<i64>,
-}
+// Trim simplification: Replaced local FindPixelRow with shared definition from crate::routes::automations::types.
 
 #[derive(Debug, sqlx::FromRow)]
 struct FindBitmapRow {
