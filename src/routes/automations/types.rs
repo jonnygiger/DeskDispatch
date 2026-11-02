@@ -55,6 +55,17 @@ pub struct WindowControlRow {
     pub timeout_ms: i64,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ClipboardControlRow {
+    pub step_id: i64,
+    pub action: String,
+    pub text_to_set: Option<String>,
+    pub input_variable_id: Option<i64>,
+    pub output_variable_id: Option<i64>,
+    pub set_as_task_output: bool,
+    pub timeout_ms: i64,
+}
+
 impl SlaStats {
     pub fn formatted_daily(&self) -> String {
         format!("{:.1}%", self.daily_uptime)

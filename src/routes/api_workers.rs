@@ -15,7 +15,9 @@ use axum::routing::{get, post};
 use crate::auth::worker::{generate_worker_api_key, hash_token};
 use crate::domain::{StepResultStatus, WorkerStatus};
 use crate::error::AppError;
-use crate::routes::automations::types::{KeyPressRow, TypeTextRow, WindowControlRow};
+use crate::routes::automations::types::{
+    ClipboardControlRow, KeyPressRow, TypeTextRow, WindowControlRow,
+};
 use crate::{AppState, auth::AuthWorker};
 
 pub fn router() -> Router<AppState> {
@@ -127,7 +129,7 @@ struct MouseClickRow {
     click_type: String,
 }
 
-// Trim simplification: Replaced local KeyPressRow, TypeTextRow, and WindowControlRow
+// Trim simplification: Replaced local KeyPressRow, TypeTextRow, WindowControlRow, and ClipboardControlRow
 // with shared definitions from crate::routes::automations::types.
 
 #[derive(sqlx::FromRow)]
@@ -190,17 +192,6 @@ struct OcrExtractRow {
     set_as_task_output: bool,
     timeout_ms: i64,
     retry_interval_ms: i64,
-}
-
-#[derive(sqlx::FromRow)]
-struct ClipboardControlRow {
-    step_id: i64,
-    action: String,
-    text_to_set: Option<String>,
-    input_variable_id: Option<i64>,
-    output_variable_id: Option<i64>,
-    set_as_task_output: bool,
-    timeout_ms: i64,
 }
 
 #[derive(sqlx::FromRow)]
