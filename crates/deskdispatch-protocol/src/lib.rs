@@ -475,3 +475,41 @@ pub struct FullAutomationPayload {
     pub variables: Vec<AutomationVariablePayload>,
     pub steps: Vec<StepPayload>,
 }
+
+/// Zero-allocation O(1) PNG header parser.
+/// Verifies PNG magic bytes and `IHDR` chunk marker, returning `(width, height)`.
+pub fn parse_png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const PNG_HEADER: &[u8; 8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.len() < 24 || &bytes[..8] != PNG_HEADER || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    Some((w, h))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_png_dimensions() {
+        let mut valid_hdr = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        valid_hdr.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]); // chunk len
+        valid_hdr.extend_from_slice(b"IHDR");
+        valid_hdr.extend_from_slice(&1920u32.to_be_bytes());
+        valid_hdr.extend_from_slice(&1080u32.to_be_bytes());
+        assert_eq!(parse_png_dimensions(&valid_hdr), Some((1920, 1080)));
+
+        let invalid_hdr = [0u8; 24];
+        assert_eq!(parse_png_dimensions(&invalid_hdr), None);
+        assert_eq!(parse_png_dimensions(&[]), None);
+
+        let mut zero_dim_hdr = valid_hdr.clone();
+        zero_dim_hdr[16..20].copy_from_slice(&0u32.to_be_bytes());
+        assert_eq!(parse_png_dimensions(&zero_dim_hdr), None);
+    }
+}

@@ -153,20 +153,8 @@ pub fn generate_random_screenshot_with_dimensions(width: u32, height: u32) -> Ve
     png_buf
 }
 
-/// Zero-allocation O(1) PNG header parser.
-/// Verifies PNG magic bytes and `IHDR` chunk marker, returning `(width, height)`.
-pub fn parse_png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
-    const PNG_HEADER: &[u8; 8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    if bytes.len() < 24 || &bytes[..8] != PNG_HEADER || &bytes[12..16] != b"IHDR" {
-        return None;
-    }
-    let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
-    let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
-    if w == 0 || h == 0 {
-        return None;
-    }
-    Some((w, h))
-}
+// Trim simplification: Replaced duplicate PNG header parser with shared implementation from deskdispatch_protocol.
+pub use deskdispatch_protocol::parse_png_dimensions;
 
 #[cfg(test)]
 mod tests {
