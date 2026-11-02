@@ -101,6 +101,7 @@ impl SlaStats {
 
 #[derive(Debug, sqlx::FromRow)]
 struct SlaRow {
+    automation_id: Option<i64>,
     total_24h: i64,
     success_24h: i64,
     total_7d: i64,
@@ -111,23 +112,37 @@ struct SlaRow {
     success_365d: i64,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct AutoSlaRow {
-    automation_id: i64,
-    total_24h: i64,
-    success_24h: i64,
-    total_7d: i64,
-    success_7d: i64,
-    total_30d: i64,
-    success_30d: i64,
-    total_365d: i64,
-    success_365d: i64,
+// Trim simplification: Reusable conversion from SLA database row to SlaStats,
+// eliminating duplicate inline closures and struct field mapping across
+// fetch_automation_sla and fetch_all_automations_sla.
+impl From<SlaRow> for SlaStats {
+    fn from(r: SlaRow) -> Self {
+        let calc_uptime = |success: i64, total: i64| -> f64 {
+            if total == 0 {
+                100.0
+            } else {
+                (success as f64 / total as f64) * 100.0
+            }
+        };
+
+        Self {
+            daily_uptime: calc_uptime(r.success_24h, r.total_24h),
+            weekly_uptime: calc_uptime(r.success_7d, r.total_7d),
+            monthly_uptime: calc_uptime(r.success_30d, r.total_30d),
+            yearly_uptime: calc_uptime(r.success_365d, r.total_365d),
+            total_runs_24h: r.total_24h,
+            total_runs_7d: r.total_7d,
+            total_runs_30d: r.total_30d,
+            total_runs_365d: r.total_365d,
+        }
+    }
 }
 
 pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaStats {
     let row = sqlx::query_as::<_, SlaRow>(
         r#"
         SELECT
+            NULL::BIGINT AS automation_id,
             COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '24 hours') AS total_24h,
             COUNT(*) FILTER (WHERE tr.queued_at >= NOW() - INTERVAL '24 hours' AND LOWER(trvv.value) = 'true') AS success_24h,
 
@@ -151,32 +166,11 @@ pub async fn fetch_automation_sla(db: &sqlx::PgPool, automation_id: i64) -> SlaS
     .ok()
     .flatten();
 
-    if let Some(r) = row {
-        let calc_uptime = |success: i64, total: i64| -> f64 {
-            if total == 0 {
-                100.0
-            } else {
-                (success as f64 / total as f64) * 100.0
-            }
-        };
-
-        SlaStats {
-            daily_uptime: calc_uptime(r.success_24h, r.total_24h),
-            weekly_uptime: calc_uptime(r.success_7d, r.total_7d),
-            monthly_uptime: calc_uptime(r.success_30d, r.total_30d),
-            yearly_uptime: calc_uptime(r.success_365d, r.total_365d),
-            total_runs_24h: r.total_24h,
-            total_runs_7d: r.total_7d,
-            total_runs_30d: r.total_30d,
-            total_runs_365d: r.total_365d,
-        }
-    } else {
-        SlaStats::default()
-    }
+    row.map(SlaStats::from).unwrap_or_default()
 }
 
 pub async fn fetch_all_automations_sla(db: &sqlx::PgPool) -> HashMap<i64, SlaStats> {
-    let rows = sqlx::query_as::<_, AutoSlaRow>(
+    let rows = sqlx::query_as::<_, SlaRow>(
         r#"
         SELECT
             tr.automation_id,
@@ -203,28 +197,10 @@ pub async fn fetch_all_automations_sla(db: &sqlx::PgPool) -> HashMap<i64, SlaSta
     .unwrap_or_default();
 
     let mut map = HashMap::new();
-    let calc_uptime = |success: i64, total: i64| -> f64 {
-        if total == 0 {
-            100.0
-        } else {
-            (success as f64 / total as f64) * 100.0
-        }
-    };
-
     for r in rows {
-        map.insert(
-            r.automation_id,
-            SlaStats {
-                daily_uptime: calc_uptime(r.success_24h, r.total_24h),
-                weekly_uptime: calc_uptime(r.success_7d, r.total_7d),
-                monthly_uptime: calc_uptime(r.success_30d, r.total_30d),
-                yearly_uptime: calc_uptime(r.success_365d, r.total_365d),
-                total_runs_24h: r.total_24h,
-                total_runs_7d: r.total_7d,
-                total_runs_30d: r.total_30d,
-                total_runs_365d: r.total_365d,
-            },
-        );
+        if let Some(id) = r.automation_id {
+            map.insert(id, SlaStats::from(r));
+        }
     }
 
     map
