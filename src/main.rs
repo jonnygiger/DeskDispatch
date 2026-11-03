@@ -579,21 +579,5 @@ async fn check_health(addr: &SocketAddr) -> Result<(), Box<dyn std::error::Error
     }
 }
 
-pub async fn livez_handler() -> impl axum::response::IntoResponse {
-    (axum::http::StatusCode::OK, "OK")
-}
-
-pub async fn readyz_handler(
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> impl axum::response::IntoResponse {
-    match sqlx::query("SELECT 1").execute(&state.db).await {
-        Ok(_) => (axum::http::StatusCode::OK, "OK"),
-        Err(err) => {
-            tracing::error!("Readyz check failed: {}", err);
-            (
-                axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                "Database connection error",
-            )
-        }
-    }
-}
+// Trim simplification: Replaced duplicate livez_handler and readyz_handler definitions
+// in main.rs with canonical definitions already exported from deskdispatch::routes.
