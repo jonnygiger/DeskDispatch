@@ -89,13 +89,6 @@ struct BranchDetailRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct FindPixelDetailRow {
-    x: Option<i32>,
-    y: Option<i32>,
-    output_variable_id: Option<i64>,
-}
-
-#[derive(sqlx::FromRow)]
 struct OcrExtractDetailRow {
     search_x: Option<i32>,
     search_y: Option<i32>,
@@ -107,8 +100,9 @@ struct OcrExtractDetailRow {
 }
 
 // Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, TypeTextViewRow,
-// ClipboardControlDetailRow, MouseClickDetailRow, and MouseScrollDetailRow with shared WindowControlRow,
-// KeyPressRow, TypeTextRow, ClipboardControlRow, MouseClickRow, and MouseScrollRow from super::types.
+// ClipboardControlDetailRow, MouseClickDetailRow, MouseScrollDetailRow, and FindPixelDetailRow with shared
+// WindowControlRow, KeyPressRow, TypeTextRow, ClipboardControlRow, MouseClickRow, MouseScrollRow, and
+// FindPixelRow from super::types.
 
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
@@ -2325,15 +2319,15 @@ async fn populate_step_form_details(
             }
         }
         "find_pixel_rgb" => {
-            if let Ok(Some(fp)) = sqlx::query_as::<_, FindPixelDetailRow>(
-                "SELECT x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
+            if let Ok(Some(fp)) = sqlx::query_as::<_, FindPixelRow>(
+                "SELECT step_id, x, y, output_variable_id FROM step_find_pixel_rgb WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(db)
             .await
             {
-                form.x = fp.x;
-                form.y = fp.y;
+                form.x = Some(fp.x);
+                form.y = Some(fp.y);
                 form.output_variable_id = fp.output_variable_id;
             }
         }
