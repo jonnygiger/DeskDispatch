@@ -88,21 +88,10 @@ struct BranchDetailRow {
     window_check_type: Option<String>,
 }
 
-#[derive(sqlx::FromRow)]
-struct OcrExtractDetailRow {
-    search_x: Option<i32>,
-    search_y: Option<i32>,
-    search_width: Option<i32>,
-    search_height: Option<i32>,
-    region_variable_id: Option<i64>,
-    output_variable_id: Option<i64>,
-    set_as_task_output: bool,
-}
-
 // Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, TypeTextViewRow,
-// ClipboardControlDetailRow, MouseClickDetailRow, MouseScrollDetailRow, and FindPixelDetailRow with shared
-// WindowControlRow, KeyPressRow, TypeTextRow, ClipboardControlRow, MouseClickRow, MouseScrollRow, and
-// FindPixelRow from super::types.
+// ClipboardControlDetailRow, MouseClickDetailRow, MouseScrollDetailRow, FindPixelDetailRow, and
+// OcrExtractDetailRow with shared WindowControlRow, KeyPressRow, TypeTextRow, ClipboardControlRow,
+// MouseClickRow, MouseScrollRow, FindPixelRow, and OcrExtractRow from super::types.
 
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
@@ -2332,8 +2321,8 @@ async fn populate_step_form_details(
             }
         }
         "ocr_extract" => {
-            if let Ok(Some(ocr)) = sqlx::query_as::<_, OcrExtractDetailRow>(
-                "SELECT search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output FROM step_ocr_extracts WHERE step_id = $1",
+            if let Ok(Some(ocr)) = sqlx::query_as::<_, OcrExtractRow>(
+                "SELECT step_id, search_x, search_y, search_width, search_height, region_variable_id, output_variable_id, set_as_task_output, timeout_ms, retry_interval_ms FROM step_ocr_extracts WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(db)
