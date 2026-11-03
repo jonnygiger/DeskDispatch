@@ -16,8 +16,8 @@ use crate::auth::worker::{generate_worker_api_key, hash_token};
 use crate::domain::{StepResultStatus, WorkerStatus};
 use crate::error::AppError;
 use crate::routes::automations::types::{
-    ClipboardControlRow, FindPixelRow, KeyPressRow, MouseClickRow, MouseScrollRow, TypeTextRow,
-    WindowControlRow,
+    ClipboardControlRow, FindPixelRow, KeyPressRow, MouseClickRow, MouseScrollRow, OcrExtractRow,
+    TypeTextRow, WindowControlRow,
 };
 use crate::{AppState, auth::AuthWorker};
 
@@ -147,20 +147,6 @@ struct BranchRow {
     window_match_pattern: Option<String>,
     window_match_type: Option<String>,
     window_check_type: Option<String>,
-}
-
-#[derive(sqlx::FromRow)]
-struct OcrExtractRow {
-    step_id: i64,
-    search_x: Option<i32>,
-    search_y: Option<i32>,
-    search_width: Option<i32>,
-    search_height: Option<i32>,
-    region_variable_id: Option<i64>,
-    output_variable_id: Option<i64>,
-    set_as_task_output: bool,
-    timeout_ms: i64,
-    retry_interval_ms: i64,
 }
 
 #[derive(sqlx::FromRow)]
