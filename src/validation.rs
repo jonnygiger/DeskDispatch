@@ -1,7 +1,8 @@
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 
-use crate::routes::automations::types::FindPixelRow;
+// Trim simplification: Replaced local duplicate MouseClickRow, MouseScrollRow, and FindPixelRow with shared definitions from crate::routes::automations::types.
+use crate::routes::automations::types::{FindPixelRow, MouseClickRow, MouseScrollRow};
 
 /// Result of linting an automation before activation or execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,18 +39,6 @@ struct VarRow {
 struct ParamRow {
     name: String,
 }
-
-#[derive(Debug, sqlx::FromRow)]
-struct MouseClickRow {
-    step_id: i64,
-    x: Option<i32>,
-    y: Option<i32>,
-    x_variable_id: Option<i64>,
-    y_variable_id: Option<i64>,
-    region_variable_id: Option<i64>,
-}
-
-// Trim simplification: Replaced local duplicate FindPixelRow with shared definition from crate::routes::automations::types.
 
 #[derive(Debug, sqlx::FromRow)]
 struct FindBitmapRow {
@@ -89,16 +78,6 @@ struct VarMeta {
     index: usize,
     name: String,
     var_type: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct MouseScrollRow {
-    step_id: i64,
-    x: Option<i32>,
-    y: Option<i32>,
-    x_variable_id: Option<i64>,
-    y_variable_id: Option<i64>,
-    region_variable_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -313,7 +292,7 @@ pub async fn validate_automation_for_activation(
 
     let ms_fut = sqlx::query_as::<_, MouseScrollRow>(
         r#"
-        SELECT ms.step_id, ms.x, ms.y, ms.x_variable_id, ms.y_variable_id, ms.region_variable_id
+        SELECT ms.step_id, ms.direction, ms.scroll_amount, ms.x, ms.y, ms.x_variable_id, ms.y_variable_id, ms.region_variable_id
         FROM step_mouse_scrolls ms
         JOIN automation_steps s ON ms.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL
@@ -336,7 +315,7 @@ pub async fn validate_automation_for_activation(
 
     let mc_fut = sqlx::query_as::<_, MouseClickRow>(
         r#"
-        SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id, smc.region_variable_id
+        SELECT smc.step_id, smc.x, smc.y, smc.x_variable_id, smc.y_variable_id, smc.region_variable_id, smc.button, smc.click_type
         FROM step_mouse_clicks smc
         JOIN automation_steps s ON smc.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL
