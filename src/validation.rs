@@ -1,8 +1,10 @@
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 
-// Trim simplification: Replaced local duplicate MouseClickRow, MouseScrollRow, and FindPixelRow with shared definitions from crate::routes::automations::types.
-use crate::routes::automations::types::{FindPixelRow, MouseClickRow, MouseScrollRow};
+// Trim simplification: Replaced local duplicate MouseClickRow, MouseScrollRow, FindPixelRow, and OcrExtractRow with shared definitions from crate::routes::automations::types.
+use crate::routes::automations::types::{
+    FindPixelRow, MouseClickRow, MouseScrollRow, OcrExtractRow,
+};
 
 /// Result of linting an automation before activation or execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,17 +135,6 @@ struct BranchMeta {
 
 #[derive(Debug, Clone)]
 struct OcrExtractMeta {
-    search_x: Option<i32>,
-    search_y: Option<i32>,
-    search_width: Option<i32>,
-    search_height: Option<i32>,
-    region_variable_id: Option<i64>,
-    output_variable_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct OcrExtractRow {
-    step_id: i64,
     search_x: Option<i32>,
     search_y: Option<i32>,
     search_width: Option<i32>,
@@ -359,7 +350,7 @@ pub async fn validate_automation_for_activation(
 
     let ocr_fut = sqlx::query_as::<_, OcrExtractRow>(
         r#"
-        SELECT soe.step_id, soe.search_x, soe.search_y, soe.search_width, soe.search_height, soe.region_variable_id, soe.output_variable_id
+        SELECT soe.step_id, soe.search_x, soe.search_y, soe.search_width, soe.search_height, soe.region_variable_id, soe.output_variable_id, soe.set_as_task_output, soe.timeout_ms, soe.retry_interval_ms
         FROM step_ocr_extracts soe
         JOIN automation_steps s ON soe.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL

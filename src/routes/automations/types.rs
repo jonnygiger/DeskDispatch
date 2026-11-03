@@ -98,6 +98,20 @@ pub struct FindPixelRow {
     pub output_variable_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OcrExtractRow {
+    pub step_id: i64,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub region_variable_id: Option<i64>,
+    pub output_variable_id: Option<i64>,
+    pub set_as_task_output: bool,
+    pub timeout_ms: i64,
+    pub retry_interval_ms: i64,
+}
+
 impl SlaStats {
     pub fn formatted_daily(&self) -> String {
         format!("{:.1}%", self.daily_uptime)
