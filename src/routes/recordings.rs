@@ -50,15 +50,21 @@ pub struct RecordingSessionDetail {
     pub ended_at: Option<DateTime<Utc>>,
 }
 
+// Trim simplification: Consolidated recording session status badge class mapping
+// into a shared standalone helper, mirroring patterns across runs, automations, and workers.
+pub fn recording_session_status_badge_class(status: &str) -> &'static str {
+    match status {
+        "recording" => "badge-warning",
+        "completed" => "badge-success",
+        "imported" => "badge-info",
+        "discarded" => "badge-danger",
+        _ => "badge-neutral",
+    }
+}
+
 impl RecordingSessionDetail {
     pub fn status_badge_class(&self) -> &'static str {
-        match self.status.as_str() {
-            "recording" => "badge-warning",
-            "completed" => "badge-success",
-            "imported" => "badge-info",
-            "discarded" => "badge-danger",
-            _ => "badge-neutral",
-        }
+        recording_session_status_badge_class(&self.status)
     }
 
     pub fn formatted_started_at(&self) -> String {
@@ -865,6 +871,29 @@ mod tests {
 
         session.status = "unknown".to_string();
         assert_eq!(session.status_badge_class(), "badge-neutral");
+
+        // Direct test for standalone helper
+        assert_eq!(
+            recording_session_status_badge_class("recording"),
+            "badge-warning"
+        );
+        assert_eq!(
+            recording_session_status_badge_class("completed"),
+            "badge-success"
+        );
+        assert_eq!(
+            recording_session_status_badge_class("imported"),
+            "badge-info"
+        );
+        assert_eq!(
+            recording_session_status_badge_class("discarded"),
+            "badge-danger"
+        );
+        assert_eq!(
+            recording_session_status_badge_class("other"),
+            "badge-neutral"
+        );
+        assert_eq!(recording_session_status_badge_class(""), "badge-neutral");
     }
 
     #[test]
