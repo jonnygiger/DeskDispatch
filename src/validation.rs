@@ -1,9 +1,9 @@
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 
-// Trim simplification: Replaced local duplicate MouseClickRow, MouseScrollRow, FindPixelRow, and OcrExtractRow with shared definitions from crate::routes::automations::types.
+// Trim simplification: Replaced local duplicate MouseClickRow, MouseScrollRow, FindPixelRow, OcrExtractRow, and FindBitmapRow with shared definitions from crate::routes::automations::types.
 use crate::routes::automations::types::{
-    FindPixelRow, MouseClickRow, MouseScrollRow, OcrExtractRow,
+    FindBitmapRow, FindPixelRow, MouseClickRow, MouseScrollRow, OcrExtractRow,
 };
 
 /// Result of linting an automation before activation or execution.
@@ -40,18 +40,6 @@ struct VarRow {
 #[derive(Debug, sqlx::FromRow)]
 struct ParamRow {
     name: String,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct FindBitmapRow {
-    step_id: i64,
-    reference_bitmap_id: i64,
-    output_found_variable_id: Option<i64>,
-    output_x_variable_id: Option<i64>,
-    output_y_variable_id: Option<i64>,
-    output_region_variable_id: Option<i64>,
-    search_x: Option<i32>,
-    search_y: Option<i32>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -328,7 +316,9 @@ pub async fn validate_automation_for_activation(
 
     let fb_fut = sqlx::query_as::<_, FindBitmapRow>(
         r#"
-        SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id, sfb.output_region_variable_id, sfb.search_x, sfb.search_y
+        SELECT sfb.step_id, sfb.reference_bitmap_id, sfb.search_x, sfb.search_y, sfb.search_width, sfb.search_height, sfb.match_threshold,
+               sfb.output_found_variable_id, sfb.output_x_variable_id, sfb.output_y_variable_id, sfb.output_region_variable_id,
+               NULL::TEXT AS reference_bitmap_key
         FROM step_find_bitmap sfb
         JOIN automation_steps s ON sfb.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL

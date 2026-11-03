@@ -112,6 +112,22 @@ pub struct OcrExtractRow {
     pub retry_interval_ms: i64,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct FindBitmapRow {
+    pub step_id: i64,
+    pub reference_bitmap_id: i64,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub match_threshold: f32,
+    pub output_found_variable_id: Option<i64>,
+    pub output_x_variable_id: Option<i64>,
+    pub output_y_variable_id: Option<i64>,
+    pub output_region_variable_id: Option<i64>,
+    pub reference_bitmap_key: Option<String>,
+}
+
 impl SlaStats {
     pub fn formatted_daily(&self) -> String {
         format!("{:.1}%", self.daily_uptime)

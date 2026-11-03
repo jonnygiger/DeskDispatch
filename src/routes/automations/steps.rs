@@ -52,20 +52,6 @@ struct BaseStepRow {
 }
 
 #[derive(sqlx::FromRow)]
-struct FindBitmapDetailRow {
-    reference_bitmap_id: Option<i64>,
-    search_x: Option<i32>,
-    search_y: Option<i32>,
-    search_width: Option<i32>,
-    search_height: Option<i32>,
-    match_threshold: f32,
-    output_found_variable_id: Option<i64>,
-    output_x_variable_id: Option<i64>,
-    output_y_variable_id: Option<i64>,
-    output_region_variable_id: Option<i64>,
-}
-
-#[derive(sqlx::FromRow)]
 struct BranchDetailRow {
     condition_type: String,
     x: Option<i32>,
@@ -89,9 +75,9 @@ struct BranchDetailRow {
 }
 
 // Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, TypeTextViewRow,
-// ClipboardControlDetailRow, MouseClickDetailRow, MouseScrollDetailRow, FindPixelDetailRow, and
-// OcrExtractDetailRow with shared WindowControlRow, KeyPressRow, TypeTextRow, ClipboardControlRow,
-// MouseClickRow, MouseScrollRow, FindPixelRow, and OcrExtractRow from super::types.
+// ClipboardControlDetailRow, MouseClickDetailRow, MouseScrollDetailRow, FindPixelDetailRow,
+// OcrExtractDetailRow, and FindBitmapDetailRow with shared WindowControlRow, KeyPressRow, TypeTextRow,
+// ClipboardControlRow, MouseClickRow, MouseScrollRow, FindPixelRow, OcrExtractRow, and FindBitmapRow from super::types.
 
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
@@ -2226,14 +2212,14 @@ async fn populate_step_form_details(
             }
         }
         "find_bitmap" => {
-            if let Ok(Some(fb)) = sqlx::query_as::<_, FindBitmapDetailRow>(
-                "SELECT reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id FROM step_find_bitmap WHERE step_id = $1",
+            if let Ok(Some(fb)) = sqlx::query_as::<_, FindBitmapRow>(
+                "SELECT step_id, reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold, output_found_variable_id, output_x_variable_id, output_y_variable_id, output_region_variable_id, NULL::TEXT AS reference_bitmap_key FROM step_find_bitmap WHERE step_id = $1",
             )
             .bind(sid)
             .fetch_optional(db)
             .await
             {
-                form.reference_bitmap_id = query.reference_bitmap_id.or(fb.reference_bitmap_id);
+                form.reference_bitmap_id = query.reference_bitmap_id.or(Some(fb.reference_bitmap_id));
                 form.search_x = query.search_x.or(fb.search_x);
                 form.search_y = query.search_y.or(fb.search_y);
                 form.search_width = query.search_width.or(fb.search_width);

@@ -16,8 +16,8 @@ use crate::auth::worker::{generate_worker_api_key, hash_token};
 use crate::domain::{StepResultStatus, WorkerStatus};
 use crate::error::AppError;
 use crate::routes::automations::types::{
-    ClipboardControlRow, FindPixelRow, KeyPressRow, MouseClickRow, MouseScrollRow, OcrExtractRow,
-    TypeTextRow, WindowControlRow,
+    ClipboardControlRow, FindBitmapRow, FindPixelRow, KeyPressRow, MouseClickRow, MouseScrollRow,
+    OcrExtractRow, TypeTextRow, WindowControlRow,
 };
 use crate::{AppState, auth::AuthWorker};
 
@@ -107,23 +107,7 @@ struct StepRow {
 }
 
 // Trim simplification: Replaced local KeyPressRow, TypeTextRow, WindowControlRow, ClipboardControlRow,
-// MouseClickRow, MouseScrollRow, FindPixelRow, and OcrExtractRow with shared definitions from crate::routes::automations::types.
-
-#[derive(sqlx::FromRow)]
-struct FindBitmapRow {
-    step_id: i64,
-    reference_bitmap_id: i64,
-    search_x: Option<i32>,
-    search_y: Option<i32>,
-    search_width: Option<i32>,
-    search_height: Option<i32>,
-    match_threshold: f32,
-    output_found_variable_id: Option<i64>,
-    output_x_variable_id: Option<i64>,
-    output_y_variable_id: Option<i64>,
-    output_region_variable_id: Option<i64>,
-    reference_bitmap_key: Option<String>,
-}
+// MouseClickRow, MouseScrollRow, FindPixelRow, OcrExtractRow, and FindBitmapRow with shared definitions from crate::routes::automations::types.
 
 #[derive(sqlx::FromRow)]
 struct BranchRow {
