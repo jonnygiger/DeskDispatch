@@ -51,33 +51,10 @@ struct BaseStepRow {
     post_delay_ms: i32,
 }
 
-#[derive(sqlx::FromRow)]
-struct BranchDetailRow {
-    condition_type: String,
-    x: Option<i32>,
-    y: Option<i32>,
-    expected_r: Option<i16>,
-    expected_g: Option<i16>,
-    expected_b: Option<i16>,
-    tolerance: Option<i16>,
-    reference_bitmap_id: Option<i64>,
-    search_x: Option<i32>,
-    search_y: Option<i32>,
-    search_width: Option<i32>,
-    search_height: Option<i32>,
-    match_threshold: Option<f32>,
-    on_match_step_id: Option<i64>,
-    on_no_match_step_id: Option<i64>,
-    window_match_pattern: Option<String>,
-    #[allow(dead_code)]
-    window_match_type: Option<String>,
-    window_check_type: Option<String>,
-}
-
 // Trim simplification: Replaced local WindowControlViewRow, KeyPressViewRow, TypeTextViewRow,
 // ClipboardControlDetailRow, MouseClickDetailRow, MouseScrollDetailRow, FindPixelDetailRow,
-// OcrExtractDetailRow, and FindBitmapDetailRow with shared WindowControlRow, KeyPressRow, TypeTextRow,
-// ClipboardControlRow, MouseClickRow, MouseScrollRow, FindPixelRow, OcrExtractRow, and FindBitmapRow from super::types.
+// OcrExtractDetailRow, FindBitmapDetailRow, and BranchDetailRow with shared WindowControlRow, KeyPressRow, TypeTextRow,
+// ClipboardControlRow, MouseClickRow, MouseScrollRow, FindPixelRow, OcrExtractRow, FindBitmapRow, and BranchRow from super::types.
 
 // ============================================================================
 // Helper Functions for Validation, Delay & Step Database Operations
@@ -2238,10 +2215,10 @@ async fn populate_step_form_details(
             }
         }
         "branch" => {
-            if let Ok(Some(br)) = sqlx::query_as::<_, BranchDetailRow>(
-                r#"SELECT condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
+            if let Ok(Some(br)) = sqlx::query_as::<_, BranchRow>(
+                r#"SELECT step_id, condition_type, x, y, expected_r, expected_g, expected_b, tolerance,
                           reference_bitmap_id, search_x, search_y, search_width, search_height, match_threshold,
-                          on_match_step_id, on_no_match_step_id,
+                          on_match_step_id, on_no_match_step_id, NULL::TEXT AS reference_bitmap_key,
                           window_match_pattern, window_match_type, window_check_type
                    FROM step_branches WHERE step_id = $1"#,
             )
