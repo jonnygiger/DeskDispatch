@@ -147,15 +147,9 @@ pub struct ScheduleFormTemplate {
     pub error: Option<String>,
 }
 
+// Trim simplification: Removed redundant `is_automation_selected` and `is_worker_group_selected` methods
+// in favor of reusing canonical `.is_selected(&Option<i64>)` on AutomationOption and WorkerGroupOption.
 impl ScheduleFormTemplate {
-    pub fn is_automation_selected(&self, id: &i64) -> bool {
-        self.automation_id == Some(*id)
-    }
-
-    pub fn is_worker_group_selected(&self, id: &i64) -> bool {
-        self.worker_group_id == Some(*id)
-    }
-
     pub fn build_error(
         user: AuthUser,
         schedule_id: Option<i64>,
@@ -1075,80 +1069,29 @@ mod tests {
 
     #[test]
     fn test_schedule_form_template_selection_helpers() {
-        let user = AuthUser {
-            id: 1,
-            username: "editor".to_string(),
-            display_name: "Editor User".to_string(),
-            role: crate::auth::UserRole::Editor,
-            session_id: uuid::Uuid::new_v4(),
-            csrf_token: "csrf_token_test".to_string(),
-            must_change_password: false,
+        let auto = AutomationOption {
+            id: 10,
+            name: "Auto 10".to_string(),
         };
+        let selected_auto_id = Some(10);
+        let unselected_auto_id = Some(99);
+        let none_auto_id = None;
 
-        let template_with_selections = ScheduleFormTemplate {
-            user: user.clone(),
-            is_edit: true,
-            schedule_id: Some(42),
-            automation_id: Some(10),
-            name: "Nightly Sync".to_string(),
-            cron_expression: "0 2 * * *".to_string(),
-            timezone: "UTC".to_string(),
-            worker_group_id: Some(5),
-            overlap_policy: "skip".to_string(),
-            max_queue_age_secs: Some(1800),
-            wol_enabled: true,
-            wol_warmup_secs: 300,
-            is_enabled: true,
-            automations: vec![],
-            worker_groups: vec![],
-            error: None,
+        assert!(auto.is_selected(&selected_auto_id));
+        assert!(!auto.is_selected(&unselected_auto_id));
+        assert!(!auto.is_selected(&none_auto_id));
+
+        let wg = WorkerGroupOption {
+            id: 5,
+            name: "Group 5".to_string(),
         };
+        let selected_wg_id = Some(5);
+        let unselected_wg_id = Some(99);
+        let none_wg_id = None;
 
-        assert!(
-            template_with_selections.is_automation_selected(&10),
-            "Expected automation_id 10 to be selected"
-        );
-        assert!(
-            !template_with_selections.is_automation_selected(&99),
-            "Expected automation_id 99 not to be selected"
-        );
-
-        assert!(
-            template_with_selections.is_worker_group_selected(&5),
-            "Expected worker_group_id 5 to be selected"
-        );
-        assert!(
-            !template_with_selections.is_worker_group_selected(&99),
-            "Expected worker_group_id 99 not to be selected"
-        );
-
-        let template_without_selections = ScheduleFormTemplate {
-            user,
-            is_edit: false,
-            schedule_id: None,
-            automation_id: None,
-            name: String::new(),
-            cron_expression: String::new(),
-            timezone: "UTC".to_string(),
-            worker_group_id: None,
-            overlap_policy: "allow".to_string(),
-            max_queue_age_secs: None,
-            wol_enabled: false,
-            wol_warmup_secs: 0,
-            is_enabled: true,
-            automations: vec![],
-            worker_groups: vec![],
-            error: None,
-        };
-
-        assert!(
-            !template_without_selections.is_automation_selected(&10),
-            "Expected false when automation_id is None"
-        );
-        assert!(
-            !template_without_selections.is_worker_group_selected(&5),
-            "Expected false when worker_group_id is None"
-        );
+        assert!(wg.is_selected(&selected_wg_id));
+        assert!(!wg.is_selected(&unselected_wg_id));
+        assert!(!wg.is_selected(&none_wg_id));
     }
 
     #[test]

@@ -30,7 +30,7 @@
             <select name="automation_id" id="automation_id" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;" required>
                 <option value="">-- Select Automation --</option>
                 {% for auto in automations %}
-                <option value="{{ auto.id }}" {% if self.is_automation_selected(auto.id) %}selected{% endif %}>
+                <option value="{{ auto.id }}" {% if auto.is_selected(automation_id) %}selected{% endif %}>
                     {{ auto.name }}
                 </option>
                 {% endfor %}
@@ -63,7 +63,7 @@
             <select name="worker_group_id" id="worker_group_id" class="form-control" style="width: 100%; padding: 0.5rem; border: 1px solid var(--color-border); border-radius: 4px;">
                 <option value="">Any available worker</option>
                 {% for wg in worker_groups %}
-                <option value="{{ wg.id }}" {% if self.is_worker_group_selected(wg.id) %}selected{% endif %}>
+                <option value="{{ wg.id }}" {% if wg.is_selected(worker_group_id) %}selected{% endif %}>
                     {{ wg.name }}
                 </option>
                 {% endfor %}
