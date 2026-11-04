@@ -23,21 +23,8 @@ struct RawStepOptionRow {
     position: f64,
 }
 
-#[derive(sqlx::FromRow)]
-struct MaxPosRow {
-    max_pos: Option<f64>,
-}
-
-#[derive(sqlx::FromRow)]
-struct StepIdRow {
-    id: i64,
-}
-
-#[derive(sqlx::FromRow)]
-struct StepTypeRow {
-    step_type: String,
-}
-
+// Trim simplification: Replaced single-column structs MaxPosRow, StepIdRow, and StepTypeRow
+// with standard sqlx::query_scalar queries.
 #[derive(sqlx::FromRow)]
 struct StepPosRow {
     id: i64,
@@ -169,14 +156,14 @@ async fn get_next_step_position<'e, E>(executor: E, automation_id: i64) -> f64
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    sqlx::query_as::<_, MaxPosRow>(
-        "SELECT MAX(position) AS max_pos FROM automation_steps WHERE automation_id = $1",
+    sqlx::query_scalar::<_, Option<f64>>(
+        "SELECT MAX(position) FROM automation_steps WHERE automation_id = $1",
     )
     .bind(automation_id)
     .fetch_one(executor)
     .await
     .ok()
-    .and_then(|r| r.max_pos)
+    .flatten()
     .map(|p| p + 10.0)
     .unwrap_or(10.0)
 }
@@ -192,7 +179,7 @@ async fn insert_base_step(
     let post_delay_ms = seconds_to_post_delay_ms(post_delay_seconds);
     let clean_label = sanitize_label(label);
 
-    let row = sqlx::query_as::<_, StepIdRow>(
+    let id = sqlx::query_scalar::<_, i64>(
         "INSERT INTO automation_steps (automation_id, position, step_type, label, post_delay_ms) VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(automation_id)
@@ -203,7 +190,7 @@ async fn insert_base_step(
     .fetch_one(&mut **tx)
     .await?;
 
-    Ok(row.id)
+    Ok(id)
 }
 
 async fn update_base_step(
@@ -2380,16 +2367,15 @@ pub async fn post_edit_step_handler(
         return Redirect::to(&format!("/automations/{}", id)).into_response();
     }
 
-    let step_type_row = sqlx::query_as::<_, StepTypeRow>(
+    let step_type = match sqlx::query_scalar::<_, String>(
         "SELECT step_type FROM automation_steps WHERE id = $1 AND automation_id = $2 AND deleted_at IS NULL",
     )
     .bind(sid)
     .bind(id)
     .fetch_optional(&state.db)
-    .await;
-
-    let step_type = match step_type_row {
-        Ok(Some(r)) => r.step_type,
+    .await
+    {
+        Ok(Some(step_type)) => step_type,
         _ => return Redirect::to(&format!("/automations/{}", id)).into_response(),
     };
 
@@ -2615,18 +2601,18 @@ pub async fn compact_positions(db: &PgPool, automation_id: i64) -> Result<(), sq
         .fetch_optional(&mut *tx)
         .await?;
 
-    let steps = sqlx::query_as::<_, StepIdRow>(
+    let step_ids = sqlx::query_scalar::<_, i64>(
         "SELECT id FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(&mut *tx)
     .await?;
 
-    for (i, row) in steps.iter().enumerate() {
+    for (i, &step_id) in step_ids.iter().enumerate() {
         let new_pos = (i as f64 + 1.0) * 10.0;
         sqlx::query("UPDATE automation_steps SET position = $1 WHERE id = $2")
             .bind(new_pos)
-            .bind(row.id)
+            .bind(step_id)
             .execute(&mut *tx)
             .await?;
     }
