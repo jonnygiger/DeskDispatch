@@ -105,11 +105,17 @@ impl ScheduleItem {
     }
 
     pub fn status_badge_class(&self) -> &'static str {
-        if self.is_enabled {
-            "badge-success"
-        } else {
-            "badge-neutral"
-        }
+        schedule_status_badge_class(self.is_enabled)
+    }
+}
+
+// Trim simplification: Consolidated schedule status badge class mapping
+// into a shared standalone helper, mirroring patterns across runs, automations, and recordings.
+pub fn schedule_status_badge_class(is_enabled: bool) -> &'static str {
+    if is_enabled {
+        "badge-success"
+    } else {
+        "badge-neutral"
     }
 }
 
@@ -1042,6 +1048,10 @@ mod tests {
         };
         assert_eq!(disabled_item.formatted_next_run(), "Disabled");
         assert_eq!(disabled_item.status_badge_class(), "badge-neutral");
+
+        // Direct test for schedule_status_badge_class helper
+        assert_eq!(schedule_status_badge_class(true), "badge-success");
+        assert_eq!(schedule_status_badge_class(false), "badge-neutral");
 
         let next_dt = Utc.with_ymd_and_hms(2025, 6, 15, 12, 30, 0).unwrap();
         let last_dt = Utc.with_ymd_and_hms(2025, 6, 15, 10, 15, 0).unwrap();
