@@ -365,15 +365,10 @@ struct EditUserRow {
     must_change_password: bool,
 }
 
+// Trim simplification: Replaced single-purpose UserDeactTargetRow with UserTargetRow.
 #[derive(FromRow)]
 struct UserTargetRow {
     username: String,
-    role: String,
-    is_active: bool,
-}
-
-#[derive(FromRow)]
-struct UserDeactTargetRow {
     role: String,
     is_active: bool,
 }
@@ -576,8 +571,8 @@ pub async fn post_deactivate_user_handler(
     Path(id): Path<i64>,
     RequireAdmin(user): RequireAdmin,
 ) -> impl IntoResponse {
-    let target_row = match sqlx::query_as::<_, UserDeactTargetRow>(
-        "SELECT role, is_active FROM users WHERE id = $1",
+    let target_row = match sqlx::query_as::<_, UserTargetRow>(
+        "SELECT username, role, is_active FROM users WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
