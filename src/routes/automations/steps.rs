@@ -15,11 +15,13 @@ use crate::routes::auth::HtmlTemplate;
 // Strongly-Typed Row Structs for Database Queries
 // ============================================================================
 
+// Trim simplification: Consolidated RawStepOptionRow into RawStepRow for step queries across options and views.
 #[derive(sqlx::FromRow)]
-struct RawStepOptionRow {
+struct RawStepRow {
     id: i64,
     step_type: String,
     label: Option<String>,
+    post_delay_ms: i32,
     position: f64,
 }
 
@@ -251,8 +253,8 @@ pub async fn fetch_automation_step_options(
     automation_id: i64,
     exclude_step_id: Option<i64>,
 ) -> Vec<StepOption> {
-    let raw_steps = sqlx::query_as::<_, RawStepOptionRow>(
-        "SELECT id, step_type, label, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
+    let raw_steps = sqlx::query_as::<_, RawStepRow>(
+        "SELECT id, step_type, label, post_delay_ms, position FROM automation_steps WHERE automation_id = $1 AND deleted_at IS NULL ORDER BY position ASC, id ASC",
     )
     .bind(automation_id)
     .fetch_all(db)
@@ -655,15 +657,6 @@ pub fn generate_branch_summary(
         );
     }
     buf
-}
-
-#[derive(sqlx::FromRow)]
-struct RawStepRow {
-    id: i64,
-    step_type: String,
-    label: Option<String>,
-    post_delay_ms: i32,
-    position: f64,
 }
 
 #[derive(sqlx::FromRow)]
