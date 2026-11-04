@@ -55,22 +55,15 @@ pub async fn dev_magnifier_verify_handler(
     HtmlTemplate(DevMagnifierTemplate { magnifier })
 }
 
-/// GET /media/screenshots/{id}
-/// Generates a presigned GET URL for a step screenshot and issues a 302 Found redirect with Cache-Control headers.
-#[tracing::instrument(skip(state, _user))]
-pub async fn get_media_screenshot_handler(
-    State(state): State<AppState>,
-    _user: AuthUser,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
-    let key_opt = sqlx::query_scalar::<_, String>(
-        "SELECT object_storage_key FROM step_screenshots WHERE step_id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await;
-
-    match key_opt {
+// Trim simplification: Shared helper consolidating presigned media redirect generation,
+// caching headers, and database/storage error logging across media endpoints.
+async fn redirect_to_presigned_media(
+    state: &AppState,
+    key_res: Result<Option<String>, sqlx::Error>,
+    id: i64,
+    entity_name: &str,
+) -> axum::response::Response {
+    match key_res {
         Ok(Some(object_key)) => {
             match state
                 .storage_service()
@@ -87,9 +80,7 @@ pub async fn get_media_screenshot_handler(
                     .into_response(),
                 Err(err) => {
                     tracing::error!(
-                        "Failed to generate presigned GET URL for screenshot {}: {}",
-                        id,
-                        err
+                        "Failed to generate presigned GET URL for {entity_name} {id}: {err}"
                     );
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -99,12 +90,30 @@ pub async fn get_media_screenshot_handler(
                 }
             }
         }
-        Ok(None) => (StatusCode::NOT_FOUND, "Screenshot not found").into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, format!("{entity_name} not found")).into_response(),
         Err(err) => {
-            tracing::error!("Database error fetching screenshot {}: {}", id, err);
+            tracing::error!("Database error fetching {entity_name} {id}: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response()
         }
     }
+}
+
+/// GET /media/screenshots/{id}
+/// Generates a presigned GET URL for a step screenshot and issues a 302 Found redirect with Cache-Control headers.
+#[tracing::instrument(skip(state, _user))]
+pub async fn get_media_screenshot_handler(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let key_res = sqlx::query_scalar::<_, String>(
+        "SELECT object_storage_key FROM step_screenshots WHERE step_id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
+
+    redirect_to_presigned_media(&state, key_res, id, "Screenshot").await
 }
 
 /// GET /media/bitmaps/{id}
@@ -115,45 +124,11 @@ pub async fn get_media_bitmap_handler(
     _user: AuthUser,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let key_opt =
+    let key_res =
         sqlx::query_scalar::<_, String>("SELECT object_storage_key FROM bitmaps WHERE id = $1")
             .bind(id)
             .fetch_optional(&state.db)
             .await;
 
-    match key_opt {
-        Ok(Some(object_key)) => {
-            match state
-                .storage_service()
-                .generate_presigned_get_url(&object_key, Duration::from_secs(900))
-                .await
-            {
-                Ok(presigned_url) => (
-                    StatusCode::FOUND,
-                    [
-                        (header::LOCATION, presigned_url),
-                        (header::CACHE_CONTROL, "private, max-age=300".to_string()),
-                    ],
-                )
-                    .into_response(),
-                Err(err) => {
-                    tracing::error!(
-                        "Failed to generate presigned GET URL for bitmap {}: {}",
-                        id,
-                        err
-                    );
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Failed to generate media URL",
-                    )
-                        .into_response()
-                }
-            }
-        }
-        Ok(None) => (StatusCode::NOT_FOUND, "Bitmap not found").into_response(),
-        Err(err) => {
-            tracing::error!("Database error fetching bitmap {}: {}", id, err);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response()
-        }
-    }
+    redirect_to_presigned_media(&state, key_res, id, "Bitmap").await
 }
