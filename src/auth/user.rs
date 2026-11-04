@@ -82,6 +82,14 @@ impl UserRole {
     pub fn is_admin(&self) -> bool {
         matches!(self, UserRole::Admin)
     }
+
+    /// Returns the CSS badge class corresponding to this user role.
+    pub fn badge_class(&self) -> &'static str {
+        match self {
+            UserRole::Admin => "badge-primary",
+            UserRole::Editor | UserRole::Viewer => "badge-neutral",
+        }
+    }
 }
 
 impl std::fmt::Display for UserRole {
@@ -134,16 +142,19 @@ mod tests {
     fn test_user_role_permissions_display_from_str_and_serde() {
         // Arrange
         let cases = [
-            (UserRole::Admin, "admin", true, true),
-            (UserRole::Editor, "editor", true, false),
-            (UserRole::Viewer, "viewer", false, false),
+            (UserRole::Admin, "admin", true, true, "badge-primary"),
+            (UserRole::Editor, "editor", true, false, "badge-neutral"),
+            (UserRole::Viewer, "viewer", false, false, "badge-neutral"),
         ];
 
-        for (role, expected_str, expected_can_edit, expected_is_admin) in cases {
+        for (role, expected_str, expected_can_edit, expected_is_admin, expected_badge_class) in
+            cases
+        {
             // Act & Assert methods
             assert_eq!(role.as_str(), expected_str);
             assert_eq!(role.can_edit(), expected_can_edit);
             assert_eq!(role.is_admin(), expected_is_admin);
+            assert_eq!(role.badge_class(), expected_badge_class);
 
             // Act & Assert Display
             assert_eq!(role.to_string(), expected_str);

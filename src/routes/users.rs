@@ -64,12 +64,9 @@ impl UserListItem {
         }
     }
 
+    // Trim simplification: Delegate role badge styling directly to UserRole::badge_class helper.
     pub fn role_badge_class(&self) -> &'static str {
-        match self.role {
-            UserRole::Admin => "badge-primary",
-            UserRole::Editor => "badge-neutral",
-            UserRole::Viewer => "badge-neutral",
-        }
+        self.role.badge_class()
     }
 }
 
