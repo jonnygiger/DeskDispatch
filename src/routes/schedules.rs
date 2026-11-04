@@ -77,12 +77,6 @@ pub struct ToggleScheduleRow {
 }
 
 #[derive(Debug, Clone, FromRow)]
-pub struct WolScheduleRow {
-    pub id: i64,
-    pub worker_group_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, FromRow)]
 pub struct DueScheduleRow {
     pub id: i64,
     pub automation_id: i64,
@@ -736,9 +730,10 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     let mut tx = pool.begin().await?;
 
     // Phase 1: Send Wake-on-LAN magic packets for schedules entering their warm-up window
-    let wol_due_schedules = sqlx::query_as::<_, WolScheduleRow>(
+    // Trim simplification: Replaced single-use WolScheduleRow with direct sqlx::query_scalar query.
+    let wol_schedule_ids: Vec<i64> = sqlx::query_scalar(
         r#"
-        SELECT id, worker_group_id
+        SELECT id
         FROM schedules
         WHERE is_enabled = true
           AND wol_enabled = true
@@ -751,9 +746,7 @@ pub async fn process_due_schedules(pool: &sqlx::PgPool) -> Result<u64, sqlx::Err
     .fetch_all(&mut *tx)
     .await?;
 
-    if !wol_due_schedules.is_empty() {
-        let wol_schedule_ids: Vec<i64> = wol_due_schedules.iter().map(|s| s.id).collect();
-
+    if !wol_schedule_ids.is_empty() {
         #[derive(Debug, sqlx::FromRow)]
         struct WolTargetRow {
             schedule_id: i64,
