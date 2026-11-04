@@ -123,6 +123,14 @@ pub fn task_run_status_badge_class(status: &str) -> &'static str {
     }
 }
 
+// Trim simplification: Consolidated helper for optional timestamp formatting across TaskRunListItem and ExecutedStepItem.
+fn format_opt_timestamp(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    match dt {
+        Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
+        None => "-".to_string(),
+    }
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct ExecutedStepRow {
     id: i64,
@@ -178,15 +186,11 @@ impl TaskRunListItem {
     }
 
     pub fn formatted_started_at(&self) -> String {
-        self.started_at
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-            .unwrap_or_else(|| "-".to_string())
+        format_opt_timestamp(self.started_at)
     }
 
     pub fn formatted_completed_at(&self) -> String {
-        self.completed_at
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-            .unwrap_or_else(|| "-".to_string())
+        format_opt_timestamp(self.completed_at)
     }
 
     pub fn duration_display(&self) -> String {
@@ -299,9 +303,7 @@ impl ExecutedStepItem {
     }
 
     pub fn formatted_completed_at(&self) -> String {
-        self.completed_at
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-            .unwrap_or_else(|| "-".to_string())
+        format_opt_timestamp(self.completed_at)
     }
 
     pub fn result_badge_class(&self) -> &'static str {
