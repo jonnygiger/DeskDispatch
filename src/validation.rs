@@ -37,15 +37,7 @@ struct VarRow {
     var_type: String,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct ParamRow {
-    name: String,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct BitmapRow {
-    id: i64,
-}
+// Trim simplification: Replaced single-field ParamRow and BitmapRow structs with sqlx::query_scalar calls.
 
 #[derive(Debug, Clone)]
 struct VarMeta {
@@ -270,7 +262,7 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
-    let params_fut = sqlx::query_as::<_, ParamRow>(
+    let params_fut = sqlx::query_scalar::<_, String>(
         "SELECT name FROM automation_parameters WHERE automation_id = $1",
     )
     .bind(automation_id)
@@ -336,19 +328,19 @@ pub async fn validate_automation_for_activation(
     .bind(automation_id)
     .fetch_all(db);
 
-    let bitmap_fut = sqlx::query_as::<_, BitmapRow>("SELECT id FROM bitmaps").fetch_all(db);
+    let bitmap_fut = sqlx::query_scalar::<_, i64>("SELECT id FROM bitmaps").fetch_all(db);
 
     let (
         raw_steps,
         var_rows,
-        param_rows,
+        param_names,
         mc_rows,
         ms_rows,
         fp_rows,
         fb_rows,
         branch_rows,
         ocr_rows,
-        bitmap_rows,
+        bitmap_ids,
     ) = match tokio::try_join!(
         steps_fut, vars_fut, params_fut, mc_fut, ms_fut, fp_fut, fb_fut, branch_fut, ocr_fut,
         bitmap_fut
@@ -461,7 +453,7 @@ pub async fn validate_automation_for_activation(
         }
     }
 
-    let existing_bitmaps: HashSet<i64> = bitmap_rows.into_iter().map(|r| r.id).collect();
+    let existing_bitmaps: HashSet<i64> = bitmap_ids.into_iter().collect();
 
     // Construct contiguous steps vector
     let steps: Vec<StepNode> = raw_steps
@@ -490,7 +482,7 @@ pub async fn validate_automation_for_activation(
         );
     }
 
-    let available_params: HashSet<String> = param_rows.into_iter().map(|pr| pr.name).collect();
+    let available_params: HashSet<String> = param_names.into_iter().collect();
 
     // 2. Validate individual steps for bounds, types, referenced IDs
     for step in &steps {
