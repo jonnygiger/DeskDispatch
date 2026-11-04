@@ -1,9 +1,9 @@
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
 
-// Trim simplification: Replaced local duplicate MouseClickRow, MouseScrollRow, FindPixelRow, OcrExtractRow, and FindBitmapRow with shared definitions from crate::routes::automations::types.
+// Trim simplification: Replaced local duplicate MouseClickRow, MouseScrollRow, FindPixelRow, OcrExtractRow, FindBitmapRow, and BranchRow with shared definitions from crate::routes::automations::types.
 use crate::routes::automations::types::{
-    FindBitmapRow, FindPixelRow, MouseClickRow, MouseScrollRow, OcrExtractRow,
+    BranchRow, FindBitmapRow, FindPixelRow, MouseClickRow, MouseScrollRow, OcrExtractRow,
 };
 
 /// Result of linting an automation before activation or execution.
@@ -40,22 +40,6 @@ struct VarRow {
 #[derive(Debug, sqlx::FromRow)]
 struct ParamRow {
     name: String,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct BranchRow {
-    step_id: i64,
-    condition_type: String,
-    on_match_step_id: Option<i64>,
-    on_no_match_step_id: Option<i64>,
-    reference_bitmap_id: Option<i64>,
-    x: Option<i32>,
-    y: Option<i32>,
-    window_match_pattern: Option<String>,
-    #[allow(dead_code)]
-    window_match_type: Option<String>,
-    #[allow(dead_code)]
-    window_check_type: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -329,7 +313,14 @@ pub async fn validate_automation_for_activation(
 
     let branch_fut = sqlx::query_as::<_, BranchRow>(
         r#"
-        SELECT sb.step_id, sb.condition_type, sb.on_match_step_id, sb.on_no_match_step_id, sb.reference_bitmap_id, sb.x, sb.y, sb.window_match_pattern, sb.window_match_type, sb.window_check_type
+        SELECT sb.step_id, sb.condition_type, sb.x, sb.y,
+               NULL::INT2 AS expected_r, NULL::INT2 AS expected_g, NULL::INT2 AS expected_b, NULL::INT2 AS tolerance,
+               sb.reference_bitmap_id,
+               NULL::INT4 AS search_x, NULL::INT4 AS search_y, NULL::INT4 AS search_width, NULL::INT4 AS search_height,
+               NULL::FLOAT4 AS match_threshold,
+               sb.on_match_step_id, sb.on_no_match_step_id,
+               NULL::TEXT AS reference_bitmap_key,
+               sb.window_match_pattern, sb.window_match_type, sb.window_check_type
         FROM step_branches sb
         JOIN automation_steps s ON sb.step_id = s.id
         WHERE s.automation_id = $1 AND s.deleted_at IS NULL

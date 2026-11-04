@@ -128,6 +128,30 @@ pub struct FindBitmapRow {
     pub reference_bitmap_key: Option<String>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BranchRow {
+    pub step_id: i64,
+    pub condition_type: String,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub expected_r: Option<i16>,
+    pub expected_g: Option<i16>,
+    pub expected_b: Option<i16>,
+    pub tolerance: Option<i16>,
+    pub reference_bitmap_id: Option<i64>,
+    pub search_x: Option<i32>,
+    pub search_y: Option<i32>,
+    pub search_width: Option<i32>,
+    pub search_height: Option<i32>,
+    pub match_threshold: Option<f32>,
+    pub on_match_step_id: Option<i64>,
+    pub on_no_match_step_id: Option<i64>,
+    pub reference_bitmap_key: Option<String>,
+    pub window_match_pattern: Option<String>,
+    pub window_match_type: Option<String>,
+    pub window_check_type: Option<String>,
+}
+
 impl SlaStats {
     pub fn formatted_daily(&self) -> String {
         format!("{:.1}%", self.daily_uptime)
