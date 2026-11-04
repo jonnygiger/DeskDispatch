@@ -104,12 +104,9 @@ impl ScheduleItem {
         }
     }
 
+    // Trim simplification: Delegate schedule badge styling directly to ScheduleStatus::badge_class helper.
     pub fn status_badge_class(&self) -> &'static str {
-        if self.is_enabled {
-            "badge-success"
-        } else {
-            "badge-neutral"
-        }
+        crate::domain::ScheduleStatus::from(self.is_enabled).badge_class()
     }
 }
 
