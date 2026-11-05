@@ -362,11 +362,9 @@ impl AutomationListItem {
         self.updated_at.format("%Y-%m-%d %H:%M:%S").to_string()
     }
 
+    // Trim simplification: Delegate optional timestamp formatting directly to shared format_opt_timestamp helper.
     pub fn formatted_last_run_at(&self) -> String {
-        match self.last_run_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-            None => "-".to_string(),
-        }
+        crate::routes::runs::format_opt_timestamp(self.last_run_at)
     }
 }
 
