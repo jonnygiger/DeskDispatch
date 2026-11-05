@@ -49,11 +49,9 @@ impl UserListItem {
         self.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
     }
 
+    // Trim simplification: Delegate optional UTC timestamp formatting directly to shared format_opt_utc_timestamp helper.
     pub fn formatted_last_login(&self) -> String {
-        match self.last_login_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => "Never".to_string(),
-        }
+        crate::routes::workers::format_opt_utc_timestamp(self.last_login_at)
     }
 
     pub fn status_badge_class(&self) -> &'static str {
