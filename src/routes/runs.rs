@@ -123,8 +123,8 @@ pub fn task_run_status_badge_class(status: &str) -> &'static str {
     }
 }
 
-// Trim simplification: Consolidated helper for optional timestamp formatting across TaskRunListItem and ExecutedStepItem.
-fn format_opt_timestamp(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
+// Trim simplification: Consolidated helper for optional timestamp formatting across TaskRunListItem, ExecutedStepItem, and AutomationListItem.
+pub fn format_opt_timestamp(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
     match dt {
         Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
         None => "-".to_string(),
