@@ -123,12 +123,13 @@ pub fn task_run_status_badge_class(status: &str) -> &'static str {
     }
 }
 
-// Trim simplification: Consolidated helper for optional timestamp formatting across TaskRunListItem, ExecutedStepItem, and AutomationListItem.
+// Trim simplification: Consolidated helpers for timestamp formatting across run, automation, and dashboard views.
+pub fn format_timestamp(dt: chrono::DateTime<chrono::Utc>) -> String {
+    dt.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 pub fn format_opt_timestamp(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
-    match dt {
-        Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
-        None => "-".to_string(),
-    }
+    dt.map(format_timestamp).unwrap_or_else(|| "-".to_string())
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -182,7 +183,7 @@ struct CancelRunRow {
 
 impl TaskRunListItem {
     pub fn formatted_queued_at(&self) -> String {
-        self.queued_at.format("%Y-%m-%d %H:%M:%S").to_string()
+        format_timestamp(self.queued_at)
     }
 
     pub fn formatted_started_at(&self) -> String {
@@ -299,7 +300,7 @@ pub struct ExecutedStepItem {
 
 impl ExecutedStepItem {
     pub fn formatted_started_at(&self) -> String {
-        self.started_at.format("%Y-%m-%d %H:%M:%S").to_string()
+        format_timestamp(self.started_at)
     }
 
     pub fn formatted_completed_at(&self) -> String {
@@ -342,7 +343,7 @@ pub struct RunVariableValueItem {
 
 impl RunVariableValueItem {
     pub fn formatted_set_at(&self) -> String {
-        self.set_at.format("%Y-%m-%d %H:%M:%S").to_string()
+        format_timestamp(self.set_at)
     }
 }
 
@@ -1078,7 +1079,13 @@ mod tests {
             );
         }
 
-        // 3. Shared task_run_status_badge_class helper
+        // 3. Shared format_timestamp and format_opt_timestamp helpers
+        let fixed_ts = chrono::DateTime::from_timestamp(1742913045, 0).unwrap();
+        assert_eq!(format_timestamp(fixed_ts), "2025-03-25 14:30:45");
+        assert_eq!(format_opt_timestamp(Some(fixed_ts)), "2025-03-25 14:30:45");
+        assert_eq!(format_opt_timestamp(None), "-");
+
+        // 4. Shared task_run_status_badge_class helper
         assert_eq!(task_run_status_badge_class("succeeded"), "badge-success");
         assert_eq!(task_run_status_badge_class("failed"), "badge-danger");
         assert_eq!(task_run_status_badge_class("lost"), "badge-danger");
