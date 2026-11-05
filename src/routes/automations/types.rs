@@ -358,8 +358,9 @@ impl AutomationListItem {
         )
     }
 
+    // Trim simplification: Delegate timestamp formatting directly to shared format_timestamp helper.
     pub fn formatted_updated_at(&self) -> String {
-        self.updated_at.format("%Y-%m-%d %H:%M:%S").to_string()
+        crate::routes::runs::format_timestamp(self.updated_at)
     }
 
     // Trim simplification: Delegate optional timestamp formatting directly to shared format_opt_timestamp helper.
