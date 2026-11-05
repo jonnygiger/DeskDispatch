@@ -50,16 +50,12 @@ pub struct RecordingSessionDetail {
     pub ended_at: Option<DateTime<Utc>>,
 }
 
-// Trim simplification: Consolidated recording session status badge class mapping
-// into a shared standalone helper, mirroring patterns across runs, automations, and workers.
+// Trim simplification: Delegate recording session badge styling directly to
+// RecordingSessionStatus::badge_class helper, falling back to neutral for unknown statuses.
 pub fn recording_session_status_badge_class(status: &str) -> &'static str {
-    match status {
-        "recording" => "badge-warning",
-        "completed" => "badge-success",
-        "imported" => "badge-info",
-        "discarded" => "badge-danger",
-        _ => "badge-neutral",
-    }
+    std::str::FromStr::from_str(status.trim())
+        .map(|s: crate::domain::RecordingSessionStatus| s.badge_class())
+        .unwrap_or("badge-neutral")
 }
 
 impl RecordingSessionDetail {
