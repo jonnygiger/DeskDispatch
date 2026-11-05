@@ -30,8 +30,9 @@ impl RecentRunItem {
         crate::routes::runs::task_run_status_badge_class(&self.status)
     }
 
+    // Trim simplification: Delegate timestamp formatting directly to shared format_timestamp helper.
     pub fn formatted_queued_at(&self) -> String {
-        self.queued_at.format("%Y-%m-%d %H:%M:%S").to_string()
+        crate::routes::runs::format_timestamp(self.queued_at)
     }
 }
 
