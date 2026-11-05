@@ -89,9 +89,11 @@ fn worker_status_badge_class(derived_status: &str) -> &'static str {
     }
 }
 
-fn format_worker_last_heartbeat(last_heartbeat_at: Option<DateTime<Utc>>) -> String {
-    match last_heartbeat_at {
-        Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+// Trim simplification: Consolidated helper for optional UTC timestamp formatting ("YYYY-MM-DD HH:MM:SS UTC" or "Never")
+// reused across worker heartbeat timestamps and user last login timestamps.
+pub fn format_opt_utc_timestamp(dt: Option<DateTime<Utc>>) -> String {
+    match dt {
+        Some(t) => t.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
         None => "Never".to_string(),
     }
 }
@@ -106,7 +108,7 @@ impl WorkerPcItem {
     }
 
     pub fn formatted_last_heartbeat(&self) -> String {
-        format_worker_last_heartbeat(self.last_heartbeat_at)
+        format_opt_utc_timestamp(self.last_heartbeat_at)
     }
 }
 
@@ -721,7 +723,7 @@ impl WorkerDetail {
     }
 
     pub fn formatted_last_heartbeat(&self) -> String {
-        format_worker_last_heartbeat(self.last_heartbeat_at)
+        format_opt_utc_timestamp(self.last_heartbeat_at)
     }
 
     pub fn formatted_created_at(&self) -> String {
