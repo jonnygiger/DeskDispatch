@@ -50,10 +50,7 @@ impl UserListItem {
     }
 
     pub fn formatted_last_login(&self) -> String {
-        match self.last_login_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => "Never".to_string(),
-        }
+        crate::routes::workers::format_opt_utc_timestamp(self.last_login_at)
     }
 
     pub fn status_badge_class(&self) -> &'static str {
