@@ -185,6 +185,16 @@ impl RecordingSessionStatus {
             RecordingSessionStatus::Imported | RecordingSessionStatus::Discarded => false,
         }
     }
+
+    /// Returns the CSS badge class corresponding to this recording session status.
+    pub fn badge_class(&self) -> &'static str {
+        match self {
+            RecordingSessionStatus::Recording => "badge-warning",
+            RecordingSessionStatus::Completed => "badge-success",
+            RecordingSessionStatus::Imported => "badge-info",
+            RecordingSessionStatus::Discarded => "badge-danger",
+        }
+    }
 }
 
 impl_enum_str!(RecordingSessionStatus, "recording session status", {
@@ -203,6 +213,24 @@ pub enum ScheduleStatus {
 impl ScheduleStatus {
     pub fn can_transition_to(&self, _target: ScheduleStatus) -> bool {
         true
+    }
+
+    /// Returns the CSS badge class corresponding to this schedule status.
+    pub fn badge_class(&self) -> &'static str {
+        match self {
+            ScheduleStatus::Enabled => "badge-success",
+            ScheduleStatus::Disabled => "badge-neutral",
+        }
+    }
+}
+
+impl From<bool> for ScheduleStatus {
+    fn from(enabled: bool) -> Self {
+        if enabled {
+            ScheduleStatus::Enabled
+        } else {
+            ScheduleStatus::Disabled
+        }
     }
 }
 
@@ -449,13 +477,26 @@ mod tests {
 
         // RecordingSessionStatus
         let rec_statuses = [
-            (RecordingSessionStatus::Recording, "recording"),
-            (RecordingSessionStatus::Completed, "completed"),
-            (RecordingSessionStatus::Imported, "imported"),
-            (RecordingSessionStatus::Discarded, "discarded"),
+            (
+                RecordingSessionStatus::Recording,
+                "recording",
+                "badge-warning",
+            ),
+            (
+                RecordingSessionStatus::Completed,
+                "completed",
+                "badge-success",
+            ),
+            (RecordingSessionStatus::Imported, "imported", "badge-info"),
+            (
+                RecordingSessionStatus::Discarded,
+                "discarded",
+                "badge-danger",
+            ),
         ];
-        for (status, expected_str) in rec_statuses {
+        for (status, expected_str, expected_badge_class) in rec_statuses {
             assert_eq!(status.to_string(), expected_str);
+            assert_eq!(status.badge_class(), expected_badge_class);
             let input = format!("\t{}\n", expected_str.to_uppercase());
             assert_eq!(RecordingSessionStatus::from_str(&input).unwrap(), status);
             let json = serde_json::to_string(&status).unwrap();
@@ -471,11 +512,13 @@ mod tests {
 
         // ScheduleStatus (supports "disabled"/"false", "enabled"/"true")
         let sched_statuses = [
-            (ScheduleStatus::Disabled, "disabled"),
-            (ScheduleStatus::Enabled, "enabled"),
+            (ScheduleStatus::Disabled, "disabled", "badge-neutral", false),
+            (ScheduleStatus::Enabled, "enabled", "badge-success", true),
         ];
-        for (status, expected_str) in sched_statuses {
+        for (status, expected_str, expected_badge_class, bool_val) in sched_statuses {
             assert_eq!(status.to_string(), expected_str);
+            assert_eq!(status.badge_class(), expected_badge_class);
+            assert_eq!(ScheduleStatus::from(bool_val), status);
             let input = format!("  {}  ", expected_str.to_uppercase());
             assert_eq!(ScheduleStatus::from_str(&input).unwrap(), status);
             let json = serde_json::to_string(&status).unwrap();
