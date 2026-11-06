@@ -89,17 +89,12 @@ fn worker_status_badge_class(derived_status: &str) -> &'static str {
     }
 }
 
-// Trim simplification: Consolidated helpers for UTC timestamp formatting ("YYYY-MM-DD HH:MM:SS UTC" or "Never")
-// reused across worker timestamps, user management views, and recording review details.
-#[inline]
-pub fn format_utc_timestamp(dt: DateTime<Utc>) -> String {
-    dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-}
-
-#[inline]
+// Trim simplification: Consolidated helper for optional UTC timestamp formatting across WorkerPcItem, WorkerDetail, and UserListItem.
 pub fn format_opt_utc_timestamp(dt: Option<DateTime<Utc>>) -> String {
-    dt.map(format_utc_timestamp)
-        .unwrap_or_else(|| "Never".to_string())
+    match dt {
+        Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        None => "Never".to_string(),
+    }
 }
 
 impl WorkerPcItem {
