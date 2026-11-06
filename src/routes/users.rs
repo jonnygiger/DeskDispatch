@@ -32,6 +32,16 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+// Trim simplification: Consolidated helper for user status badge styling ("badge-success" for active, "badge-danger" for inactive).
+#[inline]
+pub fn user_status_badge_class(is_active: bool) -> &'static str {
+    if is_active {
+        "badge-success"
+    } else {
+        "badge-danger"
+    }
+}
+
 #[derive(Debug, Clone, FromRow)]
 pub struct UserListItem {
     pub id: i64,
@@ -55,12 +65,9 @@ impl UserListItem {
         crate::routes::workers::format_opt_utc_timestamp(self.last_login_at)
     }
 
+    // Trim simplification: Delegate user status badge styling directly to user_status_badge_class helper.
     pub fn status_badge_class(&self) -> &'static str {
-        if self.is_active {
-            "badge-success"
-        } else {
-            "badge-danger"
-        }
+        user_status_badge_class(self.is_active)
     }
 
     // Trim simplification: Delegate role badge styling directly to UserRole::badge_class helper.
@@ -914,6 +921,10 @@ mod tests {
         // Act & Assert: Status badge classes
         assert_eq!(active_admin.status_badge_class(), "badge-success");
         assert_eq!(inactive_editor.status_badge_class(), "badge-danger");
+
+        // Act & Assert: Shared user_status_badge_class helper
+        assert_eq!(user_status_badge_class(true), "badge-success");
+        assert_eq!(user_status_badge_class(false), "badge-danger");
 
         // Act & Assert: Role badge classes
         assert_eq!(active_admin.role_badge_class(), "badge-primary");
