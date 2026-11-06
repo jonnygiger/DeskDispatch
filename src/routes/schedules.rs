@@ -1039,6 +1039,10 @@ mod tests {
         assert_eq!(disabled_item.formatted_next_run(), "Disabled");
         assert_eq!(disabled_item.status_badge_class(), "badge-neutral");
 
+        // Direct test for schedule_status_badge_class helper
+        assert_eq!(schedule_status_badge_class(true), "badge-success");
+        assert_eq!(schedule_status_badge_class(false), "badge-neutral");
+
         let next_dt = Utc.with_ymd_and_hms(2025, 6, 15, 12, 30, 0).unwrap();
         let last_dt = Utc.with_ymd_and_hms(2025, 6, 15, 10, 15, 0).unwrap();
         let active_item_with_timestamps = ScheduleItem {
