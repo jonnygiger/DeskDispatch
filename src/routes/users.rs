@@ -45,8 +45,9 @@ pub struct UserListItem {
 }
 
 impl UserListItem {
+    // Trim simplification: Delegate UTC timestamp formatting directly to shared format_utc_timestamp helper.
     pub fn formatted_created_at(&self) -> String {
-        self.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+        crate::routes::workers::format_utc_timestamp(self.created_at)
     }
 
     // Trim simplification: Delegate optional UTC timestamp formatting directly to shared format_opt_utc_timestamp helper.
