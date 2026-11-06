@@ -89,19 +89,18 @@ pub struct DueScheduleRow {
 }
 
 impl ScheduleItem {
+    // Trim simplification: Delegate UTC timestamp formatting directly to shared format_utc_timestamp helper.
     pub fn formatted_next_run(&self) -> Cow<'static, str> {
         match self.next_run_at {
-            Some(dt) => Cow::Owned(dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+            Some(dt) => Cow::Owned(crate::routes::workers::format_utc_timestamp(dt)),
             None if self.is_enabled => Cow::Borrowed("Pending"),
             None => Cow::Borrowed("Disabled"),
         }
     }
 
-    pub fn formatted_last_run(&self) -> Cow<'static, str> {
-        match self.last_run_at {
-            Some(dt) => Cow::Owned(dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
-            None => Cow::Borrowed("Never"),
-        }
+    // Trim simplification: Delegate optional UTC timestamp formatting directly to shared format_opt_utc_timestamp helper.
+    pub fn formatted_last_run(&self) -> String {
+        crate::routes::workers::format_opt_utc_timestamp(self.last_run_at)
     }
 
     // Trim simplification: Delegate schedule badge styling directly to ScheduleStatus::badge_class helper.

@@ -578,6 +578,14 @@ mod tests {
         };
         assert_eq!(detail_no_hb.formatted_last_heartbeat(), "Never");
 
+        // Verify format_utc_timestamp and format_opt_utc_timestamp directly
+        assert_eq!(format_utc_timestamp(fixed_time), "2025-03-30 15:45:30 UTC");
+        assert_eq!(
+            format_opt_utc_timestamp(Some(fixed_time)),
+            "2025-03-30 15:45:30 UTC"
+        );
+        assert_eq!(format_opt_utc_timestamp(None), "Never");
+
         // 3. WorkerDetail derived_status and status_badge_class edge cases
         let now = Utc::now();
         let recent = Some(now);
@@ -726,7 +734,7 @@ impl WorkerDetail {
     }
 
     pub fn formatted_created_at(&self) -> String {
-        self.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+        format_utc_timestamp(self.created_at)
     }
 }
 
