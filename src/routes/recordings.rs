@@ -63,15 +63,16 @@ impl RecordingSessionDetail {
         recording_session_status_badge_class(&self.status)
     }
 
+    // Trim simplification: Delegate UTC timestamp formatting directly to shared format_utc_timestamp helper.
     pub fn formatted_started_at(&self) -> String {
-        self.started_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+        crate::routes::workers::format_utc_timestamp(self.started_at)
     }
 
+    // Trim simplification: Delegate timestamp formatting directly to shared format_utc_timestamp helper.
     pub fn formatted_ended_at(&self) -> String {
-        match self.ended_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => "In progress".to_string(),
-        }
+        self.ended_at
+            .map(crate::routes::workers::format_utc_timestamp)
+            .unwrap_or_else(|| "In progress".to_string())
     }
 }
 

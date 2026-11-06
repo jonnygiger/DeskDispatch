@@ -329,8 +329,9 @@ pub struct BitmapListItem {
 }
 
 impl BitmapListItem {
+    // Trim simplification: Delegate timestamp formatting directly to shared format_timestamp helper.
     pub fn formatted_created_at(&self) -> String {
-        self.created_at.format("%Y-%m-%d %H:%M:%S").to_string()
+        crate::routes::runs::format_timestamp(self.created_at)
     }
 }
 
