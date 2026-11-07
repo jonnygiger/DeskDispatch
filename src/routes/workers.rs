@@ -80,21 +80,25 @@ fn derive_worker_status(status: &str, last_heartbeat_at: Option<DateTime<Utc>>) 
     }
 }
 
+// Trim simplification: Delegate worker status badge styling directly to
+// WorkerStatus::badge_class helper, falling back to neutral for unknown statuses.
 fn worker_status_badge_class(derived_status: &str) -> &'static str {
-    match derived_status {
-        "online" => "badge-success",
-        "busy" => "badge-warning",
-        "error" => "badge-danger",
-        _ => "badge-neutral",
-    }
+    std::str::FromStr::from_str(derived_status.trim())
+        .map(|s: crate::domain::WorkerStatus| s.badge_class())
+        .unwrap_or("badge-neutral")
 }
 
-// Trim simplification: Consolidated helper for optional UTC timestamp formatting across WorkerPcItem, WorkerDetail, and UserListItem.
+// Trim simplification: Consolidated helpers for UTC timestamp formatting ("YYYY-MM-DD HH:MM:SS UTC" or "Never")
+// reused across worker timestamps, user management views, and recording review details.
+#[inline]
+pub fn format_utc_timestamp(dt: DateTime<Utc>) -> String {
+    dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+}
+
+#[inline]
 pub fn format_opt_utc_timestamp(dt: Option<DateTime<Utc>>) -> String {
-    match dt {
-        Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-        None => "Never".to_string(),
-    }
+    dt.map(format_utc_timestamp)
+        .unwrap_or_else(|| "Never".to_string())
 }
 
 impl WorkerPcItem {

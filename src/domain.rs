@@ -67,6 +67,16 @@ impl WorkerStatus {
             WorkerStatus::Error => matches!(target, WorkerStatus::Offline | WorkerStatus::Online),
         }
     }
+
+    /// Returns the CSS badge class corresponding to this worker status.
+    pub fn badge_class(&self) -> &'static str {
+        match self {
+            WorkerStatus::Online => "badge-success",
+            WorkerStatus::Busy => "badge-warning",
+            WorkerStatus::Error => "badge-danger",
+            WorkerStatus::Offline => "badge-neutral",
+        }
+    }
 }
 
 impl_enum_str!(WorkerStatus, "worker status", {
@@ -310,15 +320,16 @@ mod tests {
     fn test_worker_status_display_from_str_and_serde() {
         // Arrange
         let statuses = [
-            (WorkerStatus::Offline, "offline"),
-            (WorkerStatus::Online, "online"),
-            (WorkerStatus::Busy, "busy"),
-            (WorkerStatus::Error, "error"),
+            (WorkerStatus::Offline, "offline", "badge-neutral"),
+            (WorkerStatus::Online, "online", "badge-success"),
+            (WorkerStatus::Busy, "busy", "badge-warning"),
+            (WorkerStatus::Error, "error", "badge-danger"),
         ];
 
-        for (status, expected_str) in statuses {
-            // Act & Assert Display
+        for (status, expected_str, expected_badge_class) in statuses {
+            // Act & Assert Display and Badge Class
             assert_eq!(status.to_string(), expected_str);
+            assert_eq!(status.badge_class(), expected_badge_class);
 
             // Act & Assert FromStr with case and whitespace variations
             let uppercase_with_spaces = format!("  {}  ", expected_str.to_uppercase());
