@@ -123,14 +123,11 @@ pub fn task_run_status_badge_class(status: &str) -> &'static str {
     }
 }
 
-// Trim simplification: Consolidated helper for standard timestamp formatting across views.
-#[inline]
+// Trim simplification: Consolidated helpers for timestamp formatting across run, automation, and dashboard views.
 pub fn format_timestamp(dt: chrono::DateTime<chrono::Utc>) -> String {
     dt.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-// Trim simplification: Consolidated helper for optional timestamp formatting across views.
-#[inline]
 pub fn format_opt_timestamp(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
     dt.map(format_timestamp).unwrap_or_else(|| "-".to_string())
 }
@@ -1088,7 +1085,13 @@ mod tests {
             );
         }
 
-        // 3. Shared task_run_status_badge_class helper
+        // 3. Shared format_timestamp and format_opt_timestamp helpers
+        let fixed_ts = chrono::DateTime::from_timestamp(1742913045, 0).unwrap();
+        assert_eq!(format_timestamp(fixed_ts), "2025-03-25 14:30:45");
+        assert_eq!(format_opt_timestamp(Some(fixed_ts)), "2025-03-25 14:30:45");
+        assert_eq!(format_opt_timestamp(None), "-");
+
+        // 4. Shared task_run_status_badge_class helper
         assert_eq!(task_run_status_badge_class("succeeded"), "badge-success");
         assert_eq!(task_run_status_badge_class("failed"), "badge-danger");
         assert_eq!(task_run_status_badge_class("lost"), "badge-danger");
