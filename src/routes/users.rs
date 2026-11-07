@@ -32,6 +32,16 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+// Trim simplification: Consolidated helper for user status badge styling ("badge-success" for active, "badge-danger" for inactive).
+#[inline]
+pub fn user_status_badge_class(is_active: bool) -> &'static str {
+    if is_active {
+        "badge-success"
+    } else {
+        "badge-danger"
+    }
+}
+
 #[derive(Debug, Clone, FromRow)]
 pub struct UserListItem {
     pub id: i64,
@@ -45,23 +55,19 @@ pub struct UserListItem {
 }
 
 impl UserListItem {
+    // Trim simplification: Delegate UTC timestamp formatting directly to shared format_utc_timestamp helper.
     pub fn formatted_created_at(&self) -> String {
-        self.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+        crate::routes::workers::format_utc_timestamp(self.created_at)
     }
 
+    // Trim simplification: Delegate optional UTC timestamp formatting directly to shared format_opt_utc_timestamp helper.
     pub fn formatted_last_login(&self) -> String {
-        match self.last_login_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => "Never".to_string(),
-        }
+        crate::routes::workers::format_opt_utc_timestamp(self.last_login_at)
     }
 
+    // Trim simplification: Delegate user status badge styling directly to user_status_badge_class helper.
     pub fn status_badge_class(&self) -> &'static str {
-        if self.is_active {
-            "badge-success"
-        } else {
-            "badge-danger"
-        }
+        user_status_badge_class(self.is_active)
     }
 
     // Trim simplification: Delegate role badge styling directly to UserRole::badge_class helper.
@@ -915,6 +921,10 @@ mod tests {
         // Act & Assert: Status badge classes
         assert_eq!(active_admin.status_badge_class(), "badge-success");
         assert_eq!(inactive_editor.status_badge_class(), "badge-danger");
+
+        // Act & Assert: Shared user_status_badge_class helper
+        assert_eq!(user_status_badge_class(true), "badge-success");
+        assert_eq!(user_status_badge_class(false), "badge-danger");
 
         // Act & Assert: Role badge classes
         assert_eq!(active_admin.role_badge_class(), "badge-primary");

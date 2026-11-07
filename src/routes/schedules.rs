@@ -89,33 +89,23 @@ pub struct DueScheduleRow {
 }
 
 impl ScheduleItem {
+    // Trim simplification: Delegate UTC timestamp formatting directly to shared format_utc_timestamp helper.
     pub fn formatted_next_run(&self) -> Cow<'static, str> {
         match self.next_run_at {
-            Some(dt) => Cow::Owned(dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+            Some(dt) => Cow::Owned(crate::routes::workers::format_utc_timestamp(dt)),
             None if self.is_enabled => Cow::Borrowed("Pending"),
             None => Cow::Borrowed("Disabled"),
         }
     }
 
-    pub fn formatted_last_run(&self) -> Cow<'static, str> {
-        match self.last_run_at {
-            Some(dt) => Cow::Owned(dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
-            None => Cow::Borrowed("Never"),
-        }
+    // Trim simplification: Delegate optional UTC timestamp formatting directly to shared format_opt_utc_timestamp helper.
+    pub fn formatted_last_run(&self) -> String {
+        crate::routes::workers::format_opt_utc_timestamp(self.last_run_at)
     }
 
+    // Trim simplification: Delegate schedule badge styling directly to ScheduleStatus::badge_class helper.
     pub fn status_badge_class(&self) -> &'static str {
-        schedule_status_badge_class(self.is_enabled)
-    }
-}
-
-// Trim simplification: Consolidated schedule status badge class mapping
-// into a shared standalone helper, mirroring patterns across runs, automations, and recordings.
-pub fn schedule_status_badge_class(is_enabled: bool) -> &'static str {
-    if is_enabled {
-        "badge-success"
-    } else {
-        "badge-neutral"
+        crate::domain::ScheduleStatus::from(self.is_enabled).badge_class()
     }
 }
 
@@ -1049,7 +1039,7 @@ mod tests {
         assert_eq!(disabled_item.formatted_next_run(), "Disabled");
         assert_eq!(disabled_item.status_badge_class(), "badge-neutral");
 
-        // Act & Assert: Standalone schedule_status_badge_class helper
+        // Direct test for schedule_status_badge_class helper
         assert_eq!(schedule_status_badge_class(true), "badge-success");
         assert_eq!(schedule_status_badge_class(false), "badge-neutral");
 
