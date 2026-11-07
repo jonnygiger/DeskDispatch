@@ -115,6 +115,17 @@ impl TaskRunStatus {
             | TaskRunStatus::Lost => false,
         }
     }
+
+    /// Returns the CSS badge class corresponding to this task run status.
+    pub fn badge_class(&self) -> &'static str {
+        match self {
+            TaskRunStatus::Queued | TaskRunStatus::Cancelling => "badge-warning",
+            TaskRunStatus::Running => "badge-info",
+            TaskRunStatus::Succeeded => "badge-success",
+            TaskRunStatus::Failed | TaskRunStatus::Lost => "badge-danger",
+            TaskRunStatus::Cancelled => "badge-secondary",
+        }
+    }
 }
 
 impl_enum_str!(TaskRunStatus, "task run status", {
@@ -342,18 +353,19 @@ mod tests {
     fn test_task_run_status_display_from_str_and_serde() {
         // Arrange
         let statuses = [
-            (TaskRunStatus::Queued, "queued"),
-            (TaskRunStatus::Running, "running"),
-            (TaskRunStatus::Cancelling, "cancelling"),
-            (TaskRunStatus::Cancelled, "cancelled"),
-            (TaskRunStatus::Succeeded, "succeeded"),
-            (TaskRunStatus::Failed, "failed"),
-            (TaskRunStatus::Lost, "lost"),
+            (TaskRunStatus::Queued, "queued", "badge-warning"),
+            (TaskRunStatus::Running, "running", "badge-info"),
+            (TaskRunStatus::Cancelling, "cancelling", "badge-warning"),
+            (TaskRunStatus::Cancelled, "cancelled", "badge-secondary"),
+            (TaskRunStatus::Succeeded, "succeeded", "badge-success"),
+            (TaskRunStatus::Failed, "failed", "badge-danger"),
+            (TaskRunStatus::Lost, "lost", "badge-danger"),
         ];
 
-        for (status, expected_str) in statuses {
-            // Act & Assert Display
+        for (status, expected_str, expected_badge_class) in statuses {
+            // Act & Assert Display and badge_class
             assert_eq!(status.to_string(), expected_str);
+            assert_eq!(status.badge_class(), expected_badge_class);
 
             // Act & Assert FromStr with case and whitespace variations
             let mixed_case_with_spaces = format!("\t {} \n", expected_str.to_uppercase());

@@ -215,17 +215,11 @@ impl TaskRunListItem {
         }
     }
 
+    // Trim simplification: Delegate task run status badge styling directly to TaskRunStatus::badge_class helper.
     pub fn status_badge_class(&self) -> &'static str {
-        match self.status.as_str() {
-            "queued" => "badge-warning",
-            "running" => "badge-info",
-            "cancelling" => "badge-warning",
-            "succeeded" => "badge-success",
-            "failed" => "badge-danger",
-            "cancelled" => "badge-secondary",
-            "lost" => "badge-danger",
-            _ => "badge-secondary",
-        }
+        std::str::FromStr::from_str(self.status.trim())
+            .map(|s: crate::domain::TaskRunStatus| s.badge_class())
+            .unwrap_or("badge-secondary")
     }
 }
 
