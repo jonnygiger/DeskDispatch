@@ -90,7 +90,7 @@ fn worker_status_badge_class(derived_status: &str) -> &'static str {
 }
 
 // Trim simplification: Consolidated helpers for UTC timestamp formatting ("YYYY-MM-DD HH:MM:SS UTC" or "Never")
-// reused across worker timestamps, user management views, and recording review details.
+// reused across worker timestamps, user management views, recording reviews, and schedule views.
 #[inline]
 pub fn format_utc_timestamp(dt: DateTime<Utc>) -> String {
     dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
