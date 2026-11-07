@@ -105,8 +105,14 @@ impl ScheduleItem {
 
     // Trim simplification: Delegate schedule badge styling directly to ScheduleStatus::badge_class helper.
     pub fn status_badge_class(&self) -> &'static str {
-        crate::domain::ScheduleStatus::from(self.is_enabled).badge_class()
+        schedule_status_badge_class(self.is_enabled)
     }
+}
+
+// Trim simplification: Consolidated schedule status badge class mapping
+// into a shared standalone helper, mirroring patterns across runs, automations, and recordings.
+pub fn schedule_status_badge_class(is_enabled: bool) -> &'static str {
+    crate::domain::ScheduleStatus::from(is_enabled).badge_class()
 }
 
 #[derive(Template)]
