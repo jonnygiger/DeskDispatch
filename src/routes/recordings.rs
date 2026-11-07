@@ -50,11 +50,11 @@ pub struct RecordingSessionDetail {
     pub ended_at: Option<DateTime<Utc>>,
 }
 
-// Trim simplification: Delegate recording session badge styling directly to RecordingSessionStatus::badge_class helper.
+// Trim simplification: Delegate recording session badge styling directly to
+// RecordingSessionStatus::badge_class helper, falling back to neutral for unknown statuses.
 pub fn recording_session_status_badge_class(status: &str) -> &'static str {
-    use std::str::FromStr;
-    crate::domain::RecordingSessionStatus::from_str(status)
-        .map(|s| s.badge_class())
+    std::str::FromStr::from_str(status.trim())
+        .map(|s: crate::domain::RecordingSessionStatus| s.badge_class())
         .unwrap_or("badge-neutral")
 }
 
@@ -63,15 +63,16 @@ impl RecordingSessionDetail {
         recording_session_status_badge_class(&self.status)
     }
 
+    // Trim simplification: Delegate UTC timestamp formatting directly to shared format_utc_timestamp helper.
     pub fn formatted_started_at(&self) -> String {
-        self.started_at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+        crate::routes::workers::format_utc_timestamp(self.started_at)
     }
 
+    // Trim simplification: Delegate timestamp formatting directly to shared format_utc_timestamp helper.
     pub fn formatted_ended_at(&self) -> String {
-        match self.ended_at {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-            None => "In progress".to_string(),
-        }
+        self.ended_at
+            .map(crate::routes::workers::format_utc_timestamp)
+            .unwrap_or_else(|| "In progress".to_string())
     }
 }
 

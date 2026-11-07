@@ -1058,6 +1058,12 @@ mod tests {
         assert_eq!(item.formatted_started_at(), "-");
         assert_eq!(item.formatted_completed_at(), "-");
 
+        // Verify format_timestamp and format_opt_timestamp helpers directly
+        let test_dt = chrono::DateTime::from_timestamp(1741617045, 0).unwrap();
+        assert_eq!(format_timestamp(test_dt), "2025-03-10 14:30:45");
+        assert_eq!(format_opt_timestamp(Some(test_dt)), "2025-03-10 14:30:45");
+        assert_eq!(format_opt_timestamp(None), "-");
+
         // 2. TaskRunListItem status badge classes
         let status_cases = [
             ("queued", "badge-warning"),
