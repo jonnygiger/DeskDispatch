@@ -180,6 +180,7 @@ fn test_top_nav_bar_role_conditional_rendering() {
     let admin_html = admin_tmpl.render().unwrap();
 
     assert!(admin_html.contains("<header class=\"top-nav\">"));
+    assert!(admin_html.contains("<nav aria-label=\"Main navigation\">"));
     assert!(admin_html.contains("href=\"/automations\""));
     assert!(admin_html.contains("href=\"/schedules\""));
     assert!(admin_html.contains("href=\"/runs\""));

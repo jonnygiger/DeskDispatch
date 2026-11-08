@@ -16,16 +16,18 @@
     <a href="/" class="top-nav-brand">
         DeskDispatch
     </a>
-    <ul class="top-nav-menu">
-        <li><a href="/" {% if active_page == "dashboard" %}class="active" aria-current="page"{% endif %}>Dashboard</a></li>
-        <li><a href="/automations" {% if active_page == "automations" %}class="active" aria-current="page"{% endif %}>Automations</a></li>
-        <li><a href="/schedules" {% if active_page == "schedules" %}class="active" aria-current="page"{% endif %}>Schedules</a></li>
-        <li><a href="/runs" {% if active_page == "runs" %}class="active" aria-current="page"{% endif %}>Runs</a></li>
-        <li><a href="/workers" {% if active_page == "workers" %}class="active" aria-current="page"{% endif %}>Workers</a></li>
-        {% if user.role.is_admin() %}
-        <li><a href="/users" {% if active_page == "users" %}class="active" aria-current="page"{% endif %}>Users</a></li>
-        {% endif %}
-    </ul>
+    <nav aria-label="Main navigation">
+        <ul class="top-nav-menu">
+            <li><a href="/" {% if active_page == "dashboard" %}class="active" aria-current="page"{% endif %}>Dashboard</a></li>
+            <li><a href="/automations" {% if active_page == "automations" %}class="active" aria-current="page"{% endif %}>Automations</a></li>
+            <li><a href="/schedules" {% if active_page == "schedules" %}class="active" aria-current="page"{% endif %}>Schedules</a></li>
+            <li><a href="/runs" {% if active_page == "runs" %}class="active" aria-current="page"{% endif %}>Runs</a></li>
+            <li><a href="/workers" {% if active_page == "workers" %}class="active" aria-current="page"{% endif %}>Workers</a></li>
+            {% if user.role.is_admin() %}
+            <li><a href="/users" {% if active_page == "users" %}class="active" aria-current="page"{% endif %}>Users</a></li>
+            {% endif %}
+        </ul>
+    </nav>
     <div class="top-nav-user">
         <a href="/account" {% if active_page == "account" %}class="active" aria-current="page"{% endif %}>{{ user.display_name }}</a>
         <form method="post" action="/logout" style="display:inline;">
