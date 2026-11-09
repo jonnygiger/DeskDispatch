@@ -39,7 +39,7 @@
                 {% else if out_type == "ocr_text" %}
                     <div style="margin-top: 0.5rem; background: var(--color-bg-card); border: 1px solid var(--color-border); padding: 0.75rem; border-radius: 6px; font-family: monospace; white-space: pre-wrap;">{{ out_val }}</div>
                 {% else if out_type == "image" %}
-                    <a href="/media/screenshots/{{ out_val }}" target="_blank" class="btn btn-outline" style="font-size: 0.875rem; margin-top: 0.25rem;">🖼️ View Output Image</a>
+                    <a href="/media/screenshots/{{ out_val }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline" style="font-size: 0.875rem; margin-top: 0.25rem;" aria-label="View output image for run #{{ run.id }} (opens in new tab)">🖼️ View Output Image</a>
                 {% else %}
                     <code>{{ out_val }}</code>
                 {% endif %}
