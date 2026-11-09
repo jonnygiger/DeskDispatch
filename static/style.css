@@ -183,6 +183,22 @@ body {
     background-color: var(--color-bg);
 }
 
+.btn-danger-outline {
+    background-color: transparent;
+    border-color: var(--color-danger);
+    color: var(--color-danger);
+}
+
+.btn-danger-outline:hover {
+    background-color: var(--color-danger);
+    color: #ffffff;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8125rem;
+}
+
 /* Forms & Inputs */
 .form-group {
     margin-bottom: 1rem;
@@ -392,6 +408,12 @@ a:focus-visible,
 button:focus-visible,
 .btn:focus-visible {
     outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+.btn-danger:focus-visible,
+.btn-danger-outline:focus-visible {
+    outline: 2px solid var(--color-danger);
     outline-offset: 2px;
 }
 

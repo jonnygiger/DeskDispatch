@@ -106,6 +106,11 @@ async fn test_static_asset_style_css() {
 
     let body_str = String::from_utf8_lossy(&body_bytes);
     assert!(body_str.contains(":root"), "CSS content expected");
+    assert!(
+        body_str.contains(".btn-danger-outline"),
+        "Expected .btn-danger-outline in CSS"
+    );
+    assert!(body_str.contains(".btn-sm"), "Expected .btn-sm in CSS");
 }
 
 #[tokio::test]
