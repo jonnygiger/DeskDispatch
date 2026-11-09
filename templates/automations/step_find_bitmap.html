@@ -50,7 +50,7 @@
                 <a href="/automations/{{ automation_id }}/bitmaps/pick-region?return_to={% if is_edit %}edit_find_bitmap{% else %}find_bitmap{% endif %}{% if let Some(sid) = step_id %}&step_id={{ sid }}{% endif %}" class="btn btn-outline" style="font-size: 0.8125rem; padding: 0.375rem 0.75rem; text-decoration: none;">
                     📷 Pick New Region from Screenshot
                 </a>
-                <a href="/automations/{{ automation_id }}/bitmaps" class="btn btn-outline" style="font-size: 0.8125rem; padding: 0.375rem 0.75rem; text-decoration: none;" target="_blank">
+                <a href="/automations/{{ automation_id }}/bitmaps" class="btn btn-outline" style="font-size: 0.8125rem; padding: 0.375rem 0.75rem; text-decoration: none;" target="_blank" rel="noopener noreferrer" aria-label="Manage Bitmap Library (opens in new tab)">
                     Manage Bitmap Library ↗
                 </a>
             </div>

@@ -15,3 +15,7 @@
 ## 2025-05-18 - Loop Boundary Action Button Accessibility Pattern
 **Learning:** In Askama list loops, using `loop.first` and `loop.last` to set `disabled` and descriptive `title` tooltips on directional reordering actions (`↑` / `↓`) prevents redundant form submissions and provides immediate visual and screen reader feedback at collection boundaries.
 **Action:** Always inspect sequence reordering controls in Askama templates and disable boundary operations using `loop.first` and `loop.last`.
+
+## 2025-05-18 - New-Tab Link Security and Accessibility Pattern
+**Learning:** Links opening in a new tab (`target="_blank"`) without `rel="noopener noreferrer"` leave applications exposed to tabnabbing vulnerabilities, while omitting explicit `aria-label` or link indicators disorients screen reader users when a new browser tab or window unexpectedly launches without warning.
+**Action:** Always pair `target="_blank"` with `rel="noopener noreferrer"` and an informative `aria-label` specifying contextual action and "(opens in new tab)" in Askama HTML templates.

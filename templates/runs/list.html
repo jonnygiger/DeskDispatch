@@ -83,7 +83,7 @@
                 <tr>
                     <td>
                         {% if let Some(sid) = run.screenshot_step_id %}
-                            <a href="/media/screenshots/{{ sid }}" target="_blank" title="View latest run screenshot">
+                            <a href="/media/screenshots/{{ sid }}" target="_blank" rel="noopener noreferrer" title="View latest run screenshot" aria-label="View screenshot preview for run #{{ run.id }} (opens in new tab)">
                                 <img src="/media/screenshots/{{ sid }}" alt="Run #{{ run.id }} screenshot preview" style="width: 50px; height: 32px; border-radius: 4px; object-fit: cover; border: 1px solid var(--color-border);">
                             </a>
                         {% else %}
@@ -112,7 +112,7 @@
                                 {% else if out_type == "ocr_text" %}
                                     <code style="font-size: 0.75rem; background: rgba(0,0,0,0.05); padding: 0.2rem 0.4rem; border-radius: 4px;">{{ out_val }}</code>
                                 {% else if out_type == "image" %}
-                                    <a href="/media/screenshots/{{ out_val }}" target="_blank" class="btn btn-outline" style="padding: 0.1rem 0.4rem; font-size: 0.75rem;">🖼️ Image</a>
+                                    <a href="/media/screenshots/{{ out_val }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline" style="padding: 0.1rem 0.4rem; font-size: 0.75rem;" aria-label="View output image for run #{{ run.id }} (opens in new tab)">🖼️ Image</a>
                                 {% else %}
                                     <code style="font-size: 0.75rem;">{{ out_val }}</code>
                                 {% endif %}
