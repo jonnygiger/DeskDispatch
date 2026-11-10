@@ -240,6 +240,31 @@ fn test_top_nav_bar_role_conditional_rendering() {
     assert!(viewer_html.contains("Viewer User"));
 }
 
+#[test]
+fn test_login_template_accessibility() {
+    use askama::Template;
+    use deskdispatch::routes::auth::LoginTemplate;
+
+    // 1. Clean state without error: no alert element, no aria-invalid or aria-describedby
+    let clean_tmpl = LoginTemplate { error: None };
+    let clean_html = clean_tmpl.render().unwrap();
+
+    assert!(!clean_html.contains("role=\"alert\""));
+    assert!(!clean_html.contains("id=\"login-error-alert\""));
+    assert!(!clean_html.contains("aria-invalid"));
+    assert!(!clean_html.contains("aria-describedby"));
+
+    // 2. Error state: accessible alert role and field error associations rendered
+    let error_tmpl = LoginTemplate {
+        error: Some("Invalid username or password.".to_string()),
+    };
+    let error_html = error_tmpl.render().unwrap();
+
+    assert!(error_html.contains("<div class=\"alert\" id=\"login-error-alert\" role=\"alert\" aria-live=\"assertive\">Invalid username or password.</div>"));
+    assert!(error_html.contains("<input type=\"text\" id=\"username\" name=\"username\" required autofocus autocomplete=\"username\" aria-invalid=\"true\" aria-describedby=\"login-error-alert\">"));
+    assert!(error_html.contains("<input type=\"password\" id=\"password\" name=\"password\" required autocomplete=\"current-password\" aria-invalid=\"true\" aria-describedby=\"login-error-alert\">"));
+}
+
 async fn get_test_pool() -> Option<sqlx::PgPool> {
     let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         "postgres://postgres:postgrespassword@localhost:5432/deskdispatch".to_string()
