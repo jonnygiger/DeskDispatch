@@ -291,3 +291,57 @@ async fn test_worker_mac_and_manual_wol_wake() {
         .unwrap();
     assert!(location_no_mac.contains("wake_error=No+MAC+address+configured+for+this+worker"));
 }
+
+#[test]
+fn test_schedules_index_action_button_styles() {
+    use askama::Template;
+    use deskdispatch::routes::schedules::{ScheduleItem, SchedulesIndexTemplate};
+
+    let user = AuthUser {
+        id: 1,
+        username: "editor".to_string(),
+        display_name: "Editor User".to_string(),
+        role: UserRole::Editor,
+        session_id: Uuid::new_v4(),
+        csrf_token: "test_token".to_string(),
+        must_change_password: false,
+    };
+
+    let schedule = ScheduleItem {
+        id: 42,
+        name: "Daily Sync".to_string(),
+        automation_id: 101,
+        automation_name: "Sync Database".to_string(),
+        cron_expression: "0 0 * * *".to_string(),
+        timezone: "UTC".to_string(),
+        worker_group_id: None,
+        worker_group_name: None,
+        overlap_policy: "forbid".to_string(),
+        max_queue_age_secs: Some(1800),
+        wol_enabled: false,
+        wol_warmup_secs: 0,
+        last_wol_sent_at: None,
+        is_enabled: true,
+        last_run_at: None,
+        next_run_at: None,
+        created_by: 1,
+        created_at: chrono::Utc::now(),
+    };
+
+    let tmpl = SchedulesIndexTemplate {
+        user,
+        schedules: vec![schedule],
+    };
+
+    let html = tmpl
+        .render()
+        .expect("Schedules index template should render");
+    assert!(
+        html.contains("class=\"btn btn-sm btn-outline\""),
+        "Expected .btn-sm .btn-outline on schedule actions"
+    );
+    assert!(
+        html.contains("class=\"btn btn-sm btn-danger-outline\""),
+        "Expected .btn-sm .btn-danger-outline on schedule delete action"
+    );
+}

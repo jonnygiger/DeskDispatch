@@ -91,7 +91,7 @@ Bitmap Library - DeskDispatch
                 {% if user.role.can_edit() %}
                 <form method="post" action="{% if let Some(aid) = automation_id %}/automations/{{ aid }}/bitmaps/{{ bitmap.id }}/delete{% else %}/bitmaps/{{ bitmap.id }}/delete{% endif %}" style="margin: 0;" onsubmit="return confirm('Are you sure you want to delete bitmap {{ bitmap.name }}?');">
                     {% call macros::csrf_field(csrf_token) %}{% endcall %}
-                    <button type="submit" class="btn btn-danger" style="background: var(--color-danger, #dc3545); color: white; border: none; padding: 0.25rem 0.625rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer;" aria-label="Delete bitmap {{ bitmap.name }}">
+                    <button type="submit" class="btn btn-sm btn-danger-outline" aria-label="Delete bitmap {{ bitmap.name }}">
                         Delete
                     </button>
                 </form>
